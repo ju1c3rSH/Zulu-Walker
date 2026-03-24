@@ -1,0 +1,18 @@
+# Project dependencies for Orange Pi 5B
+# Generated based on code analysis
+
+pyserial>=3.5
+# Standard Python libraries (included by default):
+# - logging
+# - threading
+# - queue
+# - time
+# - typing
+# - gc
+# - sys
+# - importlib
+# - traceback
+# - json
+# - os
+# - pathlib
+# - datetime
