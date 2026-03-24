@@ -1,9 +1,11 @@
 #main.py
 import gc
+import os
 import sys
 import time
 import importlib
 from typing import Dict, Any
+sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
 
 class ModuleManager:
     def __init__(self):
@@ -18,8 +20,10 @@ class ModuleManager:
                 module.init()
             if SystemConfig.DEBUG:
                 print(f"Module '{module_name}' loaded successfully")
+            return True
         except Exception as e:
             print(f"Failed to load module '{module_name}': {e}")
+            return False
     def start_all(self):
         """启动所有模块"""
         for module_name in SystemConfig.AUTO_START_MODULES:
@@ -56,7 +60,7 @@ class ModuleManager:
                 time.sleep(SystemConfig.MAIN_LOOP_DELAY)
             except KeyboardInterrupt:
                 print("Program interrupted")
-                self.stop()
+                self.stop_all()
                 break
             except Exception as e:
                 print(f"Error in main loop: {e}")

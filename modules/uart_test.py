@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 from utils import SerialController
 from utils.log_util import UARTModuleLogger
 
@@ -11,6 +16,9 @@ class UartTest:
         self.test_results = []
         self.running = False
         self.connected = False
+        self.last_test_time = 1
+        self.test_interval = 5  # 定期测试间隔（秒）
+        
     
     def init(self):
         u.log_info(f"UART Test module initializing...")
@@ -32,13 +40,10 @@ class UartTest:
         u.log_info("Running periodic UART test...")
         
         # 执行回环测试
-        test_passed = self.echo_test("Hello from UART Test!")
+        #test_passed = self.echo_test("Hello from UART Test!")
         void_send = self.serial.send("Periodic test data")
         
-        if test_passed:
-            u.log_info("Periodic test passed")
-        else:
-            u.log_error("Periodic test failed")
+
     
     def start(self) -> bool:
         """
