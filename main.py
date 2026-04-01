@@ -37,7 +37,7 @@ class ModuleManager:
                         print(f"Failed to start {module_name}: {e}")           
     def stop_all(self):
         """停止所有模块"""
-        self.runnning = False
+        self.running = False
         for module_name, module in self.modules.items():
             if hasattr(module, 'stop'):
                 try:
@@ -48,24 +48,25 @@ class ModuleManager:
         """主循环，定期调用模块的loop方法"""
 
         print("Entering main loop...")
-        while self.running:
-            try:
-                for module_name, module in self.modules.items():
-                        if hasattr(module, 'loop'):
-                            try:
-                                module.loop()
-                            except Exception as e:
-                                print(f"Error in {module_name} loop: {e}")
-                gc.collect()
-                time.sleep(SystemConfig.MAIN_LOOP_DELAY)
-            except KeyboardInterrupt:
-                print("Program interrupted")
-                self.stop_all()
-                break
-            except Exception as e:
-                print(f"Error in main loop: {e}")
-            finally:
-                self.stop_all()    
+        try:
+            while self.running:
+                try:
+                    for module_name, module in self.modules.items():
+                            if hasattr(module, 'loop'):
+                                try:
+                                    module.loop()
+                                except Exception as e:
+                                    print(f"Error in {module_name} loop: {e}")
+                    gc.collect()
+                    time.sleep(SystemConfig.MAIN_LOOP_DELAY)
+                except KeyboardInterrupt:
+                    print("Program interrupted")
+                    break
+                except Exception as e:
+                    print(f"Error in main loop: {e}")
+        finally:
+            self.stop_all()    
+        
         
 class SystemConfig:
     DEBUG = True

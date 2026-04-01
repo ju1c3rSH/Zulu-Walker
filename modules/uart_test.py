@@ -1,5 +1,7 @@
+import queue
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -19,15 +21,41 @@ class UartTest:
         self.last_test_time = 1
         self.test_interval = 5  # 定期测试间隔（秒）
         
+        self.loopback_testing = False
+        self.loopback_thread = None
+        self.loopback_data_queue = queue.Queue()
+        self.loopback_stats = {
+            'sent': 0,
+            'received': 0,
+            'matched': 0,
+            'errors': 0,
+            'last_send_time': 0,
+            'last_receive_time': 0,
+            'avg_latency': 0
+        }
+        self.loopback_latencies = []    
     
     def init(self):
         u.log_info(f"UART Test module initializing...")
         u.log_info(f"Port: {self.port}, Baudrate: {self.baudrate}")
     
     def loop(self):
-        if not self.running or not self.connected:
+        if not self.running:
             return
         
+        # 检查连接状态
+        if not self.serial.is_connected:
+            if self.connected:
+                self.connected = False
+                u.log_warning("Serial connection lost")
+            self._try_reconnect()
+            return
+        
+        # 确保连接状态同步
+        if not self.connected:
+            self.connected = True
+            u.log_info("Connection restored")
+    
         import time
         current_time = time.time()
         
@@ -35,14 +63,57 @@ class UartTest:
         if current_time - self.last_test_time >= self.test_interval:
             self.last_test_time = current_time
             self.run_periodic_test()
+                
+    def _try_reconnect(self):
+        import time
+        if not self.running:
+            return
         
+        # 避免重复重连
+        if hasattr(self, '_reconnecting') and self._reconnecting:
+            return
+        
+        self._reconnecting = True
+        try:
+            u.log_info("Attempting to reconnect to UART...")
+            
+            # 只有在确实需要断开时才断开
+            if self.serial.is_connected:
+                self.serial.disconnect()
+                self.connected = False
+            
+            time.sleep(2)
+            
+            # 尝试重新连接
+            if self.serial.connect():
+                self.connected = True
+                u.log_info("Reconnected to UART successfully")
+            else:
+                u.log_error("Failed to reconnect to UART")
+        finally:
+            self._reconnecting = False
+
     def run_periodic_test(self):
+        """执行周期性测试"""
+        u.log_info("=" * 50)
         u.log_info("Running periodic UART test...")
         
-        # 执行回环测试
-        #test_passed = self.echo_test("Hello from UART Test!")
-        void_send = self.serial.send("Periodic test data")
+        # 运行自回传测试
+        if self.loopback_testing:
+            stats = self.get_loopback_stats()
+            u.log_info(f"Loopback Test Stats - Sent: {stats['sent']}, "
+                      f"Received: {stats['received']}, "
+                      f"Matched: {stats['matched']}, "
+                      f"Errors: {stats['errors']}, "
+                      f"Avg Latency: {stats['avg_latency']:.3f}ms")
+        else:
+            # 简单发送测试
+            test_msg = f"Periodic Test at {time.strftime('%H:%M:%S')}\r\n"
+            bytes_sent = self.serial.send(test_msg)
+            if bytes_sent > 0:
+                u.log_info(f"Sent periodic test data: {bytes_sent} bytes")
         
+        u.log_info("=" * 50)
 
     
     def start(self) -> bool:

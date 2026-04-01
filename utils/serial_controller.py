@@ -74,6 +74,7 @@ class SerialController:
             return bytes_written
         except Exception as e:
             print(f"发送失败: {e}")
+            #self.disconnect()
             return 0
 
     def send_bytes(self, data: bytes) -> int:
@@ -86,7 +87,9 @@ class SerialController:
             self.serial.flush()
             return bytes_written
         except Exception as e:
+            
             print(f"发送失败: {e}")
+            self.disconnect()
             return 0
 
     def receive(self, size: int = 1) -> Optional[bytes]:
@@ -107,6 +110,7 @@ class SerialController:
             return data if data else None
         except Exception as e:
             print(f"接收失败: {e}")
+            self.disconnect()
             return None
 
     def receive_line(self) -> Optional[str]:
@@ -119,6 +123,7 @@ class SerialController:
             return line.decode('utf-8', errors='ignore').strip() if line else None
         except Exception as e:
             print(f"接收行失败: {e}")
+            self.disconnect()
             return None
 
     def receive_all(self) -> Optional[bytes]:
@@ -133,6 +138,7 @@ class SerialController:
             return None
         except Exception as e:
             print(f"接收失败: {e}")
+            self.disconnect()
             return None
         
     def start_receiver(self, callback: Callable[[bytes], None]):
