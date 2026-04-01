@@ -28,7 +28,7 @@ class ModuleManager:
         """启动所有模块"""
         for module_name in SystemConfig.AUTO_START_MODULES:
             if self.load_module(module_name):
-                # 如果模块有start方法，调用它
+                # 如果模块有start方法
                 module = self.modules.get(module_name)
                 if module and hasattr(module, 'start'):
                     try:
@@ -76,6 +76,7 @@ class SystemConfig:
     MAIN_LOOP_DELAY = 0.1
     AUTO_START_MODULES = [
         'uart_test',
+        'zw_opencv_module',
     ]
 
 

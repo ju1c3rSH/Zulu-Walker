@@ -1,0 +1,112 @@
+# -*- coding: utf-8 -*-
+"""
+zw_opencv_module - OpenCV Camera Vision Module
+
+Provides camera stream management, QR code detection, and RTMP streaming capabilities.
+"""
+
+import os
+import sys
+
+# Add module directory to path for internal imports
+module_dir = os.path.dirname(__file__)
+if module_dir not in sys.path:
+    sys.path.insert(0, module_dir)
+
+from camera_manager import CameraManager
+
+# Module-level instance
+_camera_manager: CameraManager = None
+_config_path: str = None
+_running: bool = False
+
+
+def init():
+    """Module initialization (called by ModuleManager)"""
+    global _camera_manager, _config_path
+
+    print("[zw_opencv_module] Initializing...")
+
+    # Default config path
+    _config_path = os.path.join(module_dir, "config", "camera_config.yaml")
+
+    # Create CameraManager instance
+    _camera_manager = CameraManager()
+
+    print("[zw_opencv_module] Initialized successfully")
+
+
+def start():
+    """Module start (called by ModuleManager)"""
+    global _camera_manager, _running
+
+    if _camera_manager is None:
+        print("[zw_opencv_module] Error: Module not initialized")
+        return False
+
+    print("[zw_opencv_module] Starting...")
+
+    try:
+        # Load configuration
+        if os.path.exists(_config_path):
+            _camera_manager.load_config(_config_path)
+            print(f"[zw_opencv_module] Loaded config from {_config_path}")
+        else:
+            print(f"[zw_opencv_module] Warning: Config file not found at {_config_path}")
+            print("[zw_opencv_module] Starting without camera configuration")
+
+        # Start processing loop
+        _camera_manager.start()
+        _running = True
+
+        print("[zw_opencv_module] Started successfully")
+        return True
+
+    except Exception as e:
+        print(f"[zw_opencv_module] Failed to start: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def loop():
+    """Module main loop (called by ModuleManager)"""
+    # CameraManager has its own processing thread, so we don't need to do much here
+    # This can be used for periodic status checks or other tasks
+    pass
+
+
+def stop():
+    """Module stop (called by ModuleManager)"""
+    global _camera_manager, _running
+
+    print("[zw_opencv_module] Stopping...")
+
+    _running = False
+
+    if _camera_manager is not None:
+        _camera_manager.release()
+        _camera_manager = None
+
+    print("[zw_opencv_module] Stopped")
+
+
+# === Optional: Direct access functions ===
+
+def get_camera_manager() -> CameraManager:
+    """Get the CameraManager instance"""
+    return _camera_manager
+
+
+def get_camera(camera_id: str):
+    """Get a specific camera by ID"""
+    if _camera_manager:
+        return _camera_manager.get_camera(camera_id)
+    return None
+
+
+def get_all_results():
+    """Get all camera processing results"""
+    if _camera_manager:
+        return _camera_manager.process_all()
+    return None, {}
