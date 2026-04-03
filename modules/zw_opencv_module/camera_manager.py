@@ -7,11 +7,14 @@ import numpy as np
 
 from camera_stream import CameraStream
 from task_manager import TaskManager, Task
+from task_sequence import TaskSequence
 from frame_composer import FrameComposer
 from ffmpeg_pusher import FFmpegPusher
 from processors.base import VisionResult
 from processors.qr_processor import QRProcessor
+from processors.cargo_processor import CargoProcessor
 from utils.state import EventType, RobotState, get_state_machine
+from zw_uart_module.protocol import ERROR_TYPE_X, ERROR_TYPE_Y
 @dataclass
 class CameraConfig:
     """相机配置"""
@@ -68,12 +71,10 @@ class Camera:
                 self.task_manager.register_task(task)
 
     def _create_processor(self, task_type: str, name: str):
-        """创建处理器"""
         if task_type == "QRProcessor":
             return QRProcessor(name)
-        # 可以添加更多处理器类型
-        # elif task_type == "CargoProcessor":
-        #     return CargoProcessor(name)
+        elif task_type == "CargoProcessor":
+            return CargoProcessor(name)
         return None
 
     def enable(self):
@@ -140,6 +141,7 @@ class CameraManager:
         self.frame_composer: Optional[FrameComposer] = None
         self.ffmpeg_pusher: Optional[FFmpegPusher] = None
         self.config: Optional[CameraSystemConfig] = None
+        self.task_sequence: Optional[TaskSequence] = None
 
         self._running = False
         self._process_thread: Optional[Thread] = None
@@ -258,8 +260,12 @@ class CameraManager:
                 height=self.config.output_height,
                 use_hardware_accel=True,
             )
-            # 注意：FFmpegPusher.start() 是异步的，需要在事件循环中调用
-            # 这里先创建实例，实际推流会在 _process_loop 中进行
+
+        # 注册 UART PICK 事件回调
+        import zw_uart_module
+        uart_interface = zw_uart_module.get_interface()
+        if uart_interface:
+            uart_interface.add_pick_callback(self._on_uart_pick_event)
 
         self._running = True
         self._process_thread = Thread(target=self._process_loop, daemon=True)
@@ -293,6 +299,9 @@ class CameraManager:
             # 状态相关的特殊处理
             if current_state == RobotState.READ_QR:
                 self._handle_qr_state(all_results, sm)
+
+            # 货物检测处理
+            self._handle_cargo_detect(all_results, sm)
 
             if self.config and self.config.enable_streaming:
                 if self.ffmpeg_pusher and composed_frame is not None:
@@ -330,12 +339,100 @@ class CameraManager:
 
                 if data:
                     print(f"[CameraManager] QR detected: {data}")
-                    # 存储QR数据到状态机上下文
+
+                    # 检查是否为任务序列格式
+                    if self._is_task_sequence(data):
+                        self._start_task_sequence(data, sm)
+                        return
+
+                    # 普通QR码处理
                     sm.set_context("qr_data", data)
                     sm.set_context("qr_camera", camera_id)
-                    # 触发QR解码成功事件
                     sm.trigger(EventType.QR_DECODED, data)
                     return
+
+    def _is_task_sequence(self, data: str) -> bool:
+        """检查QR数据是否为任务序列格式"""
+        if not data:
+            return False
+        parts = data.split('+')
+        for part in parts:
+            if not part:
+                continue
+            if not all(c in '123' for c in part):
+                return False
+        return True
+
+    def _start_task_sequence(self, qr_data: str, sm):
+        """启动任务序列"""
+        print(f"[CameraManager] Starting task sequence: {qr_data}")
+
+        self.task_sequence = TaskSequence.from_qr_data(qr_data)
+
+        # 关闭 cam_0 的 qr_detect 任务
+        self.disable_task("cam_0", "qr_detect")
+
+        # 开启 cam_1 的 cargo_detect 任务
+        self.enable_task("cam_1", "cargo_detect")
+
+        # 设置目标颜色
+        target_color = self.task_sequence.get_next_target()
+        self._set_cargo_target_color(target_color)
+
+        # 更新状态机
+        sm.set_context("task_sequence", qr_data)
+        sm.trigger(EventType.QR_DECODED, qr_data)
+
+    def _set_cargo_target_color(self, color: Optional[str]):
+        """设置货物检测的目标颜色"""
+        cam_1 = self.get_camera("cam_1")
+        if cam_1:
+            cargo_task = cam_1.get_task("cargo_detect")
+            if cargo_task:
+                cargo_task.processor.set_target_color(color)
+
+    def _handle_cargo_detect(self, all_results: Dict, sm):
+        """处理货物检测"""
+        if not self.task_sequence:
+            return
+
+        cargo_result = all_results.get("cam_1", {}).get("cargo_detect")
+        if cargo_result and cargo_result.success:
+            error_data = cargo_result.result_data
+            if error_data and error_data.get("target_found"):
+                percent_error_x = error_data.get("percent_error_x", 0)
+                percent_error_y = error_data.get("percent_error_y", 0)
+
+                # 通过 UART 发送坐标偏差
+                import zw_uart_module
+                zw_uart_module.send_error(ERROR_TYPE_X, percent_error_x)
+                zw_uart_module.send_error(ERROR_TYPE_Y, percent_error_y)
+
+    def _on_uart_pick_event(self, zone_id: int):
+        """处理 UART PICK 事件，推进到下一个货物"""
+        print(f"[CameraManager] PICK event received, zone={zone_id}")
+
+        if not self.task_sequence:
+            return
+
+        self.task_sequence.advance()
+        target_color = self.task_sequence.get_next_target()
+
+        if target_color:
+            print(f"[CameraManager] Next target color: {target_color}")
+            self._set_cargo_target_color(target_color)
+        else:
+            print("[CameraManager] All batches completed")
+            self._finish_task_sequence()
+
+    def _finish_task_sequence(self):
+        """完成任务序列，恢复初始状态"""
+        self.disable_task("cam_1", "cargo_detect")
+        self.enable_task("cam_0", "qr_detect")
+        self.task_sequence = None
+
+        sm = get_state_machine()
+        sm.trigger(EventType.ALL_BATCHES_DONE)
 
     def process_all(
         self,

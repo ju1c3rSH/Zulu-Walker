@@ -12,9 +12,8 @@ class ShapeType(Enum):
     UNKNOWN = "unknown"
     
 class ShapeMapping(Enum):
-    4: ShapeType.RECTANGLE
-    # 1: ShapeType.CIRCLE
-    3: ShapeType.TRIANGLE
+    RECTANGLE = 4
+    TRIANGLE = 3
     
 @dataclass
 class CargoItem:
@@ -22,15 +21,15 @@ class CargoItem:
     center_coordinates: Tuple[int, int]
     width: Optional[float] = None
     height: Optional[float] = None
-    radius: Optional[float] = None  # For circles
+    radius: Optional[float] = None
     area: Optional[float] = None
     contour_points: Optional[np.ndarray] = None
-    bounding_box: Optional[Tuple[int, int, int, int]] = None  # (x_min, y_min, x_max, y_max)
-    aspect_ratio: Optional[float] = None  # 长宽比
+    bounding_box: Optional[Tuple[int, int, int, int]] = None
+    aspect_ratio: Optional[float] = None
     shape_type: ShapeType = ShapeType.UNKNOWN
+    color: Optional[str] = None
 
     def to_dict(self) -> dict:
-        """转换为字典格式"""
         return {
             "index": self.index,
             "center_coordinates": self.center_coordinates,
@@ -40,7 +39,8 @@ class CargoItem:
             "area": self.area,
             "bounding_box": self.bounding_box,
             "aspect_ratio": self.aspect_ratio,
-            "shape_type": self.shape_type.value
+            "shape_type": self.shape_type.value,
+            "color": self.color
         }
     
 @dataclass

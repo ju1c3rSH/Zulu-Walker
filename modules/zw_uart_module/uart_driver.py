@@ -9,7 +9,7 @@ binary frame-based communication with state machine parsing.
 import enum
 import logging
 import threading
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from .protocol import (
     SOF, TYPE_ARRIVED, TYPE_PICK, TYPE_SET,
@@ -137,11 +137,6 @@ class STM32UartInterface:
     - Thread-safe state queries (zone information)
     - Error frame transmission
     - Background frame parsing with state machine
-
-    Usage:
-        with STM32UartInterface("/dev/ttyS0", 115200) as uart:
-            uart.send_error(0, -3)
-            zone = uart.get_current_zone()
     """
 
     def __init__(self, port: str = "/dev/ttyS0", baudrate: int = 115200):
@@ -165,6 +160,9 @@ class STM32UartInterface:
 
         # Write lock for send operations
         self._write_lock = threading.Lock()
+
+        # PICK event callbacks
+        self._pick_callbacks: List[Callable[[int], None]] = []
 
         # Logger
         self._logger = logging.getLogger(__name__)
@@ -290,6 +288,11 @@ class STM32UartInterface:
                 with self._state_lock:
                     self._last_pick_zone = zone_id
                 self._logger.info(f"PICK_AT_ZONE: zone={zone_id}")
+                for cb in self._pick_callbacks:
+                    try:
+                        cb(zone_id)
+                    except Exception as e:
+                        self._logger.error(f"Pick callback error: {e}")
 
         elif frame.frame_type == TYPE_SET:
             zone_id = parse_zone_payload(frame.payload)
@@ -330,6 +333,15 @@ class STM32UartInterface:
         """
         with self._state_lock:
             return self._last_pick_zone
+
+    def add_pick_callback(self, callback: Callable[[int], None]):
+        """Register a callback for PICK events."""
+        self._pick_callbacks.append(callback)
+
+    def remove_pick_callback(self, callback: Callable[[int], None]):
+        """Remove a PICK event callback."""
+        if callback in self._pick_callbacks:
+            self._pick_callbacks.remove(callback)
 
     def send_error(self, error_type: int, error_value: int) -> bool:
         """

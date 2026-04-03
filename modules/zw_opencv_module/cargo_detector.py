@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from cargos import Cargos, CargoItem, ShapeType, ShapeMapping
+from cargos import Cargos, CargoItem, ShapeType
 
 
 class CargoDetector:
@@ -19,11 +19,12 @@ class CargoDetector:
         self.min_area_threshold = 100  # 最小面积阈值
         self.next_cargo_index = 0  # 用于给每个检测到的货物分配唯一索引
 
-    def detect_cargo_shape(self, frame: np.ndarray) -> Cargos:
+    def detect_cargo_shape(self, frame: np.ndarray, target_color: str = None) -> Cargos:
         """检测图像中的货物形状
 
         Args:
             frame: BGR格式的输入图像
+            target_color: 目标颜色 ('Red', 'Green', 'Blue')，None 表示检测所有颜色
 
         Returns:
             Cargos: 包含所有检测到的货物信息的对象
@@ -32,7 +33,13 @@ class CargoDetector:
         self.next_cargo_index = 0
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-        for color_name, ranges in self.color_ranges.items():
+        colors_to_detect = [target_color] if target_color else list(self.color_ranges.keys())
+
+        for color_name in colors_to_detect:
+            if color_name not in self.color_ranges:
+                continue
+
+            ranges = self.color_ranges[color_name]
             mask = None
             for lower, upper in ranges:
                 color_mask = cv2.inRange(hsv, lower, upper)
@@ -47,6 +54,7 @@ class CargoDetector:
 
                 cargo_item = self._analyze_contour(contour)
                 cargo_item.index = self.next_cargo_index
+                cargo_item.color = color_name
                 self.next_cargo_index += 1
                 self.Cargos.add_cargo(cargo_item)
 
@@ -131,13 +139,10 @@ class CargoDetector:
             ShapeType: 形状类型
         """
         # 根据顶点数判断
-        if vertices in ShapeMapping.__members__:
-            return ShapeMapping[vertices].value
-
-        # 使用ShapeMapping的值来匹配
-        for mapping in ShapeMapping:
-            if mapping.name == str(vertices):
-                return mapping.value
+        if vertices == 4:
+            return ShapeType.RECTANGLE
+        if vertices == 3:
+            return ShapeType.TRIANGLE
 
         # 检查是否为圆形
         if self._is_circle(contour, area):

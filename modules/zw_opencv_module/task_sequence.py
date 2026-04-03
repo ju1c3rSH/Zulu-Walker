@@ -1,12 +1,32 @@
 # -*- coding: utf-8 -*-
 from typing import List, Optional
 
+COLOR_MAP = {
+    '1': 'Red',
+    '2': 'Green',
+    '3': 'Blue'
+}
+
 class TaskSequence:
-    def __init__(self, batch1: List[str], batch2: List[str]):
-        self.batch1 = batch1
-        self.batch2 = batch2
+    def __init__(self, batch1: List[str] = None, batch2: List[str] = None):
+        self.batch1 = batch1 or []
+        self.batch2 = batch2 or []
         self.current_batch = 1
         self.current_item_index = 0
+
+    @classmethod
+    def from_qr_data(cls, qr_data: str) -> 'TaskSequence':
+        parts = qr_data.split('+')
+        batch1 = [COLOR_MAP.get(c, c) for c in parts[0]] if len(parts) > 0 else []
+        batch2 = [COLOR_MAP.get(c, c) for c in parts[1]] if len(parts) > 1 else []
+        return cls(batch1, batch2)
+
+    def is_complete(self) -> bool:
+        if self.current_batch == 1:
+            return False
+        elif self.current_batch == 2:
+            return self.current_item_index >= len(self.batch2)
+        return True
 
     def get_current_item(self) -> Optional[str]:
         if self.current_batch == 1 and self.current_item_index < len(self.batch1):

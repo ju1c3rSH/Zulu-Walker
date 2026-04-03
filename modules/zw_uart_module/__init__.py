@@ -133,3 +133,15 @@ def send_error(error_type: int, error_value: int) -> bool:
     if _uart_interface:
         return _uart_interface.send_error(error_type, error_value)
     return False
+
+
+def add_pick_callback(callback):
+    """Add callback for PICK events (convenience function)."""
+    if _uart_interface:
+        _uart_interface.add_pick_callback(callback)
+
+
+def remove_pick_callback(callback):
+    """Remove PICK event callback (convenience function)."""
+    if _uart_interface:
+        _uart_interface.remove_pick_callback(callback)
