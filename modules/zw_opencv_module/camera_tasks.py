@@ -244,42 +244,4 @@ class CameraTasks:
         hsv_corrected = cv2.merge((h, s, v_corrected))
         return cv2.cvtColor(hsv_corrected, cv2.COLOR_HSV2BGR)
 
-    def detect_shape(contour):
-        pass
-        """
-        这里最好只输入裁剪后的单个轮廓图像，进行形状检测。可以使用边缘检测、轮廓分析等方法来判断是圆形、矩形还是三角形等。根据不同的形状，可以返回不同的结果或者在帧上绘制不同的标记。
-        而且实际上，只需要确定一个形状，其他形状就能都知道了，这里需要引入一个全局变量（对象），来存储Cargo的数据，以下是拓扑：
-        {
-            "shape": "rectangle",
-            "number": 3,
-            "payload": [
-                {
-                    "index": 1,
-                    "center_coordinates": [320, 240],
-                    "width": 100,
-                    "height": 80,
-                    "area": 8000,
-                    "contour_points": [[x1, y1], [x2, y2], ...],
-                    "bounding_box": [x_min, y_min, x_max, y_max]
-                },
-                {
-                    "index": 2,
-                    "center_coordinates": [450, 240],
-                    "width": 100,
-                    "height": 80,
-                    "area": 8000,
-                    "contour_points": [[x1, y1], [x2, y2], ...],
-                    "bounding_box": [x_min, y_min, x_max, y_max]
-                },
-                {
-                    "index": 3,
-                    "center_coordinates": [190, 240],
-                    "width": 100,
-                    "height": 80,
-                    "area": 8000,
-                    "contour_points": [[x1, y1], [x2, y2], ...],
-                    "bounding_box": [x_min, y_min, x_max, y_max]
-                }
-            ]
-        }
-        """
+

@@ -11,6 +11,11 @@ class ShapeType(Enum):
     TRIANGLE = "triangle"
     UNKNOWN = "unknown"
     
+class ShapeMapping(Enum):
+    4: ShapeType.RECTANGLE
+    # 1: ShapeType.CIRCLE
+    3: ShapeType.TRIANGLE
+    
 @dataclass
 class CargoItem:
     index: int
@@ -23,6 +28,20 @@ class CargoItem:
     bounding_box: Optional[Tuple[int, int, int, int]] = None  # (x_min, y_min, x_max, y_max)
     aspect_ratio: Optional[float] = None  # 长宽比
     shape_type: ShapeType = ShapeType.UNKNOWN
+
+    def to_dict(self) -> dict:
+        """转换为字典格式"""
+        return {
+            "index": self.index,
+            "center_coordinates": self.center_coordinates,
+            "width": self.width,
+            "height": self.height,
+            "radius": self.radius,
+            "area": self.area,
+            "bounding_box": self.bounding_box,
+            "aspect_ratio": self.aspect_ratio,
+            "shape_type": self.shape_type.value
+        }
     
 @dataclass
 class Cargos:

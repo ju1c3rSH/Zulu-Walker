@@ -75,8 +75,9 @@ class SystemConfig:
     
     MAIN_LOOP_DELAY = 0.1
     AUTO_START_MODULES = [
-        'uart_test',
+        #'uart_test',
         'zw_opencv_module',
+        'zw_uart_module',
     ]
 
 
