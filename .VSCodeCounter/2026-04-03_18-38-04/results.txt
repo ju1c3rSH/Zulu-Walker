@@ -1,0 +1,77 @@
+Date : 2026-04-03 18:38:04
+Directory : f:\zw\Zulu-Walker
+Total : 37 files,  4781 codes, 1268 comments, 1256 blanks, all 7305 lines
+
+Languages
++------------------+------------+------------+------------+------------+------------+
+| language         | files      | code       | comment    | blank      | total      |
++------------------+------------+------------+------------+------------+------------+
+| Python           |         30 |      4,314 |      1,245 |      1,127 |      6,686 |
+| Markdown         |          3 |        367 |          0 |        121 |        488 |
+| Log              |          1 |         67 |          0 |          1 |         68 |
+| YAML             |          1 |         25 |          1 |          3 |         29 |
+| pip requirements |          2 |          8 |         22 |          4 |         34 |
++------------------+------------+------------+------------+------------+------------+
+
+Directories
++-------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                | files      | code       | comment    | blank      | total      |
++-------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                   |         37 |      4,781 |      1,268 |      1,256 |      7,305 |
+| . (Files)                                                                           |          2 |         82 |         23 |         13 |        118 |
+| logs                                                                                |          1 |         67 |          0 |          1 |         68 |
+| logs\modules                                                                        |          1 |         67 |          0 |          1 |         68 |
+| modules                                                                             |         30 |      4,157 |      1,082 |      1,127 |      6,366 |
+| modules (Files)                                                                     |          1 |        163 |         44 |         40 |        247 |
+| modules\zw_opencv_module                                                            |         23 |      3,405 |        763 |        858 |      5,026 |
+| modules\zw_opencv_module (Files)                                                    |         13 |      1,590 |        324 |        417 |      2,331 |
+| modules\zw_opencv_module\_archived_tests                                            |          5 |      1,499 |        319 |        364 |      2,182 |
+| modules\zw_opencv_module\config                                                     |          1 |         25 |          1 |          3 |         29 |
+| modules\zw_opencv_module\processors                                                 |          4 |        291 |        119 |         74 |        484 |
+| modules\zw_uart_module                                                              |          6 |        589 |        275 |        229 |      1,093 |
+| utils                                                                               |          4 |        475 |        163 |        115 |        753 |
++-------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++-------------------------------------------------------------------------------------+------------------+------------+------------+------------+------------+
+| filename                                                                            | language         | code       | comment    | blank      | total      |
++-------------------------------------------------------------------------------------+------------------+------------+------------+------------+------------+
+| f:\zw\Zulu-Walker\logs\modules\SerialController.log                                 | Log              |         67 |          0 |          1 |         68 |
+| f:\zw\Zulu-Walker\main.py                                                           | Python           |         81 |          7 |         12 |        100 |
+| f:\zw\Zulu-Walker\modules\uart_test.py                                              | Python           |        163 |         44 |         40 |        247 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\TESTING_GUIDE.md                         | Markdown         |        134 |          0 |         39 |        173 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\__init__.py                              | Python           |         57 |         22 |         34 |        113 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\_archived_tests\qr_streaming_demo.py     | Python           |        434 |        115 |        111 |        660 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\_archived_tests\simple_stream_test.py    | Python           |        153 |         22 |         30 |        205 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\_archived_tests\test_hardware_encoder.py | Python           |        184 |         20 |         30 |        234 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\_archived_tests\test_qr_streaming.py     | Python           |        134 |         34 |         45 |        213 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\_archived_tests\test_visual.py           | Python           |        594 |        128 |        148 |        870 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\camera_manager.py                        | Python           |        351 |         66 |        102 |        519 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\camera_stream.py                         | Python           |         58 |         11 |         12 |         81 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\camera_tasks.py                          | Python           |        187 |         28 |         33 |        248 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\cargo_detector.py                        | Python           |        102 |         54 |         30 |        186 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\cargos.py                                | Python           |         70 |          7 |         13 |         90 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\check_hardware.py                        | Python           |        135 |         24 |         38 |        197 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\config\camera_config.yaml                | YAML             |         25 |          1 |          3 |         29 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\ffmpeg_pusher.py                         | Python           |        224 |         35 |         43 |        302 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\frame_composer.py                        | Python           |        139 |         31 |         32 |        202 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\processors\__init__.py                   | Python           |          3 |          1 |          2 |          6 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\processors\base.py                       | Python           |         27 |         23 |         10 |         60 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\processors\cargo_processor.py            | Python           |        136 |         70 |         41 |        247 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\processors\qr_processor.py               | Python           |        125 |         25 |         21 |        171 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\requirements.txt                         | pip requirements |          7 |          6 |          3 |         16 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\task_manager.py                          | Python           |         79 |         39 |         29 |        147 |
+| f:\zw\Zulu-Walker\modules\zw_opencv_module\task_sequence.py                         | Python           |         47 |          1 |          9 |         57 |
+| f:\zw\Zulu-Walker\modules\zw_uart_module\README.md                                  | Markdown         |        109 |          0 |         37 |        146 |
+| f:\zw\Zulu-Walker\modules\zw_uart_module\README_CN.md                               | Markdown         |        124 |          0 |         45 |        169 |
+| f:\zw\Zulu-Walker\modules\zw_uart_module\__init__.py                                | Python           |         68 |         42 |         38 |        148 |
+| f:\zw\Zulu-Walker\modules\zw_uart_module\exceptions.py                              | Python           |          8 |         10 |          9 |         27 |
+| f:\zw\Zulu-Walker\modules\zw_uart_module\protocol.py                                | Python           |         61 |         84 |         34 |        179 |
+| f:\zw\Zulu-Walker\modules\zw_uart_module\uart_driver.py                             | Python           |        219 |        139 |         66 |        424 |
+| f:\zw\Zulu-Walker\requirements.txt                                                  | pip requirements |          1 |         16 |          1 |         18 |
+| f:\zw\Zulu-Walker\utils\__init__.py                                                 | Python           |         12 |          0 |          0 |         12 |
+| f:\zw\Zulu-Walker\utils\log_util.py                                                 | Python           |        130 |         38 |         38 |        206 |
+| f:\zw\Zulu-Walker\utils\serial_controller.py                                        | Python           |        129 |         52 |         24 |        205 |
+| f:\zw\Zulu-Walker\utils\state.py                                                    | Python           |        204 |         73 |         53 |        330 |
+| Total                                                                               |                  |      4,781 |      1,268 |      1,256 |      7,305 |
++-------------------------------------------------------------------------------------+------------------+------------+------------+------------+------------+

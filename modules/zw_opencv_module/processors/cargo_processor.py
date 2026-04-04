@@ -9,11 +9,8 @@ import numpy as np
 from typing import Optional, Dict, Any
 from .base import Processor, VisionResult
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from cargo_detector import CargoDetector
-from cargos import CargoItem, Cargos
+from ..cargo_detector import CargoDetector
+from ..cargos import CargoItem, Cargos
 
 
 class CargoProcessor(Processor):

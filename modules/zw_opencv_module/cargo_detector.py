@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from cargos import Cargos, CargoItem, ShapeType
+from .cargos import Cargos, CargoItem, ShapeType
 
 
 class CargoDetector:

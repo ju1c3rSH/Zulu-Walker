@@ -13,7 +13,7 @@ module_dir = os.path.dirname(__file__)
 if module_dir not in sys.path:
     sys.path.insert(0, module_dir)
 
-from camera_manager import CameraManager
+from .camera_manager import CameraManager
 
 # Module-level instance
 _camera_manager: CameraManager = None

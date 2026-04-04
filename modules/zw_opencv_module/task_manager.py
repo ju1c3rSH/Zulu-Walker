@@ -3,7 +3,7 @@ from typing import Dict, List, Callable, Optional, Tuple
 from collections import OrderedDict
 import numpy as np
 
-from processors.base import VisionResult, Processor
+from .processors.base import VisionResult, Processor
 
 
 class Task:

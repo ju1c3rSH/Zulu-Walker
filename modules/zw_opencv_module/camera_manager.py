@@ -1,20 +1,28 @@
 # -*- coding: utf-8 -*-
+import os
+import sys
+
+# 添加项目根目录到 sys.path 以支持跨模块导入
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 import yaml
 from dataclasses import dataclass, field
 from typing import Dict, List, Union, Optional, Callable, Tuple
 from threading import Thread
 import numpy as np
 
-from camera_stream import CameraStream
-from task_manager import TaskManager, Task
-from task_sequence import TaskSequence
-from frame_composer import FrameComposer
-from ffmpeg_pusher import FFmpegPusher
-from processors.base import VisionResult
-from processors.qr_processor import QRProcessor
-from processors.cargo_processor import CargoProcessor
+from .camera_stream import CameraStream
+from .task_manager import TaskManager, Task
+from .task_sequence import TaskSequence
+from .frame_composer import FrameComposer
+from .ffmpeg_pusher import FFmpegPusher
+from .processors.base import VisionResult
+from .processors.qr_processor import QRProcessor
+from .processors.cargo_processor import CargoProcessor
 from utils.state import EventType, RobotState, get_state_machine
-from zw_uart_module.protocol import ERROR_TYPE_X, ERROR_TYPE_Y
+from modules.zw_uart_module.protocol import ERROR_TYPE_X, ERROR_TYPE_Y
 @dataclass
 class CameraConfig:
     """相机配置"""
@@ -262,8 +270,8 @@ class CameraManager:
             )
 
         # 注册 UART PICK 事件回调
-        import zw_uart_module
-        uart_interface = zw_uart_module.get_interface()
+        from modules.zw_uart_module import get_interface
+        uart_interface = get_interface()
         if uart_interface:
             uart_interface.add_pick_callback(self._on_uart_pick_event)
 
@@ -404,9 +412,9 @@ class CameraManager:
                 percent_error_y = error_data.get("percent_error_y", 0)
 
                 # 通过 UART 发送坐标偏差
-                import zw_uart_module
-                zw_uart_module.send_error(ERROR_TYPE_X, percent_error_x)
-                zw_uart_module.send_error(ERROR_TYPE_Y, percent_error_y)
+                from modules.zw_uart_module import send_error
+                send_error(ERROR_TYPE_X, percent_error_x)
+                send_error(ERROR_TYPE_Y, percent_error_y)
 
     def _on_uart_pick_event(self, zone_id: int):
         """处理 UART PICK 事件，推进到下一个货物"""
