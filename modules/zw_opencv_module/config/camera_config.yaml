@@ -3,7 +3,7 @@ system:
   output_width: 1280
   output_height: 720
   layout: "grid"  # grid, horizontal, vertical
-  enable_streaming: false  # 是否启用RTMP推流
+  enable_streaming: True  # 是否启用RTMP推流
   rtmp_url: "rtmp://localhost/live/stream"
 
 cameras:
@@ -18,7 +18,7 @@ cameras:
         enabled: true
 
   - id: "cam_1"
-    source: 1
+    source: 2
     width: 640
     height: 480
     enabled: true

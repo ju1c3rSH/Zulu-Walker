@@ -139,7 +139,7 @@ class STM32UartInterface:
     - Background frame parsing with state machine
     """
 
-    def __init__(self, port: str = "/dev/ttyS0", baudrate: int = 115200):
+    def __init__(self, port: str = "/dev/ttyS4", baudrate: int = 115200):
         """
         Initialize UART interface.
 
@@ -417,7 +417,7 @@ if __name__ == "__main__":
     # Demo usage (requires actual hardware)
     print("\n=== Hardware Demo ===")
     print("To test with hardware, run:")
-    print("  with STM32UartInterface('/dev/ttyS0', 115200) as uart:")
+    print("  with STM32UartInterface('/dev/ttyS4', 115200) as uart:")
     print("      while True:")
     print("          print(f'Zone: cur={uart.get_current_zone()}')")
     print("          time.sleep(0.1)")

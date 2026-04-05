@@ -10,12 +10,12 @@ from .log_util import UARTModuleLogger
 
 
 class SerialController:
-    def __init__(self,  port: str = "/dev/ttyS0", baudrate: int = 115200):
+    def __init__(self,  port: str = "/dev/ttyS4", baudrate: int = 115200):
         """
         @Brief: 初始化串口控制器
         
         @Args:
-            port: 串口设备，如 /dev/ttyS0, /dev/ttyUSB0
+            port: 串口设备，如 /dev/ttyS4, /dev/ttyUSB0
             baudrate: 波特率
             
         """

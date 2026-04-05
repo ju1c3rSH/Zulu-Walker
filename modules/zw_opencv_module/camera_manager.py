@@ -290,9 +290,8 @@ class CameraManager:
         """内部处理循环，持续执行"""
         # 如果启用推流，先启动FFmpegPusher
         if self.config and self.config.enable_streaming and self.ffmpeg_pusher:
-            import asyncio
             try:
-                asyncio.run(self.ffmpeg_pusher.start())
+                self.ffmpeg_pusher.start_sync()
             except Exception as e:
                 print(f"[CameraManager] Failed to start FFmpegPusher: {e}")
 
@@ -506,9 +505,7 @@ class CameraManager:
     def stop_streaming(self):
         """停止推流"""
         if self.ffmpeg_pusher:
-            import asyncio
-
-            asyncio.run(self.ffmpeg_pusher.close())
+            self.ffmpeg_pusher.close_sync()
             self.ffmpeg_pusher = None
 
     def release(self):

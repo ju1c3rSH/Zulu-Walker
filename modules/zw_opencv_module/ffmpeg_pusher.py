@@ -3,6 +3,7 @@ import asyncio
 import subprocess
 import cv2
 import numpy as np
+import threading
 from typing import Optional
 
 class FFmpegPusher:
@@ -17,6 +18,9 @@ class FFmpegPusher:
         self.use_hardware_accel = use_hardware_accel
         self.fallback_to_software = False # 添加一个标志来跟踪是否已经尝试过硬件编码
         self.hardware_encode_error = False # 检测到硬件编码错误
+        self._loop = None           # 后台事件循环
+        self._loop_thread = None    # 运行循环的线程
+        self._loop_lock = threading.Lock()  # 线程安全锁
 
     async def start(self):
         """启动FFmpeg进程"""
@@ -24,27 +28,32 @@ class FFmpegPusher:
             return
         self._stopped = False
         self.hardware_encode_error = False  # 重置硬件错误标志
-        
-        
-        command = [                                                                                                                                                                                                                                                                                                                'ffmpeg',
-            '-y',                    # 无害（输出覆盖）                                                                                                                                                                                                                                                                      
+
+        # 构建命令：输入参数 -> 编码器参数 -> 输出格式 -> URL
+        command = ['ffmpeg', '-y']
+
+        # 1. 输入参数
+        command.extend([
             '-f', 'rawvideo',        # 输入格式
-            '-vcodec', 'rawvideo',   # 输入编解码器（一致）
+            '-vcodec', 'rawvideo',   # 输入编解码器
             '-pix_fmt', 'bgr24',     # OpenCV默认格式
             '-s', f'{self.width}x{self.height}',  # 分辨率
             '-r', str(self.fps),     # 输入帧率
             '-i', '-',               # 从stdin读取
-            '-f', 'flv',             # 输出格式
-            '-flvflags', 'no_duration_filesize',  # FLV标志
-            self.rtmp_url
-        ]
-        #the up is the base command
-        
-        
+        ])
+
+        # 2. 编码器参数（必须在输出格式之前）
         if self.use_hardware_accel and not self.fallback_to_software:
             command.extend(self._get_hardware_accel_params())
         else:
             command.extend(self._get_software_encoder_params())
+
+        # 3. 输出格式和URL
+        command.extend([
+            '-f', 'flv',             # 输出格式
+            '-flvflags', 'no_duration_filesize',  # FLV标志
+            self.rtmp_url
+        ])
 
         print(f"启动FFmpeg命令: {' '.join(command)}")
         
@@ -81,44 +90,34 @@ class FFmpegPusher:
         if self.process is None:
             return
 
-        # 同时读取stdout和stderr
-        stdout_task = asyncio.create_task(self.process.stdout.read())
-        stderr_task = asyncio.create_task(self.process.stderr.read())
-
-        while not self._stopped:
-            done, pending = await asyncio.wait(
-                [stdout_task, stderr_task],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-
-            if self._stopped:
-                break
-
-            for task in done:
+        async def read_stream(stream, prefix):
+            """逐行读取流输出"""
+            while not self._stopped:
                 try:
-                    data = await task
-                    if data:
-                        # 打印FFmpeg的输出，特别是stderr中的错误信息
-                        try:
-                            text = data.decode('utf-8', errors='ignore').strip()
-                            if text:
-                                print(f"FFmpeg output: {text}")
-                                # 检测硬件编码错误
-                                error_keywords = ['h264_rkmpp', 'RKMPP', 'Hardware', 'failed', 'error', 'Invalid', 'unsupported', 'not found']
-                                if any(keyword.lower() in text.lower() for keyword in error_keywords):
-                                    print(f"检测到可能的硬件编码错误: {text[:100]}")
-                                    self.hardware_encode_error = True
-                        except:
-                            # 如果无法解码，忽略
-                            pass
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    text = line.decode('utf-8', errors='ignore').strip()
+                    if text:
+                        print(f"[{prefix}] {text}")
+                        # 检测硬件编码错误
+                        error_keywords = ['h264_rkmpp', 'RKMPP', 'Hardware', 'failed', 'error', 'Invalid', 'unsupported', 'not found', 'Connection refused']
+                        if any(keyword.lower() in text.lower() for keyword in error_keywords):
+                            print(f"[FFmpegPusher] 检测到可能的错误: {text[:200]}")
+                            if 'h264_rkmpp' in text.lower() or 'rkmpp' in text.lower():
+                                self.hardware_encode_error = True
+                except asyncio.CancelledError:
+                    break
                 except Exception as e:
-                    print(f"Error reading FFmpeg output: {e}")
+                    print(f"Error reading {prefix}: {e}")
+                    break
 
-            # 重新启动已完成的任务
-            if stdout_task in done:
-                stdout_task = asyncio.create_task(self.process.stdout.read())
-            if stderr_task in done:
-                stderr_task = asyncio.create_task(self.process.stderr.read())
+        # 同时启动 stdout 和 stderr 读取任务
+        stdout_task = asyncio.create_task(read_stream(self.process.stdout, "FFmpeg-out"))
+        stderr_task = asyncio.create_task(read_stream(self.process.stderr, "FFmpeg-err"))
+
+        # 等待两个任务完成
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
 
     def _get_software_encoder_params(self):
         """获取软件编码器参数"""
@@ -186,6 +185,12 @@ class FFmpegPusher:
             print("FFmpeg process not started or stdin closed")
             return False
 
+        # 检查进程是否还在运行
+        if self.process.returncode is not None:
+            print(f"FFmpeg process has exited with code {self.process.returncode}")
+            await self.close()
+            return False
+
         # 检查帧尺寸是否匹配
         if frame.shape[0] != self.height or frame.shape[1] != self.width:
             print(f"Warning: Frame size {frame.shape[:2]} doesn't match expected {self.height}x{self.width}")
@@ -194,8 +199,12 @@ class FFmpegPusher:
 
         try:
             # 写入帧数据
-            self.process.stdin.write(frame.tobytes())
+            data = frame.tobytes()
+            print(f"[FFmpegPusher] Writing {len(data)} bytes to FFmpeg stdin")
+            self.process.stdin.write(data)
+            print(f"[FFmpegPusher] Data written, calling drain...")
             await self.process.stdin.drain()
+            print(f"[FFmpegPusher] Drain completed successfully")
             return True
         except BrokenPipeError:
             print("Error pushing frame: Broken pipe - FFmpeg process may have terminated")
@@ -255,35 +264,69 @@ class FFmpegPusher:
 
             self.process = None
 
-    # 同步包装器，便于在同步代码中使用
-    def push_frame_sync(self, frame):
-        """同步推送帧（在已有事件循环中运行）"""
+    def _get_or_create_loop(self):
+        """获取或创建后台事件循环（线程安全）"""
+        with self._loop_lock:
+            if self._loop is None or self._loop.is_closed():
+                self._loop = asyncio.new_event_loop()
+                self._loop_thread = threading.Thread(
+                    target=self._run_loop,
+                    args=(self._loop,),
+                    daemon=True
+                )
+                self._loop_thread.start()
+            return self._loop
+
+    def _run_loop(self, loop):
+        """在后台线程中运行事件循环"""
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    def start_sync(self):
+        """同步启动 FFmpeg（使用后台事件循环）"""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 如果事件循环已在运行，我们需要在另一个线程中运行
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(lambda: asyncio.run(self.push_frame(frame)))
-                    return future.result()
-            else:
-                # 没有运行的事件循环，直接运行
-                return asyncio.run(self.push_frame(frame))
+            loop = self._get_or_create_loop()
+            future = asyncio.run_coroutine_threadsafe(self.start(), loop)
+            return future.result(timeout=10.0)
+        except Exception as e:
+            print(f"Error in start_sync: {e}")
+            return False
+    def push_frame_sync(self, frame):
+        """同步推送帧（使用后台事件循环，支持高频调用）"""
+        try:
+            loop = self._get_or_create_loop()
+            future = asyncio.run_coroutine_threadsafe(
+                self.push_frame(frame), loop
+            )
+            # 5秒超时，避免无限等待
+            return future.result(timeout=5.0)
         except Exception as e:
             print(f"Error in push_frame_sync: {e}")
             return False
 
     def close_sync(self):
-        """同步关闭"""
+        """同步关闭（包含事件循环清理）"""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(lambda: asyncio.run(self.close()))
-                    return future.result()
-            else:
-                asyncio.run(self.close())
+            # 先关闭 FFmpeg 进程
+            if self._loop and not self._loop.is_closed():
+                future = asyncio.run_coroutine_threadsafe(
+                    self.close(), self._loop
+                )
+                try:
+                    future.result(timeout=10.0)
+                except Exception as e:
+                    print(f"Error during close: {e}")
+
+            # 停止事件循环
+            with self._loop_lock:
+                if self._loop and not self._loop.is_closed():
+                    self._loop.call_soon_threadsafe(self._loop.stop)
+                    # 等待线程结束
+                    if self._loop_thread and self._loop_thread.is_alive():
+                        self._loop_thread.join(timeout=2.0)
+                    self._loop.close()
+                    self._loop = None
+                    self._loop_thread = None
         except Exception as e:
             print(f"Error in close_sync: {e}")
 
