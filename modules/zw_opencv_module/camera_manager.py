@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
+import time
 
 # 添加项目根目录到 sys.path 以支持跨模块导入
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -295,7 +296,12 @@ class CameraManager:
             except Exception as e:
                 print(f"[CameraManager] Failed to start FFmpegPusher: {e}")
 
+        target_fps = 30
+        frame_interval = 1.0 / target_fps
+
         while self._running:
+            start_time = time.time()
+
             sm = get_state_machine()
             current_state = sm.state
 
@@ -320,6 +326,12 @@ class CameraManager:
                     cb(all_results)
                 except Exception as e:
                     print(f"Error in result callback: {e}")
+
+            # 帧率控制
+            elapsed = time.time() - start_time
+            sleep_time = frame_interval - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
     def _update_tasks_by_state(self, state: RobotState):
         """根据状态更新任务开关"""
@@ -444,17 +456,29 @@ class CameraManager:
     def process_all(
         self,
     ) -> Tuple[Optional[np.ndarray], Dict[str, Dict[str, VisionResult]]]:
-        """处理所有启用的相机，返回融合画面和所有结果"""
+        """处理所有相机，返回融合画面和所有结果"""
         frames = []
         all_results: Dict[str, Dict[str, VisionResult]] = {}
         camera_ids = []
 
-        for cam in self.get_all_enabled_cameras():
-            frame, results = cam.process_frame()
-            if frame is not None:
+        # 遍历所有相机（不只是启用的），保持布局稳定
+        for cam in self.cameras.values():
+            if not cam.enabled:
+                # 禁用的相机用黑屏占位
+                frame = np.zeros((cam.config.height, cam.config.width, 3), dtype=np.uint8)
                 frames.append(frame)
                 camera_ids.append(cam.camera_id)
-                all_results[cam.camera_id] = results
+                all_results[cam.camera_id] = {}
+                continue
+
+            frame, results = cam.process_frame()
+            # 即使 frame 为 None，也保持相机位置和顺序
+            if frame is None:
+                # 创建黑屏帧占位，保持布局稳定
+                frame = np.zeros((cam.config.height, cam.config.width, 3), dtype=np.uint8)
+            frames.append(frame)
+            camera_ids.append(cam.camera_id)
+            all_results[cam.camera_id] = results
 
         if not frames:
             return None, all_results

@@ -41,9 +41,6 @@ class FrameComposer:
         if not frames:
             return self._create_empty_frame()
 
-        if len(frames) == 1:
-            return self._resize_single_frame(frames[0])
-
         labels = camera_ids or self.labels
 
         if self.layout == "grid":
