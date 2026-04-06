@@ -46,6 +46,7 @@ class CameraStream:
     def _update(self):
         while self.running:
             ret, frame = self.cap.read()
+            #print(f"CameraStream: Read frame - ret={ret}, frame_shape={frame.shape if ret else 'N/A'}")
             if not ret:
                 print("Can't receive frame (stream end?). Exiting ...")
                 self.running = False

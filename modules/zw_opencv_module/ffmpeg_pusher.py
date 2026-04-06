@@ -101,7 +101,7 @@ class FFmpegPusher:
                     if text:
                         print(f"[{prefix}] {text}")
                         # 检测硬件编码错误
-                        error_keywords = ['h264_rkmpp', 'RKMPP', 'Hardware', 'failed', 'error', 'Invalid', 'unsupported', 'not found', 'Connection refused']
+                        error_keywords = ['failed', 'error', 'Invalid', 'unsupported', 'not found', 'Connection refused']
                         if any(keyword.lower() in text.lower() for keyword in error_keywords):
                             print(f"[FFmpegPusher] 检测到可能的错误: {text[:200]}")
                             if 'h264_rkmpp' in text.lower() or 'rkmpp' in text.lower():
@@ -172,39 +172,33 @@ class FFmpegPusher:
             print("Warning: Received an empty frame. Skipping.")
             return False
 
-        # 检查是否检测到硬件编码错误并需要回退
         if self.hardware_encode_error and self.use_hardware_accel and not self.fallback_to_software:
             print("检测到硬件编码错误，尝试回退到软件编码...")
             self.fallback_to_software = True
             if self.process:
                 await self.close()
             await self.start()
-            # 继续推送帧
 
         if self.process is None or self.process.stdin is None:
             print("FFmpeg process not started or stdin closed")
             return False
 
-        # 检查进程是否还在运行
         if self.process.returncode is not None:
             print(f"FFmpeg process has exited with code {self.process.returncode}")
             await self.close()
             return False
 
-        # 检查帧尺寸是否匹配
         if frame.shape[0] != self.height or frame.shape[1] != self.width:
             print(f"Warning: Frame size {frame.shape[:2]} doesn't match expected {self.height}x{self.width}")
-            # 调整帧尺寸
             frame = cv2.resize(frame, (self.width, self.height))
 
         try:
-            # 写入帧数据
             data = frame.tobytes()
-            print(f"[FFmpegPusher] Writing {len(data)} bytes to FFmpeg stdin")
+            # print(f"[FFmpegPusher] Writing {len(data)} bytes to FFmpeg stdin")
             self.process.stdin.write(data)
-            print(f"[FFmpegPusher] Data written, calling drain...")
+            #print(f"[FFmpegPusher] Data written, calling drain...")
             await self.process.stdin.drain()
-            print(f"[FFmpegPusher] Drain completed successfully")
+            #print(f"[FFmpegPusher] Drain completed successfully")
             return True
         except BrokenPipeError:
             print("Error pushing frame: Broken pipe - FFmpeg process may have terminated")
@@ -216,7 +210,6 @@ class FFmpegPusher:
                 self.fallback_to_software = True
                 # 重新启动使用软件编码
                 await self.start()
-                # 重试推送当前帧
                 return await self.push_frame(frame)
             return False
         except Exception as e:
@@ -254,7 +247,6 @@ class FFmpegPusher:
                 self.process.stdin.close()
                 await self.process.stdin.wait_closed()
 
-            # 等待进程结束
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=5.0)
             except asyncio.TimeoutError:

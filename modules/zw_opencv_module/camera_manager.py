@@ -56,6 +56,7 @@ class Camera:
         self.enabled = config.enabled
         self.stream: Optional[CameraStream] = None
         self.task_manager = TaskManager()
+        self._last_frame: Optional[np.ndarray] = None  # 缓存最后一帧
         self._setup_stream(config)
         self._setup_tasks(config.tasks)
 
@@ -113,12 +114,19 @@ class Camera:
         return self.stream.read_frame()
 
     def process_frame(self) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
-        """获取帧并执行所有任务"""
+        """获取帧并执行所有任务，无新帧时返回缓存帧"""
         if not self.enabled:
             return None, {}
 
         frame = self.get_frame()
-        if frame is None:
+        if frame is not None:
+            # 有新帧，更新缓存
+            self._last_frame = frame
+        elif self._last_frame is not None:
+            # 无新帧，使用缓存帧
+            frame = self._last_frame
+        else:
+            # 无缓存帧（首次读取失败）
             return None, {}
 
         return self.task_manager.run_tasks_serial(frame)
