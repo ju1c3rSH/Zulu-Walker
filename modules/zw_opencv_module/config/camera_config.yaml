@@ -8,7 +8,7 @@ system:
 
 cameras:
   - id: "cam_0"
-    source: 2
+    source: 0
     width: 640
     height: 480
     enabled: true
@@ -17,12 +17,12 @@ cameras:
         type: "QRProcessor"
         enabled: true
 
-  - id: "cam_1"
-    source: 0
-    width: 640
-    height: 480
-    enabled: true
-    tasks:
-      - name: "cargo_detect"
-        type: "CargoProcessor"
-        enabled: false
+  # - id: "cam_1"
+  #   source: 0
+  #   width: 640
+  #   height: 480
+  #   enabled: true
+  #   tasks:
+  #     - name: "cargo_detect"
+  #       type: "CargoProcessor"
+  #       enabled: false

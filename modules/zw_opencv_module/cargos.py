@@ -1,4 +1,3 @@
-import cv2
 import numpy as np
 from typing import List, Tuple, Dict, Optional, Any
 from dataclasses import dataclass, field
@@ -87,4 +86,4 @@ class Cargos:
     def to_json(self) -> str:
         """转换为JSON字符串"""
         import json
-        return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)    
+        return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)   

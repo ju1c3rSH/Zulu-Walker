@@ -73,7 +73,7 @@ class Camera:
         for task_config in task_configs:
             task_name = task_config.get("name", "")
             task_type = task_config.get("type", "")
-            task_enabled = task_config.get("enabled", True)
+            task_enabled = task_config.get("enabled", True) 
 
             processor = self._create_processor(task_type, task_name)
             if processor:
@@ -81,11 +81,13 @@ class Camera:
                 self.task_manager.register_task(task)
 
     def _create_processor(self, task_type: str, name: str):
+        TODO = "Make this function more flexible by using a registry or factory pattern for processors,even a reflection-based approach if needed. This way, you can easily add new processor types without modifying this function."
         if task_type == "QRProcessor":
             return QRProcessor(name)
         elif task_type == "CargoProcessor":
             return CargoProcessor(name)
         return None
+    
 
     def enable(self):
         """启用相机"""
@@ -139,8 +141,6 @@ class Camera:
 
 
 class CameraManager:
-    """相机管理器（单例），管理多个相机"""
-
     _instance: Optional["CameraManager"] = None
 
     def __new__(cls):
@@ -396,10 +396,8 @@ class CameraManager:
 
         self.task_sequence = TaskSequence.from_qr_data(qr_data)
 
-        # 关闭 cam_0 的 qr_detect 任务
         self.disable_task("cam_0", "qr_detect")
 
-        # 开启 cam_1 的 cargo_detect 任务
         self.enable_task("cam_1", "cargo_detect")
 
         # 设置目标颜色
@@ -469,7 +467,6 @@ class CameraManager:
         all_results: Dict[str, Dict[str, VisionResult]] = {}
         camera_ids = []
 
-        # 遍历所有相机（不只是启用的），保持布局稳定
         for cam in self.cameras.values():
             if not cam.enabled:
                 # 禁用的相机用黑屏占位

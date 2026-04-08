@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from typing import Any
-from camera_stream import CameraStream
-from task_sequence import TaskSequence
+from ..camera_stream import CameraStream
+from ..task_sequence import TaskSequence
 
 import cv2
 
