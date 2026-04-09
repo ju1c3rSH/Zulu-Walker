@@ -4,7 +4,7 @@ system:
   output_height: 720
   layout: "grid"  # grid, horizontal, vertical
   enable_streaming: True  # 是否启用RTMP推流
-  rtmp_url: "rtmp://localhost/live/stream"
+  rtmp_url: "rtmp://192.168.31.158/live/livestream"
 
 cameras:
   - id: "cam_0"
@@ -13,16 +13,6 @@ cameras:
     height: 480
     enabled: true
     tasks:
-      - name: "qr_detect"
-        type: "QRProcessor"
+      - name: "circle_detect"
+        type: "CircleTargetProcessor"
         enabled: true
-
-  # - id: "cam_1"
-  #   source: 0
-  #   width: 640
-  #   height: 480
-  #   enabled: true
-  #   tasks:
-  #     - name: "cargo_detect"
-  #       type: "CargoProcessor"
-  #       enabled: false

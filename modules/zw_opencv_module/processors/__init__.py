@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 from .base import Processor, VisionResult
-from .qr_processor import QRProcessor
-from .cargo_processor import CargoProcessor
+from .circle_target_processor import CircleTargetProcessor
 
-__all__ = ["Processor", "VisionResult", "QRProcessor", "CargoProcessor"]
+__all__ = ["Processor", "VisionResult", "CircleTargetProcessor"]

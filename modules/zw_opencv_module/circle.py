@@ -12,12 +12,11 @@ class ShapeType(Enum):
 
 @dataclass
 class CircleTargetItem:
-        #其实是进行椭圆拟合
-    shape_type: ShapeType = ShapeType.UNKNOWN
     index: int
     center_coordinates: Tuple[int, int]
     radius: float
     area: float
+    shape_type: ShapeType = ShapeType.UNKNOWN
     contour_points: Optional[np.ndarray] = None
     bounding_box: Optional[Tuple[int, int, int, int]] = None
     color: Optional[str] = None
