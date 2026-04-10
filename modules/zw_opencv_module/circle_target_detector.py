@@ -17,8 +17,9 @@ class CircleTargetDetector:
         self.name = name
         self.color_ranges = {
             "Red": [
-                (np.array([0, 50, 50]), np.array([10, 255, 255])),
-                (np.array([170, 50, 50]), np.array([180, 255, 255])),
+                
+                (np.array([0, 100, 100]), np.array([5, 255, 255])),      # 纯红
+                (np.array([175, 100, 100]), np.array([180, 255, 255]))   # 深红               (np.array([0, 50, 50]), np.array([10, 255, 255]))
             ],
             "Green": [(np.array([40, 50, 50]), np.array([80, 255, 255]))],
             "Blue": [(np.array([100, 50, 50]), np.array([130, 255, 255]))],
@@ -26,7 +27,7 @@ class CircleTargetDetector:
         }
         self.circle_target = CircleTargets()
         self.min_area_threshold = 100  # 最小面积阈值
-        self.min_contour_points = 5    # 椭圆拟合最少需要5个点
+        self.min_contour_points = 20    # 椭圆拟合最少需要20个点
 
         self.detect_method = DetectMethod.CONTOUR_ELLIPSE
 
@@ -75,6 +76,15 @@ class CircleTargetDetector:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
         colors_to_detect = [target_color] if target_color else list(self.color_ranges.keys())
+        h, s, v = cv2.split(hsv)
+        red_hue1 = cv2.inRange(h, 0, 8)      # 更窄的范围：0-8
+        red_hue2 = cv2.inRange(h, 172, 180)  # 更窄的范围：172-180
+        red_hue = cv2.bitwise_or(red_hue1, red_hue2)
+        good_value = cv2.inRange(v, 60, 230) 
+        high_saturation = cv2.inRange(s, 100, 255)
+        bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+        b, g, r = cv2.split(bgr)
+        r_dominant = cv2.inRange(r - np.maximum(b, g), 30, 255) 
 
         for color_name in colors_to_detect:
             if color_name not in self.color_ranges:
@@ -83,6 +93,9 @@ class CircleTargetDetector:
             kernel = np.ones((3, 3), np.uint8)
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            mask = cv2.bitwise_and(red_hue, high_saturation)
+            mask = cv2.bitwise_and(mask, good_value)
+            mask = cv2.bitwise_and(mask, r_dominant)
 
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for contour in contours:
@@ -99,6 +112,7 @@ class CircleTargetDetector:
     def _detect_by_hough_ellipse(self, frame: np.ndarray, target_color: Optional[str] = None):
         """
         霍夫椭圆变换（skimage）
+        有大问题，还没排查出来，暂时不建议使用
         """
         try:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)

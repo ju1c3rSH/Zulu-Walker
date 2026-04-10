@@ -30,7 +30,15 @@ class CircleTargetItem:
             "bounding_box": self.bounding_box,
             "color": self.color
         }
-
+    def __eq__(self, other):
+        """定义相等性比较（基于index）"""
+        if not isinstance(other, CircleTargetItem):
+            return False
+        return self.index == other.index
+    
+    def __hash__(self):
+        """使对象可哈希（用于集合）"""
+        return hash(self.index)   
 @dataclass
 class CircleTargets:
     targets: List[CircleTargetItem] = field(default_factory=list)
