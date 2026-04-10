@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import time
 from typing import Optional
 from ..circle_target_detector import CircleTargetDetector, DetectMethod
 from ..circle import CircleTargetItem, CircleTargets
@@ -18,6 +19,10 @@ class CircleTargetProcessor(Processor):
         self.target_color: Optional[str] = None  # 目标颜色
         self._frame_width: int = 640
         self._frame_height: int = 480
+        
+        self._fps_frame_count = 0
+        self._fps_start_time = time.time()
+        self._fps = 0.0
 
     def set_target_color(self, color: Optional[str]):
         """
@@ -48,6 +53,14 @@ class CircleTargetProcessor(Processor):
         Returns:
             VisionResult: 包含检测结果和坐标偏差
         """
+
+        self._fps_frame_count += 1
+        elapsed = time.time() - self._fps_start_time
+        if elapsed >= 1.0:
+            self._fps = self._fps_frame_count / elapsed
+            self._fps_frame_count = 0
+            self._fps_start_time = time.time()
+
         if frame is None:
             return VisionResult(
                 task_name=self.name,
@@ -99,6 +112,9 @@ class CircleTargetProcessor(Processor):
             )
 
         except Exception as e:
+            print(f"[CircleTargetProcessor] Error processing frame: {e}")
+            import traceback
+            traceback.print_exc()
             return VisionResult(
                 task_name=self.name,
                 success=False,
@@ -250,12 +266,15 @@ class CircleTargetProcessor(Processor):
     def _draw_status_info(self, frame: np.ndarray, result: VisionResult, target_found: bool):
         """绘制状态信息"""
         # 背景
-        cv2.rectangle(frame, (5, 5), (400, 125), (0, 0, 0), -1)
+        cv2.rectangle(frame, (5, 5), (400, 150), (0, 0, 0), -1)
+
+        fps_text = f"FPS: {self._fps:.1f}"
+        cv2.putText(frame, fps_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
         # 检测方法
         method_name = self.detector.detect_method.value
         method_text = f"Method: {method_name}"
-        cv2.putText(frame, method_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        cv2.putText(frame, method_text, (120, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
         # 目标颜色
         target_color = result.result_data.get("target_color", "Any")

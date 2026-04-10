@@ -7,6 +7,7 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+import cv2
 import yaml
 from dataclasses import dataclass, field
 from typing import Dict, List, Union, Optional, Callable, Tuple
@@ -39,6 +40,7 @@ class CameraSystemConfig:
     layout: str = "grid"
     enable_streaming: bool = False
     rtmp_url: str = ""
+    enable_local_display: bool = False  # 本地显示窗口
     cameras: List[CameraConfig] = field(default_factory=list)
 
 
@@ -177,6 +179,7 @@ class CameraManager:
             layout=system.get("layout", "grid"),
             enable_streaming=system.get("enable_streaming", False),
             rtmp_url=system.get("rtmp_url", ""),
+            enable_local_display=system.get("enable_local_display", False),
         )
 
         self.frame_composer = FrameComposer(
@@ -286,8 +289,22 @@ class CameraManager:
         target_fps = 30
         frame_interval = 1.0 / target_fps
 
+        # FPS 计算和日志输出
+        fps_frame_count = 0
+        fps_start_time = time.time()
+        fps = 0.0
+        log_interval = 30  # 每30帧输出一次日志
+
         while self._running:
             start_time = time.time()
+
+            # 更新 FPS
+            fps_frame_count += 1
+            elapsed_fps = time.time() - fps_start_time
+            if elapsed_fps >= 1.0:
+                fps = fps_frame_count / elapsed_fps
+                fps_frame_count = 0
+                fps_start_time = time.time()
 
             composed_frame, all_results = self.process_all()
 
@@ -298,6 +315,23 @@ class CameraManager:
             if self.config and self.config.enable_streaming:
                 if self.ffmpeg_pusher and composed_frame is not None:
                     self.ffmpeg_pusher.push_frame_sync(composed_frame)
+
+            # 本地显示窗口
+            if self.config and self.config.enable_local_display and composed_frame is not None:
+                cv2.imshow("Zulu-Walker Camera", composed_frame)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q') or key == 27:  # q 或 ESC 退出
+                    self._running = False
+                    break
+
+            # 定期日志输出
+            if fps_frame_count == 0 and fps > 0:
+                ctx = self.state_machine.context
+                status = "TRACKING" if ctx.target_found else "SEARCHING"
+                target_info = ""
+                if ctx.target_found and ctx.target_center:
+                    target_info = f" | Target: {ctx.target_center} | Error: X={ctx.percent_error_x:+d}, Y={ctx.percent_error_y:+d}"
+                print(f"[CameraManager] FPS: {fps:.1f} | State: {status}{target_info}")
 
             for cb in self._result_callbacks:
                 try:

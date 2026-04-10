@@ -100,45 +100,54 @@ class CircleTargetDetector:
         """
         霍夫椭圆变换（skimage）
         """
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        try:
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
 
-        colors_to_detect = [target_color] if target_color else list(self.color_ranges.keys())
+            colors_to_detect = [target_color] if target_color else list(self.color_ranges.keys())
 
-        for color_name in colors_to_detect:
-            if color_name not in self.color_ranges:
-                continue
-            mask = self._get_color_mask(hsv, color_name)
-            masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
-            
-            ellipses = transform.hough_ellipse(
-                masked_edges,
-                accuracy=self.hough_ellipse_accuracy,
-                threshold=self.hough_ellipse_threshold,
-                min_size=self.hough_ellipse_min_size,
-                max_size=self.hough_ellipse_max_size
-            )
-            if ellipses is not None and len(ellipses) > 0:
-                # 按累加器值排序
-                ellipses = sorted(ellipses, key=lambda e: e[-1], reverse=True)
-                for e in ellipses:
-                    cy, cx, a, b, angle, acc = e
-                    cx, cy = int(round(cx)), int(round(cy))
-                    a, b = int(round(a)), int(round(b)) 
-                    radius = int(np.sqrt(a * b))
+            for color_name in colors_to_detect:
+                if color_name not in self.color_ranges:
+                    continue
+                mask = self._get_color_mask(hsv, color_name)
+                masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
 
-                    target_item = CircleTargetItem(
-                        shape_type=None,
-                        index=0,
-                        center_coordinates=(cx, cy),
-                        radius=radius,
-                        area=np.pi * a * b,
-                        contour_points=None,  # 霍夫方法没有轮廓点
-                        bounding_box=(cx - a, cy - b, cx + a, cy + b),
-                        color=color_name
-                    )
-                    self.circle_target.add_target(target_item)
+                # 检查边缘图像是否有效
+                if masked_edges.max() == 0:
+                    continue
+
+                ellipses = transform.hough_ellipse(
+                    masked_edges,
+                    accuracy=self.hough_ellipse_accuracy,
+                    threshold=self.hough_ellipse_threshold,
+                    min_size=self.hough_ellipse_min_size,
+                    max_size=self.hough_ellipse_max_size
+                )
+                if ellipses is not None and len(ellipses) > 0:
+                    # 按累加器值排序
+                    ellipses = sorted(ellipses, key=lambda e: e[-1], reverse=True)
+                    for e in ellipses:
+                        cy, cx, a, b, angle, acc = e
+                        cx, cy = int(round(cx)), int(round(cy))
+                        a, b = int(round(a)), int(round(b))
+                        radius = int(np.sqrt(a * b))
+
+                        target_item = CircleTargetItem(
+                            shape_type=None,
+                            index=0,
+                            center_coordinates=(cx, cy),
+                            radius=radius,
+                            area=np.pi * a * b,
+                            contour_points=None,  # 霍夫方法没有轮廓点
+                            bounding_box=(cx - a, cy - b, cx + a, cy + b),
+                            color=color_name
+                        )
+                        self.circle_target.add_target(target_item)
+        except Exception as e:
+            print(f"[CircleTargetDetector] Hough ellipse detection error: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _detect_by_hough_circle(self, frame: np.ndarray, target_color: Optional[str] = None):
         """
