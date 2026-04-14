@@ -4,6 +4,7 @@ from collections import OrderedDict
 import numpy as np
 
 from .processors.base import VisionResult, Processor
+from .performance import profiler
 
 
 class Task:
@@ -99,7 +100,7 @@ class TaskManager:
             self.result_callbacks.remove(callback)
 
     def run_tasks_serial(
-        self, frame: np.ndarray
+        self, frame: np.ndarray, fps: float = 0.0
     ) -> Tuple[np.ndarray, Dict[str, VisionResult]]:
         """
         串行执行所有启用的Task
@@ -108,6 +109,7 @@ class TaskManager:
 
         Args:
             frame: 输入图像帧
+            fps: 当前帧率（用于显示）
 
         Returns:
             Tuple[np.ndarray, Dict[str, VisionResult]]: 处理后的帧和所有结果
@@ -115,17 +117,25 @@ class TaskManager:
         if frame is None:
             return None, {}
 
-        context: Dict[str, VisionResult] = {}
+        context: Dict[str, VisionResult] = {'fps': fps}
         processed_frame = frame.copy()
 
         for task in self.tasks.values():
             if task.enabled:
+                # 计时：任务处理
+                timer_name = f"task_{task.name}_process"
+                profiler.start(timer_name)
                 result = task.execute(processed_frame, context)
+                profiler.stop(timer_name)
+
                 context[task.name] = result
 
                 # 在帧上绘制结果
                 if result is not None:
+                    draw_timer_name = f"task_{task.name}_draw"
+                    profiler.start(draw_timer_name)
                     processed_frame = task.processor.draw_result(processed_frame, result)
+                    profiler.stop(draw_timer_name)
 
                 # 触发回调
                 for callback in self.result_callbacks:

@@ -7,7 +7,7 @@ Provides camera stream management, QR code detection, and RTMP streaming capabil
 
 import os
 import sys
-
+import cv2
 # Add module directory to path for internal imports
 module_dir = os.path.dirname(__file__)
 if module_dir not in sys.path:
@@ -26,7 +26,7 @@ def init():
     global _camera_manager, _config_path
 
     print("[zw_opencv_module] Initializing...")
-
+    print(cv2.getBuildInformation())
     # Default config path
     _config_path = os.path.join(module_dir, "config", "camera_config.yaml")
 

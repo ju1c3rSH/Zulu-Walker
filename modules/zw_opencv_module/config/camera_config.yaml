@@ -1,17 +1,17 @@
 # Camera System Configuration
 system:
-  output_width: 1280
-  output_height: 720
+  output_width: 320
+  output_height: 240
   layout: "grid"  # grid, horizontal, vertical
-  enable_streaming: True  # 是否启用RTMP推流
+  enable_streaming: False  # 是否启用RTMP推流
   rtmp_url: "rtmp://192.168.31.158/live/livestream"
   enable_local_display: False  # 是否启用本地显示窗口（需要X11环境）
 
 cameras:
   - id: "cam_0"
     source: 0
-    width: 640
-    height: 480
+    width: 320
+    height: 240
     enabled: true
     tasks:
       - name: "circle_detect"

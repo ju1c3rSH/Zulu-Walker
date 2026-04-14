@@ -68,10 +68,13 @@ class CameraStream:
                 pass
 
     def read_frame(self):
-        try:
-            return self.queue.get_nowait()
-        except:
-            return None
+        """读取帧（从队列获取）"""
+        from .performance import profiler
+        with profiler.timer("frame_capture"):
+            try:
+                return self.queue.get_nowait()
+            except:
+                return None
 
     def release(self):
         self.running = False

@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import time
 from typing import Optional
 from ..circle_target_detector import CircleTargetDetector, DetectMethod
 from ..circle import CircleTargetItem, CircleTargets
@@ -19,10 +18,8 @@ class CircleTargetProcessor(Processor):
         self.target_color: Optional[str] = None  # 目标颜色
         self._frame_width: int = 640
         self._frame_height: int = 480
-        
-        self._fps_frame_count = 0
-        self._fps_start_time = time.time()
-        self._fps = 0.0
+        self._fps: float = 0.0  # 从外部获取的FPS
+        cv2.ocl.setUseOpenCL(True)
 
     def set_target_color(self, color: Optional[str]):
         """
@@ -48,18 +45,15 @@ class CircleTargetProcessor(Processor):
 
         Args:
             frame: 输入图像帧
-            context: 上下文（未使用）
+            context: 上下文，可包含 'fps' 键
 
         Returns:
             VisionResult: 包含检测结果和坐标偏差
         """
 
-        self._fps_frame_count += 1
-        elapsed = time.time() - self._fps_start_time
-        if elapsed >= 1.0:
-            self._fps = self._fps_frame_count / elapsed
-            self._fps_frame_count = 0
-            self._fps_start_time = time.time()
+        # 从 context 获取 FPS（由 CameraManager 计算）
+        if context and 'fps' in context:
+            self._fps = context['fps']
 
         if frame is None:
             return VisionResult(
@@ -69,13 +63,10 @@ class CircleTargetProcessor(Processor):
             )
 
         try:
-            # 更新帧尺寸
             self._frame_height, self._frame_width = frame.shape[:2]
 
-            # 检测目标
             targets = self.detector.detect_circle_targets(frame, target_color=self.target_color)
 
-            # 找到目标
             target = self._find_target(targets)
 
             if target is None:

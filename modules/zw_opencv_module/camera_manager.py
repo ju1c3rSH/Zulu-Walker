@@ -20,6 +20,7 @@ from .frame_composer import FrameComposer
 from .ffmpeg_pusher import FFmpegPusher
 from .processors.base import VisionResult
 from .processors.circle_target_processor import CircleTargetProcessor
+from .performance import profiler
 from utils.state_machine import VisualStateMachine
 from modules.zw_uart_module.protocol import ERROR_TYPE_X, ERROR_TYPE_Y
 
@@ -98,7 +99,7 @@ class Camera:
             return None
         return self.stream.read_frame()
 
-    def process_frame(self) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
+    def process_frame(self, fps: float = 0.0) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
         if not self.enabled:
             return None, {}
 
@@ -110,7 +111,12 @@ class Camera:
         else:
             return None, {}
 
-        return self.task_manager.run_tasks_serial(frame)
+        # 计时：处理阶段
+        profiler.start("processing")
+        result = self.task_manager.run_tasks_serial(frame, fps=fps)
+        profiler.stop("processing")
+
+        return result
 
     def release(self):
         if self.stream:
@@ -141,6 +147,11 @@ class CameraManager:
         self._running = False
         self._process_thread: Optional[Thread] = None
         self._result_callbacks: List[Callable[[Dict], None]] = []
+
+        # FPS 计算
+        self._fps_frame_count = 0
+        self._fps_start_time = time.time()
+        self._fps = 0.0
 
         self._setup_state_callbacks()
 
@@ -289,22 +300,17 @@ class CameraManager:
         target_fps = 30
         frame_interval = 1.0 / target_fps
 
-        # FPS 计算和日志输出
-        fps_frame_count = 0
-        fps_start_time = time.time()
-        fps = 0.0
-        log_interval = 30  # 每30帧输出一次日志
-
         while self._running:
+            profiler.start("total")
             start_time = time.time()
 
             # 更新 FPS
-            fps_frame_count += 1
-            elapsed_fps = time.time() - fps_start_time
+            self._fps_frame_count += 1
+            elapsed_fps = time.time() - self._fps_start_time
             if elapsed_fps >= 1.0:
-                fps = fps_frame_count / elapsed_fps
-                fps_frame_count = 0
-                fps_start_time = time.time()
+                self._fps = self._fps_frame_count / elapsed_fps
+                self._fps_frame_count = 0
+                self._fps_start_time = time.time()
 
             composed_frame, all_results = self.process_all()
 
@@ -325,13 +331,13 @@ class CameraManager:
                     break
 
             # 定期日志输出
-            if fps_frame_count == 0 and fps > 0:
+            if self._fps_frame_count == 0 and self._fps > 0:
                 ctx = self.state_machine.context
                 status = "TRACKING" if ctx.target_found else "SEARCHING"
                 target_info = ""
                 if ctx.target_found and ctx.target_center:
                     target_info = f" | Target: {ctx.target_center} | Error: X={ctx.percent_error_x:+d}, Y={ctx.percent_error_y:+d}"
-                print(f"[CameraManager] FPS: {fps:.1f} | State: {status}{target_info}")
+                print(f"[CameraManager] FPS: {self._fps:.1f} | State: {status}{target_info}")
 
             for cb in self._result_callbacks:
                 try:
@@ -339,10 +345,8 @@ class CameraManager:
                 except Exception as e:
                     print(f"Error in result callback: {e}")
 
-            elapsed = time.time() - start_time
-            sleep_time = frame_interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            profiler.stop("total")
+            profiler.end_frame()
 
     def _handle_detection(self, all_results: Dict):
         ctx = self.state_machine.context
@@ -392,7 +396,7 @@ class CameraManager:
                 all_results[cam.camera_id] = {}
                 continue
 
-            frame, results = cam.process_frame()
+            frame, results = cam.process_frame(fps=self._fps)
             if frame is None:
                 frame = np.zeros((cam.config.height, cam.config.width, 3), dtype=np.uint8)
             frames.append(frame)

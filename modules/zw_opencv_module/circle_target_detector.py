@@ -1,5 +1,5 @@
 from typing import Optional
-from .circle import CircleTargets, CircleTargetItem
+from .circle import CircleTargets, CircleTargetItem, ShapeType
 import cv2
 import numpy as np
 from skimage import transform
@@ -27,7 +27,7 @@ class CircleTargetDetector:
         }
         self.circle_target = CircleTargets()
         self.min_area_threshold = 100  # 最小面积阈值
-        self.min_contour_points = 20    # 椭圆拟合最少需要20个点
+        self.min_contour_points = 5    # 椭圆拟合最少需要20个点
 
         self.detect_method = DetectMethod.CONTOUR_ELLIPSE
 
@@ -72,54 +72,99 @@ class CircleTargetDetector:
     def _detect_by_contour_ellipse(self, frame: np.ndarray, target_color: Optional[str] = None):
         """
         方法1: 轮廓检测 + 椭圆拟合（默认方法）
+        优化：先缩小图像，再进行颜色二值化和轮廓检测
         """
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        # 步骤 1: 缩小图像
+        h, w = frame.shape[:2]
+        scale = min(320 / h, 320 / w, 1.0)
+        if scale < 1.0:
+            small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+        else:
+            small = frame
 
+        # 步骤 2: 颜色二值化（在缩小图像上）
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         colors_to_detect = [target_color] if target_color else list(self.color_ranges.keys())
-        h, s, v = cv2.split(hsv)
-        red_hue1 = cv2.inRange(h, 0, 8)      # 更窄的范围：0-8
-        red_hue2 = cv2.inRange(h, 172, 180)  # 更窄的范围：172-180
-        red_hue = cv2.bitwise_or(red_hue1, red_hue2)
-        good_value = cv2.inRange(v, 60, 230) 
-        high_saturation = cv2.inRange(s, 100, 255)
-        bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-        b, g, r = cv2.split(bgr)
-        r_dominant = cv2.inRange(r - np.maximum(b, g), 30, 255) 
+
+        # 预计算缩放后的最小面积阈值
+        min_area_scaled = self.min_area_threshold * (scale * scale)
 
         for color_name in colors_to_detect:
             if color_name not in self.color_ranges:
                 continue
-            mask = self._get_color_mask(hsv, color_name)
-            kernel = np.ones((3, 3), np.uint8)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-            mask = cv2.bitwise_and(red_hue, high_saturation)
-            mask = cv2.bitwise_and(mask, good_value)
-            mask = cv2.bitwise_and(mask, r_dominant)
 
+            # 获取颜色 mask
+            ranges = self.color_ranges[color_name]
+            mask = None
+            for lower, upper in ranges:
+                color_mask = cv2.inRange(hsv, lower, upper)
+                mask = color_mask if mask is None else cv2.bitwise_or(mask, color_mask)
+
+            # 步骤 3: 轮廓查找
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            # 步骤 4: 轮廓近似与筛选
             for contour in contours:
                 area = cv2.contourArea(contour)
-                if area < self.min_area_threshold:
+                if area < min_area_scaled:
                     continue
-                # 椭圆拟合需要至少5个点
-                if len(contour) < self.min_contour_points:
+
+                # 轮廓近似
+                peri = cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, 0.01 * peri, True)
+
+                if len(approx) < self.min_contour_points:
                     continue
-                target_item = self._fit_ellipse(contour, color_name)
-                if target_item:
-                    self.circle_target.add_target(target_item)
+
+                # 椭圆拟合
+                try:
+                    ellipse = cv2.fitEllipse(approx)
+                except cv2.error:
+                    continue
+
+                # 步骤 5: 坐标还原并保存结果
+                center_orig = (int(ellipse[0][0] / scale), int(ellipse[0][1] / scale))
+                axes_orig = (ellipse[1][0] / scale, ellipse[1][1] / scale)
+                angle_orig = ellipse[2]
+                radius = max(axes_orig) / 2
+                area = 3.14159 * (axes_orig[0] / 2) * (axes_orig[1] / 2)
+
+                target_item = CircleTargetItem(
+                    index=0,  # 将在 add_target 时更新
+                    center_coordinates=center_orig,
+                    radius=radius,
+                    area=area,
+                    shape_type=ShapeType.ELLIPSE,
+                    contour_points=None,
+                    bounding_box=None,
+                    color=color_name
+                )
+                self.circle_target.add_target(target_item)
 
     def _detect_by_hough_ellipse(self, frame: np.ndarray, target_color: Optional[str] = None):
         """
         霍夫椭圆变换（skimage）
-        有大问题，还没排查出来，暂时不建议使用
+        注意：skimage的hough_ellipse是纯Python实现，非常慢
+        已优化：先缩小图像再检测
         """
         try:
-            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # 步骤 1: 缩小图像
+            h, w = frame.shape[:2]
+            scale = min(320 / h, 320 / w, 1.0)
+            if scale < 1.0:
+                small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+            else:
+                small = frame
+
+            hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
             edges = cv2.Canny(gray, 50, 150, apertureSize=3)
 
             colors_to_detect = [target_color] if target_color else list(self.color_ranges.keys())
+
+            # 缩放后的尺寸参数
+            min_size_scaled = max(int(self.hough_ellipse_min_size * scale), 10)
+            max_size_scaled = int(self.hough_ellipse_max_size * scale)
 
             for color_name in colors_to_detect:
                 if color_name not in self.color_ranges:
@@ -135,25 +180,28 @@ class CircleTargetDetector:
                     masked_edges,
                     accuracy=self.hough_ellipse_accuracy,
                     threshold=self.hough_ellipse_threshold,
-                    min_size=self.hough_ellipse_min_size,
-                    max_size=self.hough_ellipse_max_size
+                    min_size=min_size_scaled,
+                    max_size=max_size_scaled
                 )
                 if ellipses is not None and len(ellipses) > 0:
-                    # 按累加器值排序
-                    ellipses = sorted(ellipses, key=lambda e: e[-1], reverse=True)
+                    # 按累加器值排序，只取前几个最佳结果
+                    ellipses = sorted(ellipses, key=lambda e: e[-1], reverse=True)[:5]
                     for e in ellipses:
                         cy, cx, a, b, angle, acc = e
-                        cx, cy = int(round(cx)), int(round(cy))
-                        a, b = int(round(a)), int(round(b))
+                        # 坐标还原到原始图像尺寸
+                        cx = int(round(cx / scale))
+                        cy = int(round(cy / scale))
+                        a = int(round(a / scale))
+                        b = int(round(b / scale))
                         radius = int(np.sqrt(a * b))
 
                         target_item = CircleTargetItem(
-                            shape_type=None,
                             index=0,
                             center_coordinates=(cx, cy),
                             radius=radius,
                             area=np.pi * a * b,
-                            contour_points=None,  # 霍夫方法没有轮廓点
+                            shape_type=ShapeType.ELLIPSE,
+                            contour_points=None,
                             bounding_box=(cx - a, cy - b, cx + a, cy + b),
                             color=color_name
                         )
