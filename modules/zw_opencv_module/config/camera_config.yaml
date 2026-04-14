@@ -13,6 +13,10 @@ cameras:
     width: 640
     height: 480
     enabled: true
+    gaussian_blur:
+      enabled: true
+      kernel_size: 5
+      sigma: 1.5
     tasks:
       - name: "circle_detect"
         type: "CircleTargetProcessor"

@@ -32,6 +32,9 @@ class CameraConfig:
     height: int = 480
     enabled: bool = True
     tasks: List[dict] = field(default_factory=list)
+    gaussian_blur_enabled: bool = False
+    gaussian_blur_kernel_size: int = 5
+    gaussian_blur_sigma: float = 1.5
 
 
 @dataclass
@@ -53,6 +56,10 @@ class Camera:
         self.stream: Optional[CameraStream] = None
         self.task_manager = TaskManager()
         self._last_frame: Optional[np.ndarray] = None
+        # 高斯模糊参数
+        self.gaussian_blur_enabled = config.gaussian_blur_enabled
+        self.gaussian_blur_kernel_size = config.gaussian_blur_kernel_size
+        self.gaussian_blur_sigma = config.gaussian_blur_sigma
         self._setup_stream(config)
         self._setup_tasks(config.tasks)
 
@@ -110,6 +117,14 @@ class Camera:
             frame = self._last_frame
         else:
             return None, {}
+
+        # 应用高斯模糊降噪
+        if self.gaussian_blur_enabled:
+            frame = cv2.GaussianBlur(
+                frame,
+                (self.gaussian_blur_kernel_size, self.gaussian_blur_kernel_size),
+                self.gaussian_blur_sigma
+            )
 
         # 计时：处理阶段
         profiler.start("processing")
@@ -209,6 +224,9 @@ class CameraManager:
                 height=cam_data.get("height", 480),
                 enabled=cam_data.get("enabled", True),
                 tasks=cam_data.get("tasks", []),
+                gaussian_blur_enabled=cam_data.get("gaussian_blur", {}).get("enabled", False),
+                gaussian_blur_kernel_size=cam_data.get("gaussian_blur", {}).get("kernel_size", 5),
+                gaussian_blur_sigma=cam_data.get("gaussian_blur", {}).get("sigma", 1.5),
             )
             self.add_camera(cam_id, cam_config)
 
