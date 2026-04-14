@@ -297,14 +297,11 @@ class CameraManager:
             except Exception as e:
                 print(f"[CameraManager] Failed to start FFmpegPusher: {e}")
 
-        target_fps = 30
-        frame_interval = 1.0 / target_fps
 
         while self._running:
             profiler.start("total")
             start_time = time.time()
 
-            # 更新 FPS
             self._fps_frame_count += 1
             elapsed_fps = time.time() - self._fps_start_time
             if elapsed_fps >= 1.0:

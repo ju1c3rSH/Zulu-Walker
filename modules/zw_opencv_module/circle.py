@@ -20,7 +20,8 @@ class CircleTargetItem:
     contour_points: Optional[np.ndarray] = None
     bounding_box: Optional[Tuple[int, int, int, int]] = None
     color: Optional[str] = None
-
+    major_axis: Optional[float] = None
+    minor_axis: Optional[float] = None
     def to_dict(self) -> dict:
         return {
             "index": self.index,
@@ -72,6 +73,7 @@ class CircleTargets:
         Args:
             target: CircleTargetItem对象
         """
+        target.index = len(self.targets) #unique index for every target
         self.targets.append(target)
         self.number = len(self.targets)
 

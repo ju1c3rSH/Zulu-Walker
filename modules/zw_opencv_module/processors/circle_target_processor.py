@@ -14,8 +14,8 @@ class CircleTargetProcessor(Processor):
         super().__init__(name)
         self.detector = CircleTargetDetector(name)
         self.target_max_radius = 10  # 最大圆半径,单位为cm
-        self.target_min_radius = 2   # 最小圆半径,单位为cm
-        self.target_color: Optional[str] = None  # 目标颜色
+        self.target_min_radius = 2  # 最小圆半径,单位为cm
+        self.target_color: Optional[str] = "Red"  # 目标颜色
         self._frame_width: int = 640
         self._frame_height: int = 480
         self._fps: float = 0.0  # 从外部获取的FPS
@@ -51,9 +51,8 @@ class CircleTargetProcessor(Processor):
             VisionResult: 包含检测结果和坐标偏差
         """
 
-        # 从 context 获取 FPS（由 CameraManager 计算）
-        if context and 'fps' in context:
-            self._fps = context['fps']
+        if context and "fps" in context:
+            self._fps = context["fps"]
 
         if frame is None:
             return VisionResult(
@@ -65,7 +64,9 @@ class CircleTargetProcessor(Processor):
         try:
             self._frame_height, self._frame_width = frame.shape[:2]
 
-            targets = self.detector.detect_circle_targets(frame, target_color=self.target_color)
+            targets = self.detector.detect_circle_targets(
+                frame, target_color=self.target_color
+            )
 
             target = self._find_target(targets)
 
@@ -105,6 +106,7 @@ class CircleTargetProcessor(Processor):
         except Exception as e:
             print(f"[CircleTargetProcessor] Error processing frame: {e}")
             import traceback
+
             traceback.print_exc()
             return VisionResult(
                 task_name=self.name,
@@ -196,7 +198,9 @@ class CircleTargetProcessor(Processor):
 
         return frame
 
-    def _draw_target(self, frame: np.ndarray, target: CircleTargetItem, is_target: bool = False):
+    def _draw_target(
+        self, frame: np.ndarray, target: CircleTargetItem, is_target: bool = False
+    ):
         """
         绘制单个目标：拟合椭圆和圆心
 
@@ -205,7 +209,6 @@ class CircleTargetProcessor(Processor):
             target: 目标对象
             is_target: 是否为主要目标
         """
-        # 根据颜色选择绘制颜色
         if target.color == "Red":
             color = (0, 0, 255)
         elif target.color == "Green":
@@ -224,10 +227,18 @@ class CircleTargetProcessor(Processor):
                 cv2.ellipse(frame, ellipse, color, thickness)
             except cv2.error:
                 # 如果拟合失败，绘制简单圆形
-                cv2.circle(frame, target.center_coordinates, int(target.radius), color, thickness)
+                cv2.circle(
+                    frame,
+                    target.center_coordinates,
+                    int(target.radius),
+                    color,
+                    thickness,
+                )
         else:
             # 轮廓点不足，绘制简单圆形
-            cv2.circle(frame, target.center_coordinates, int(target.radius), color, thickness)
+            cv2.circle(
+                frame, target.center_coordinates, int(target.radius), color, thickness
+            )
 
         # 绘制圆心（红色实心圆）
         cx, cy = target.center_coordinates
@@ -235,8 +246,15 @@ class CircleTargetProcessor(Processor):
 
         # 绘制圆心坐标文字
         coord_text = f"({cx},{cy})"
-        cv2.putText(frame, coord_text, (cx + 10, cy - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(
+            frame,
+            coord_text,
+            (cx + 10, cy - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+        )
 
         # 如果是主要目标，绘制从屏幕中心到目标中心的连线
         if is_target:
@@ -250,42 +268,59 @@ class CircleTargetProcessor(Processor):
         center_y = self._frame_height // 2
 
         # 水平线
-        cv2.line(frame, (center_x - 20, center_y), (center_x + 20, center_y), (255, 255, 255), 1)
+        cv2.line(
+            frame,
+            (center_x - 20, center_y),
+            (center_x + 20, center_y),
+            (255, 255, 255),
+            1,
+        )
         # 垂直线
-        cv2.line(frame, (center_x, center_y - 20), (center_x, center_y + 20), (255, 255, 255), 1)
+        cv2.line(
+            frame,
+            (center_x, center_y - 20),
+            (center_x, center_y + 20),
+            (255, 255, 255),
+            1,
+        )
 
-    def _draw_status_info(self, frame: np.ndarray, result: VisionResult, target_found: bool):
+
+    def _draw_status_info(
+        self, frame: np.ndarray, result: VisionResult, target_found: bool
+    ):
         """绘制状态信息"""
-        # 背景
-        cv2.rectangle(frame, (5, 5), (400, 150), (0, 0, 0), -1)
+        data = result.result_data
 
-        fps_text = f"FPS: {self._fps:.1f}"
-        cv2.putText(frame, fps_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (5, 5), (280, 130), (0, 0, 0), -1)
+        frame[:] = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
 
-        # 检测方法
-        method_name = self.detector.detect_method.value
-        method_text = f"Method: {method_name}"
-        cv2.putText(frame, method_text, (120, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-
-        # 目标颜色
-        target_color = result.result_data.get("target_color", "Any")
-        color_text = f"Target: {target_color or 'Any'}"
-        cv2.putText(frame, color_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        lines = [
+            (f"FPS: {self._fps:.1f}", (10, 25), (0, 255, 255)),
+            (f"Method: {self.detector.detect_method.value}", (90, 25), (200, 200, 200)),
+            (f"Target: {data.get('target_color', 'Any')}", (10, 50), (255, 255, 255)),
+        ]
 
         if target_found:
-            # 坐标偏差
-            error_x = result.result_data.get("percent_error_x", 0)
-            error_y = result.result_data.get("percent_error_y", 0)
-            error_text = f"Error: X={error_x:+d}, Y={error_y:+d}"
-            cv2.putText(frame, error_text, (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
-
-            # 检测到的目标数量
-            targets = result.result_data.get("targets")
-            if targets:
-                count_text = f"Targets: {targets.number}"
-                cv2.putText(frame, count_text, (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            lines.extend(
+                [
+                    (
+                        f"Error: X={data.get('percent_error_x', 0):+d}, Y={data.get('percent_error_y', 0):+d}",
+                        (10, 75),
+                        (0, 255, 0),
+                    ),
+                    (
+                        f"Count: {data.get('targets', {}).number if data.get('targets') else 0}",
+                        (10, 100),
+                        (255, 255, 255),
+                    ),
+                ]
+            )
         else:
-            cv2.putText(frame, "Target not found", (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1)
+            lines.append(("Target lost", (10, 75), (0, 0, 255)))
+            
+        for text, pos, color in lines:
+            cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
 
     def _is_target_in_vision_range(self, frame: np.ndarray) -> bool:
         """通过判定摄像头视界内是否存在一个纯黑的矩形来判断目标是否在视野范围内"""

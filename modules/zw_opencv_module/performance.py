@@ -300,9 +300,7 @@ class PerformanceProfiler:
         self._last_report_time = time.time()
 
 
-# 全局单例
 profiler = PerformanceProfiler()
-
 
 def get_profiler() -> PerformanceProfiler:
     """获取全局性能分析器实例"""
