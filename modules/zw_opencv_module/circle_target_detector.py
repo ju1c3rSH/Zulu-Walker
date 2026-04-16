@@ -399,6 +399,137 @@ class CircleTargetDetector:
                 )
                 self.circle_target.add_target(target_item)
 
+    def _find_quadrilaterals(self, contours, scale: float) -> list:
+        """
+        从轮廓中筛选四边形
+
+        Args:
+            contours: 轮廓列表
+            scale: 图像缩放比例
+
+        Returns:
+            面积大于阈值的四边形列表
+        """
+        quadrilaterals = []
+        min_area_scaled = self.min_area_threshold * (scale * scale)
+
+        for contour in contours:
+            epsilon = cv2.arcLength(contour, True) * 0.02
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            if len(approx) == 4:
+                area = cv2.contourArea(approx)
+                if area > min_area_scaled:
+                    quadrilaterals.append(approx)
+
+        return quadrilaterals
+
+    def _fit_ellipse_in_quad(self, edges: np.ndarray, quad, img_shape: tuple):
+        """
+        在四边形内部寻找最佳椭圆
+
+        Args:
+            edges: 边缘图像
+            quad: 四边形轮廓
+            img_shape: 图像形状 (h, w)
+
+        Returns:
+            (ellipse, contour, score) 或 None
+        """
+        mask = np.zeros(img_shape[:2], dtype=np.uint8)
+        cv2.fillPoly(mask, [quad], 255)
+
+        masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
+        inner_contours, _ = cv2.findContours(
+            masked_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        best_ellipse = None
+        best_contour = None
+        best_score = 0
+
+        for cnt in inner_contours:
+            if len(cnt) < self.min_contour_points:
+                continue
+            try:
+                ellipse = cv2.fitEllipse(cnt)
+                axes = ellipse[1]
+                major_axis = max(axes)
+                minor_axis = min(axes)
+
+                if minor_axis <= 0 or major_axis <= 0:
+                    continue
+
+                aspect_ratio = major_axis / minor_axis
+                if aspect_ratio > 3.0:
+                    continue
+
+                area = np.pi * ellipse[1][0] * ellipse[1][1] / 4
+                ellipse_contour = cv2.ellipse2Poly(
+                    (int(ellipse[0][0]), int(ellipse[0][1])),
+                    (int(major_axis / 2), int(minor_axis / 2)),
+                    int(ellipse[2]),
+                    0, 360, 5
+                )
+
+                similarity = cv2.matchShapes(cnt, ellipse_contour, cv2.CONTOURS_MATCH_I1, 0)
+                score = area / (1 + similarity)
+
+                if score > best_score:
+                    best_score = score
+                    best_ellipse = ellipse
+                    best_contour = cnt
+            except cv2.error:
+                continue
+
+        if best_ellipse is None:
+            return None
+
+        return best_ellipse, best_contour, best_score
+
+    def _create_target_item(self, ellipse, contour, scale: float, color: str) -> CircleTargetItem:
+        """
+        将椭圆数据转换为 CircleTargetItem
+
+        Args:
+            ellipse: cv2.fitEllipse 返回的椭圆 (center, axes, angle)
+            contour: 轮廓点
+            scale: 图像缩放比例
+            color: 颜色名称
+
+        Returns:
+            CircleTargetItem 实例
+        """
+        center_orig = (
+            int(ellipse[0][0] / scale),
+            int(ellipse[0][1] / scale),
+        )
+        axes_orig = (ellipse[1][0] / scale, ellipse[1][1] / scale)
+        radius = max(axes_orig) / 2
+        area = np.pi * axes_orig[0] * axes_orig[1] / 4
+
+        if scale < 1.0:
+            contour_orig = (contour * (1.0 / scale)).astype(np.int32)
+        else:
+            contour_orig = contour
+
+        return CircleTargetItem(
+            index=0,
+            center_coordinates=center_orig,
+            radius=radius,
+            area=area,
+            shape_type=ShapeType.ELLIPSE,
+            contour_points=contour_orig,
+            bounding_box=(
+                int(center_orig[0] - axes_orig[0] / 2),
+                int(center_orig[1] - axes_orig[1] / 2),
+                int(axes_orig[0]),
+                int(axes_orig[1]),
+            ),
+            color=color,
+            major_axis=axes_orig[0],
+            minor_axis=axes_orig[1],
+        )
+
     def _detect_by_edge_contour_ellipse(
         self, frame: np.ndarray, target_color: Optional[str] = None
     ):
@@ -416,7 +547,7 @@ class CircleTargetDetector:
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         kernel_size = self.blur_kernel
         if kernel_size % 2 == 0:
-            kernel_size += 1 
+            kernel_size += 1
         blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
 
         edges = cv2.Canny(
@@ -434,98 +565,16 @@ class CircleTargetDetector:
         # 保存形态学处理后的边缘图像，供调试窗口使用
         self._last_canny_preview = morphed
 
-        quadrilaterals = []
-        for contour in contours:
-            epsilon = cv2.arcLength(contour, True) * 0.02
-            approx = cv2.approxPolyDP(contour, epsilon, True)
-            if len(approx) == 4:
-                area = cv2.contourArea(approx)
-                min_area_scaled = self.min_area_threshold * (scale * scale)
-                if area > min_area_scaled:
-                    quadrilaterals.append(approx)
+        quadrilaterals = self._find_quadrilaterals(contours, scale)
 
         for quad in quadrilaterals:
-            mask = np.zeros(small.shape[:2], dtype=np.uint8)
-            cv2.fillPoly(mask, [quad], 255)
+            result = self._fit_ellipse_in_quad(morphed, quad, small.shape)
+            if result is None:
+                continue
 
-            masked_edges = cv2.bitwise_and(morphed, morphed, mask=mask)
-            inner_contours, _ = cv2.findContours(
-                masked_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-            )
-            # cv2.CHAIN_APPROX_NONE cv2.CHAIN_APPROX_SIMPLE
-            best_ellipse = None
-            best_area = 0
-            best_contour = None
-            best_score = 0
-            for cnt in inner_contours:
-                if len(cnt) >= self.min_contour_points:
-                    try:
-                        ellipse = cv2.fitEllipse(cnt)
-                        axes = ellipse[1]
-                        # π * a * b / 4
-                        major_axis = max(axes)
-                        minor_axis = min(axes)
-                        aspect_ratio = major_axis / minor_axis
-                        if aspect_ratio > 3.0:  # 建议值: 3.0
-                            continue
-                        area = np.pi * ellipse[1][0] * ellipse[1][1] / 4
-                        ellipse_contour = cv2.ellipse2Poly(
-                            (int(ellipse[0][0]), int(ellipse[0][1])),
-                            (int(major_axis/2), int(minor_axis/2)),
-                            int(ellipse[2]),
-                            0, 360, 5
-                        )
-                        
-                        # 计算轮廓与拟合椭圆的相似度
-                        similarity = cv2.matchShapes(cnt, ellipse_contour, cv2.CONTOURS_MATCH_I1, 0)
-                        
-                        # 综合评分（面积大 + 拟合好）
-                        score = area / (1 + similarity)
-                        
-                        if score > best_score:
-                            best_score = score
-                            best_ellipse = ellipse
-                            best_contour = cnt
-                    except cv2.error:
-                        continue
-
-            if best_ellipse is not None:
-                center_orig = (
-                    int(best_ellipse[0][0] / scale),
-                    int(best_ellipse[0][1] / scale),
-                )
-                axes_orig = (best_ellipse[1][0] / scale, best_ellipse[1][1] / scale)
-                radius = max(axes_orig) / 2
-                area = np.pi * axes_orig[0] * axes_orig[1] / 4
-
-                if scale < 1.0:
-                    contour_orig = (best_contour * (1.0 / scale)).astype(np.int32)
-                else:
-                    contour_orig = best_contour
-
-                # hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-                # detected_color = self._detect_contour_color(hsv, best_contour, small.shape)
-                # if target_color is not None and detected_color != target_color:
-                #     continue
-
-                target_item = CircleTargetItem(
-                    index=0,
-                    center_coordinates=center_orig,
-                    radius=radius,
-                    area=area,
-                    shape_type=ShapeType.ELLIPSE,
-                    contour_points=contour_orig,
-                    bounding_box=(
-                        int(center_orig[0] - axes_orig[0] / 2),
-                        int(center_orig[1] - axes_orig[1] / 2),
-                        int(axes_orig[0]),
-                        int(axes_orig[1]),
-                    ),
-                    color='Red',
-                    major_axis=axes_orig[0],
-                    minor_axis=axes_orig[1],
-                )
-                self.circle_target.add_target(target_item)
+            best_ellipse, best_contour, _ = result
+            target_item = self._create_target_item(best_ellipse, best_contour, scale, 'Red')
+            self.circle_target.add_target(target_item)
 
     def _detect_contour_color(
         self, hsv: np.ndarray, contour, img_shape: tuple

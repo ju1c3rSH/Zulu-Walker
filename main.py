@@ -5,7 +5,8 @@ import sys
 import time
 import importlib
 from typing import Dict, Any
-sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
+# 添加项目根目录到 sys.path，确保模块只被加载一次
+sys.path.insert(0, os.path.dirname(__file__))
 
 class ModuleManager:
     def __init__(self):
@@ -14,7 +15,9 @@ class ModuleManager:
     
     def load_module(self,module_name):
         try:
-            module = __import__(module_name)
+            # 使用 modules.{name} 路径加载，与绝对导入一致
+            full_name = f'modules.{module_name}'
+            module = __import__(full_name, fromlist=[module_name])
             self.modules[module_name] = module
             if hasattr(module, 'init'):
                 module.init()
