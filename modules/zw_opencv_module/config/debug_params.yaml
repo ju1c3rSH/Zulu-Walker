@@ -1,14 +1,37 @@
-# Edge Detection Debug Parameters
-# 此文件由调试窗口自动生成和更新
+# 检测参数配置文件
+# 由调试器 (debug_detector.py) 生成和维护
+# 主程序启动时读取此文件
 
-params:
-  canny_threshold1: 50
-  canny_threshold2: 150
-  dilate_kernel: 3
-  dilate_iterations: 1
-  min_area: 150
-  min_contour_points: 15
-  blur_kernel: 5
-  blur_sigma: 10  # 实际值 = 此值 / 10
-
+current_method: "edge_contour_ellipse"
 enabled: true
+
+methods:
+  edge_contour_ellipse:
+    edge_canny_threshold1: 50
+    edge_canny_threshold2: 150
+    morph_type: 1
+    morph_kernel: 3
+    morph_iterations: 1
+    blur_kernel: 5
+    blur_sigma: 1.0
+    min_area_threshold: 150
+    min_contour_points: 15
+  contour_ellipse:
+    min_area_threshold: 150
+    min_contour_points: 15
+  hough_ellipse:
+    hough_ellipse_accuracy: 20
+    hough_ellipse_threshold: 250
+    hough_ellipse_min_size: 30
+    hough_ellipse_max_size: 300
+    min_area_threshold: 150
+    min_contour_points: 15
+  hough_circle:
+    hough_circle_dp: 1.2
+    hough_circle_min_dist: 20
+    hough_circle_param1: 50
+    hough_circle_param2: 30
+    hough_circle_min_radius: 5
+    hough_circle_max_radius: 100
+    min_area_threshold: 150
+    min_contour_points: 15

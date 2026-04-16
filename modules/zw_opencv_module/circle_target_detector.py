@@ -52,8 +52,12 @@ class CircleTargetDetector:
         # 边缘检测参数
         self.edge_canny_threshold1 = 50
         self.edge_canny_threshold2 = 150
-        self.edge_dilate_kernel = 3  # 膨胀核大小
-        self.edge_dilate_iterations = 1  # 膨胀迭代次数
+
+        # 形态学操作参数
+        self.morph_type = 1  # 0=none, 1=dilate, 2=erode, 3=open, 4=close
+        self.morph_kernel = 3
+        self.morph_iterations = 1
+        self._morph_kernel_cache = None  # 缓存形态学核
 
         # 高斯模糊参数
         self.blur_kernel = 5
@@ -104,8 +108,9 @@ class CircleTargetDetector:
         if method_name == "edge_contour_ellipse":
             params["edge_canny_threshold1"] = self.edge_canny_threshold1
             params["edge_canny_threshold2"] = self.edge_canny_threshold2
-            params["edge_dilate_kernel"] = self.edge_dilate_kernel
-            params["edge_dilate_iterations"] = self.edge_dilate_iterations
+            params["morph_type"] = self.morph_type
+            params["morph_kernel"] = self.morph_kernel
+            params["morph_iterations"] = self.morph_iterations
             params["blur_kernel"] = self.blur_kernel
             params["blur_sigma"] = self.blur_sigma
 
@@ -146,10 +151,12 @@ class CircleTargetDetector:
                 self.edge_canny_threshold1 = params["edge_canny_threshold1"]
             if "edge_canny_threshold2" in params:
                 self.edge_canny_threshold2 = params["edge_canny_threshold2"]
-            if "edge_dilate_kernel" in params:
-                self.edge_dilate_kernel = params["edge_dilate_kernel"]
-            if "edge_dilate_iterations" in params:
-                self.edge_dilate_iterations = params["edge_dilate_iterations"]
+            if "morph_type" in params:
+                self.morph_type = params["morph_type"]
+            if "morph_kernel" in params:
+                self.morph_kernel = params["morph_kernel"]
+            if "morph_iterations" in params:
+                self.morph_iterations = params["morph_iterations"]
             if "blur_kernel" in params:
                 self.blur_kernel = params["blur_kernel"]
             if "blur_sigma" in params:
@@ -190,10 +197,12 @@ class CircleTargetDetector:
             self.edge_canny_threshold1 = params["canny_threshold1"]
         if "canny_threshold2" in params:
             self.edge_canny_threshold2 = params["canny_threshold2"]
-        if "dilate_kernel" in params:
-            self.edge_dilate_kernel = params["dilate_kernel"]
-        if "dilate_iterations" in params:
-            self.edge_dilate_iterations = params["dilate_iterations"]
+        if "morph_type" in params:
+            self.morph_type = params["morph_type"]
+        if "morph_kernel" in params:
+            self.morph_kernel = params["morph_kernel"]
+        if "morph_iterations" in params:
+            self.morph_iterations = params["morph_iterations"]
         if "min_area" in params:
             self.min_area_threshold = params["min_area"]
         if "min_contour_points" in params:
@@ -205,14 +214,24 @@ class CircleTargetDetector:
 
     def get_edge_preview(self, frame: np.ndarray) -> np.ndarray:
         """
-        生成边缘预览图像（用于调试窗口）
+        获取边缘预览图像（用于调试窗口）
+
+        优先返回检测过程中缓存的边缘图像，避免重复计算。
+        仅在无缓存时才重新计算。
 
         Args:
-            frame: BGR格式的输入图像
+            frame: BGR格式的输入图像（仅在无缓存时使用）
 
         Returns:
             Canny边缘图像（灰度）
         """
+        # 优先返回检测过程中缓存的边缘图像
+        if self._last_canny_preview is not None:
+            preview = self._last_canny_preview
+            self._last_canny_preview = None  # 清除缓存，避免下一帧误用
+            return preview
+
+        # 无缓存时计算（非 edge_contour_ellipse 方法或首次调用）
         if frame is None:
             return None
 
@@ -241,8 +260,36 @@ class CircleTargetDetector:
             apertureSize=3,
         )
 
-        # 缓存预览
-        self._last_canny_preview = edges
+        return edges
+
+    def _apply_morphology(self, edges: np.ndarray) -> np.ndarray:
+        """
+        应用形态学操作（性能优化版）
+
+        Args:
+            edges: 边缘图像
+
+        Returns:
+            处理后的图像
+        """
+        if self.morph_type == 0:  # none
+            return edges
+
+        # 使用缓存的kernel
+        if self._morph_kernel_cache is None or self._morph_kernel_cache.shape[0] != self.morph_kernel:
+            self._morph_kernel_cache = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (self.morph_kernel, self.morph_kernel)
+            )
+        kernel = self._morph_kernel_cache
+
+        if self.morph_type == 1:  # dilate
+            return cv2.dilate(edges, kernel, iterations=self.morph_iterations)
+        elif self.morph_type == 2:  # erode
+            return cv2.erode(edges, kernel, iterations=self.morph_iterations)
+        elif self.morph_type == 3:  # open
+            return cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel, iterations=self.morph_iterations)
+        elif self.morph_type == 4:  # close
+            return cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=self.morph_iterations)
 
         return edges
 
@@ -379,16 +426,13 @@ class CircleTargetDetector:
             apertureSize=3,
         )
 
-
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (self.edge_dilate_kernel, self.edge_dilate_kernel)
-        )
-        dilated = cv2.dilate(edges, kernel, iterations=self.edge_dilate_iterations)
+        morphed = self._apply_morphology(edges)
 
         contours, _ = cv2.findContours(
-            dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+            morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        self._last_canny_preview = contours
+        # 保存形态学处理后的边缘图像，供调试窗口使用
+        self._last_canny_preview = morphed
 
         quadrilaterals = []
         for contour in contours:
@@ -404,22 +448,42 @@ class CircleTargetDetector:
             mask = np.zeros(small.shape[:2], dtype=np.uint8)
             cv2.fillPoly(mask, [quad], 255)
 
-            masked_edges = cv2.bitwise_and(dilated, dilated, mask=mask)
+            masked_edges = cv2.bitwise_and(morphed, morphed, mask=mask)
             inner_contours, _ = cv2.findContours(
-                masked_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+                masked_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
             # cv2.CHAIN_APPROX_NONE cv2.CHAIN_APPROX_SIMPLE
             best_ellipse = None
             best_area = 0
             best_contour = None
+            best_score = 0
             for cnt in inner_contours:
                 if len(cnt) >= self.min_contour_points:
                     try:
                         ellipse = cv2.fitEllipse(cnt)
+                        axes = ellipse[1]
                         # π * a * b / 4
+                        major_axis = max(axes)
+                        minor_axis = min(axes)
+                        aspect_ratio = major_axis / minor_axis
+                        if aspect_ratio > 3.0:  # 建议值: 3.0
+                            continue
                         area = np.pi * ellipse[1][0] * ellipse[1][1] / 4
-                        if area > best_area:
-                            best_area = area
+                        ellipse_contour = cv2.ellipse2Poly(
+                            (int(ellipse[0][0]), int(ellipse[0][1])),
+                            (int(major_axis/2), int(minor_axis/2)),
+                            int(ellipse[2]),
+                            0, 360, 5
+                        )
+                        
+                        # 计算轮廓与拟合椭圆的相似度
+                        similarity = cv2.matchShapes(cnt, ellipse_contour, cv2.CONTOURS_MATCH_I1, 0)
+                        
+                        # 综合评分（面积大 + 拟合好）
+                        score = area / (1 + similarity)
+                        
+                        if score > best_score:
+                            best_score = score
                             best_ellipse = ellipse
                             best_contour = cnt
                     except cv2.error:

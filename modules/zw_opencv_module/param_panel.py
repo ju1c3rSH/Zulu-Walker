@@ -31,8 +31,9 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
     "edge_contour_ellipse": [
         ParamDef("edge_canny_threshold1", "Canny Th1", 50, 0, 255, 1),
         ParamDef("edge_canny_threshold2", "Canny Th2", 150, 0, 255, 1),
-        ParamDef("edge_dilate_kernel", "Dilate Kernel", 3, 1, 15, 2, is_odd=True),
-        ParamDef("edge_dilate_iterations", "Dilate Iter", 1, 1, 10, 1),
+        ParamDef("morph_type", "Morph Type", 1, 0, 4, 1),
+        ParamDef("morph_kernel", "Morph Kernel", 3, 1, 15, 2, is_odd=True),
+        ParamDef("morph_iterations", "Morph Iter", 1, 1, 10, 1),
         ParamDef("blur_kernel", "Blur Kernel", 5, 1, 15, 2, is_odd=True),
         ParamDef("blur_sigma", "Blur Sigma", 10, 1, 50, 1, scale=0.1),
         ParamDef("min_area_threshold", "Min Area", 150, 10, 2000, 10),
@@ -95,7 +96,7 @@ class ParamPanel:
         """从字典加载参数值"""
         for name, value in params.items():
             if name in self.params:
-                self.params[name] = value
+                self.params[name] = int(value)
 
     def create_trackbars(self):
         """创建滑动条（必须在主线程调用）"""
@@ -106,8 +107,8 @@ class ParamPanel:
             cv2.createTrackbar(
                 pdef.display_name,
                 self.window_name,
-                self.params[pdef.name],
-                pdef.max_val,
+                int(self.params[pdef.name]),
+                int(pdef.max_val),
                 lambda val, d=pdef: self._on_trackbar(d, val)
             )
 
@@ -118,7 +119,7 @@ class ParamPanel:
         # 特殊处理：核大小必须为奇数
         if pdef.is_odd and value % 2 == 0:
             value = max(pdef.min_val, value - 1)
-            cv2.setTrackbarPos(pdef.display_name, self.window_name, value)
+            cv2.setTrackbarPos(pdef.display_name, self.window_name, int(value))
 
         if self.params.get(pdef.name) != value:
             self.params[pdef.name] = value
@@ -151,11 +152,11 @@ class ParamPanel:
     def set_param(self, name: str, value: int):
         """设置单个参数值"""
         if name in self.params:
-            self.params[name] = value
+            self.params[name] = int(value)
             # 更新滑动条位置
             for pdef in self.params_def:
                 if pdef.name == name:
-                    cv2.setTrackbarPos(pdef.display_name, self.window_name, value)
+                    cv2.setTrackbarPos(pdef.display_name, self.window_name, int(value))
                     break
 
     def get_param_def(self, name: str) -> Optional[ParamDef]:
