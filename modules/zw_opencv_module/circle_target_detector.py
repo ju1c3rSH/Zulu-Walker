@@ -4,10 +4,14 @@ import cv2
 import numpy as np
 from skimage import transform
 from enum import Enum
+from utils.point import Point
 
 
 class DetectMethod(Enum):
     CONTOUR_ELLIPSE = "contour_ellipse"  # 轮廓检测 + 椭圆拟合
+    EDGE_CONTOUR_ELLIPSE = (
+        "edge_contour_ellipse"  # 边缘检测 + 椭圆拟合,无需颜色二值化
+    )
     HOUGH_ELLIPSE = "hough_ellipse"  # 霍夫椭圆变换
     HOUGH_CIRCLE = "hough_circle"  # 霍夫圆变换
 
@@ -29,7 +33,7 @@ class CircleTargetDetector:
         self.min_area_threshold = 150  # 最小面积阈值
         self.min_contour_points = 15  # 椭圆拟合最少需要20个点
 
-        self.detect_method = DetectMethod.CONTOUR_ELLIPSE
+        self.detect_method = DetectMethod.EDGE_CONTOUR_ELLIPSE
 
         # 霍夫圆参数
         self.hough_circle_dp = 1.2
@@ -45,9 +49,202 @@ class CircleTargetDetector:
         self.hough_ellipse_min_size = 30
         self.hough_ellipse_max_size = 300
 
+        # 边缘检测参数
+        self.edge_canny_threshold1 = 50
+        self.edge_canny_threshold2 = 150
+        self.edge_dilate_kernel = 3  # 膨胀核大小
+        self.edge_dilate_iterations = 1  # 膨胀迭代次数
+
+        # 高斯模糊参数
+        self.blur_kernel = 5
+        self.blur_sigma = 1.0
+
+        # 缓存边缘预览图像
+        self._last_canny_preview: Optional[np.ndarray] = None
+
+        self.color_h_ranges = {
+            "Red": (0, 15, 165, 180),  # 红色跨越 0 度：(0-15) 和 (165-180)
+            "Green": (40, 80, 0, 0),  # 绿色：(40-80）
+            "Blue": (100, 130, 0, 0),  # 蓝色：(100-130)
+        }
+        self.color_s_min = 40  # 饱和度最小值
+        self.color_v_min = 50  # 明度最小值
+        self.debug_color = False  # 调试模式：打印检测到的 HSV 值
+
     def set_detect_method(self, method: DetectMethod):
         """设置检测方法"""
         self.detect_method = method
+
+    def get_detect_method(self) -> DetectMethod:
+        """获取当前检测方法"""
+        return self.detect_method
+
+    @staticmethod
+    def get_supported_methods() -> list:
+        """返回支持的方法列表"""
+        return list(DetectMethod)
+
+    def get_method_params(self, method: DetectMethod) -> dict:
+        """
+        获取指定检测方法的参数
+
+        Args:
+            method: 检测方法
+
+        Returns:
+            参数字典
+        """
+        method_name = method.value
+        params = {}
+
+        # 通用参数
+        params["min_area_threshold"] = self.min_area_threshold
+        params["min_contour_points"] = self.min_contour_points
+
+        if method_name == "edge_contour_ellipse":
+            params["edge_canny_threshold1"] = self.edge_canny_threshold1
+            params["edge_canny_threshold2"] = self.edge_canny_threshold2
+            params["edge_dilate_kernel"] = self.edge_dilate_kernel
+            params["edge_dilate_iterations"] = self.edge_dilate_iterations
+            params["blur_kernel"] = self.blur_kernel
+            params["blur_sigma"] = self.blur_sigma
+
+        elif method_name == "hough_ellipse":
+            params["hough_ellipse_accuracy"] = self.hough_ellipse_accuracy
+            params["hough_ellipse_threshold"] = self.hough_ellipse_threshold
+            params["hough_ellipse_min_size"] = self.hough_ellipse_min_size
+            params["hough_ellipse_max_size"] = self.hough_ellipse_max_size
+
+        elif method_name == "hough_circle":
+            params["hough_circle_dp"] = self.hough_circle_dp
+            params["hough_circle_min_dist"] = self.hough_circle_min_dist
+            params["hough_circle_param1"] = self.hough_circle_param1
+            params["hough_circle_param2"] = self.hough_circle_param2
+            params["hough_circle_min_radius"] = self.hough_circle_min_radius
+            params["hough_circle_max_radius"] = self.hough_circle_max_radius
+
+        return params
+
+    def set_method_params(self, method: DetectMethod, params: dict):
+        """
+        设置指定检测方法的参数
+
+        Args:
+            method: 检测方法
+            params: 参数字典
+        """
+        # 通用参数
+        if "min_area_threshold" in params:
+            self.min_area_threshold = params["min_area_threshold"]
+        if "min_contour_points" in params:
+            self.min_contour_points = params["min_contour_points"]
+
+        method_name = method.value
+
+        if method_name == "edge_contour_ellipse":
+            if "edge_canny_threshold1" in params:
+                self.edge_canny_threshold1 = params["edge_canny_threshold1"]
+            if "edge_canny_threshold2" in params:
+                self.edge_canny_threshold2 = params["edge_canny_threshold2"]
+            if "edge_dilate_kernel" in params:
+                self.edge_dilate_kernel = params["edge_dilate_kernel"]
+            if "edge_dilate_iterations" in params:
+                self.edge_dilate_iterations = params["edge_dilate_iterations"]
+            if "blur_kernel" in params:
+                self.blur_kernel = params["blur_kernel"]
+            if "blur_sigma" in params:
+                self.blur_sigma = params["blur_sigma"]
+
+        elif method_name == "hough_ellipse":
+            if "hough_ellipse_accuracy" in params:
+                self.hough_ellipse_accuracy = params["hough_ellipse_accuracy"]
+            if "hough_ellipse_threshold" in params:
+                self.hough_ellipse_threshold = params["hough_ellipse_threshold"]
+            if "hough_ellipse_min_size" in params:
+                self.hough_ellipse_min_size = params["hough_ellipse_min_size"]
+            if "hough_ellipse_max_size" in params:
+                self.hough_ellipse_max_size = params["hough_ellipse_max_size"]
+
+        elif method_name == "hough_circle":
+            if "hough_circle_dp" in params:
+                self.hough_circle_dp = params["hough_circle_dp"]
+            if "hough_circle_min_dist" in params:
+                self.hough_circle_min_dist = params["hough_circle_min_dist"]
+            if "hough_circle_param1" in params:
+                self.hough_circle_param1 = params["hough_circle_param1"]
+            if "hough_circle_param2" in params:
+                self.hough_circle_param2 = params["hough_circle_param2"]
+            if "hough_circle_min_radius" in params:
+                self.hough_circle_min_radius = params["hough_circle_min_radius"]
+            if "hough_circle_max_radius" in params:
+                self.hough_circle_max_radius = params["hough_circle_max_radius"]
+
+    def update_params(self, params: dict):
+        """
+        更新边缘检测参数（从调试窗口调用，保持向后兼容）
+
+        Args:
+            params: 参数字典
+        """
+        if "canny_threshold1" in params:
+            self.edge_canny_threshold1 = params["canny_threshold1"]
+        if "canny_threshold2" in params:
+            self.edge_canny_threshold2 = params["canny_threshold2"]
+        if "dilate_kernel" in params:
+            self.edge_dilate_kernel = params["dilate_kernel"]
+        if "dilate_iterations" in params:
+            self.edge_dilate_iterations = params["dilate_iterations"]
+        if "min_area" in params:
+            self.min_area_threshold = params["min_area"]
+        if "min_contour_points" in params:
+            self.min_contour_points = params["min_contour_points"]
+        if "blur_kernel" in params:
+            self.blur_kernel = params["blur_kernel"]
+        if "blur_sigma" in params:
+            self.blur_sigma = params["blur_sigma"]
+
+    def get_edge_preview(self, frame: np.ndarray) -> np.ndarray:
+        """
+        生成边缘预览图像（用于调试窗口）
+
+        Args:
+            frame: BGR格式的输入图像
+
+        Returns:
+            Canny边缘图像（灰度）
+        """
+        if frame is None:
+            return None
+
+        # 降采样
+        h, w = frame.shape[:2]
+        scale = min(320 / h, 320 / w, 1.0)
+        if scale < 1.0:
+            small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+        else:
+            small = frame
+
+        # 转换为灰度
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+        # 高斯模糊
+        kernel_size = self.blur_kernel
+        if kernel_size % 2 == 0:
+            kernel_size += 1  # 确保为奇数
+        blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
+
+        # Canny边缘检测
+        edges = cv2.Canny(
+            blurred,
+            self.edge_canny_threshold1,
+            self.edge_canny_threshold2,
+            apertureSize=3,
+        )
+
+        # 缓存预览
+        self._last_canny_preview = edges
+
+        return edges
 
     def detect_circle_targets(
         self, frame: np.ndarray, target_color: Optional[str] = None
@@ -64,6 +261,8 @@ class CircleTargetDetector:
 
         if self.detect_method == DetectMethod.CONTOUR_ELLIPSE:
             self._detect_by_contour_ellipse(frame, target_color)
+        elif self.detect_method == DetectMethod.EDGE_CONTOUR_ELLIPSE:
+            self._detect_by_edge_contour_ellipse(frame, target_color)
         elif self.detect_method == DetectMethod.HOUGH_ELLIPSE:
             self._detect_by_hough_ellipse(frame, target_color)
         elif self.detect_method == DetectMethod.HOUGH_CIRCLE:
@@ -152,6 +351,167 @@ class CircleTargetDetector:
                     minor_axis=axes_orig[1],
                 )
                 self.circle_target.add_target(target_item)
+
+    def _detect_by_edge_contour_ellipse(
+        self, frame: np.ndarray, target_color: Optional[str] = None
+    ):
+        """
+        边缘检测 + 椭圆拟合（不使用颜色二值化）
+        逻辑：先检测四边形，然后检测四边形内部面积最大的椭圆
+        """
+        h, w = frame.shape[:2]
+        scale = min(320 / h, 320 / w, 1.0)
+        if scale < 1.0:
+            small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+        else:
+            small = frame
+
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        kernel_size = self.blur_kernel
+        if kernel_size % 2 == 0:
+            kernel_size += 1 
+        blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
+
+        edges = cv2.Canny(
+            blurred,
+            self.edge_canny_threshold1,
+            self.edge_canny_threshold2,
+            apertureSize=3,
+        )
+
+
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (self.edge_dilate_kernel, self.edge_dilate_kernel)
+        )
+        dilated = cv2.dilate(edges, kernel, iterations=self.edge_dilate_iterations)
+
+        contours, _ = cv2.findContours(
+            dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+        )
+        self._last_canny_preview = contours
+
+        quadrilaterals = []
+        for contour in contours:
+            epsilon = cv2.arcLength(contour, True) * 0.02
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            if len(approx) == 4:
+                area = cv2.contourArea(approx)
+                min_area_scaled = self.min_area_threshold * (scale * scale)
+                if area > min_area_scaled:
+                    quadrilaterals.append(approx)
+
+        for quad in quadrilaterals:
+            mask = np.zeros(small.shape[:2], dtype=np.uint8)
+            cv2.fillPoly(mask, [quad], 255)
+
+            masked_edges = cv2.bitwise_and(dilated, dilated, mask=mask)
+            inner_contours, _ = cv2.findContours(
+                masked_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+            )
+            # cv2.CHAIN_APPROX_NONE cv2.CHAIN_APPROX_SIMPLE
+            best_ellipse = None
+            best_area = 0
+            best_contour = None
+            for cnt in inner_contours:
+                if len(cnt) >= self.min_contour_points:
+                    try:
+                        ellipse = cv2.fitEllipse(cnt)
+                        # π * a * b / 4
+                        area = np.pi * ellipse[1][0] * ellipse[1][1] / 4
+                        if area > best_area:
+                            best_area = area
+                            best_ellipse = ellipse
+                            best_contour = cnt
+                    except cv2.error:
+                        continue
+
+            if best_ellipse is not None:
+                center_orig = (
+                    int(best_ellipse[0][0] / scale),
+                    int(best_ellipse[0][1] / scale),
+                )
+                axes_orig = (best_ellipse[1][0] / scale, best_ellipse[1][1] / scale)
+                radius = max(axes_orig) / 2
+                area = np.pi * axes_orig[0] * axes_orig[1] / 4
+
+                if scale < 1.0:
+                    contour_orig = (best_contour * (1.0 / scale)).astype(np.int32)
+                else:
+                    contour_orig = best_contour
+
+                # hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+                # detected_color = self._detect_contour_color(hsv, best_contour, small.shape)
+                # if target_color is not None and detected_color != target_color:
+                #     continue
+
+                target_item = CircleTargetItem(
+                    index=0,
+                    center_coordinates=center_orig,
+                    radius=radius,
+                    area=area,
+                    shape_type=ShapeType.ELLIPSE,
+                    contour_points=contour_orig,
+                    bounding_box=(
+                        int(center_orig[0] - axes_orig[0] / 2),
+                        int(center_orig[1] - axes_orig[1] / 2),
+                        int(axes_orig[0]),
+                        int(axes_orig[1]),
+                    ),
+                    color='Red',
+                    major_axis=axes_orig[0],
+                    minor_axis=axes_orig[1],
+                )
+                self.circle_target.add_target(target_item)
+
+    def _detect_contour_color(
+        self, hsv: np.ndarray, contour, img_shape: tuple
+    ) -> Optional[str]:
+        """
+        检测轮廓内部的主要颜色
+
+        Args:
+            hsv: HSV 格式图像
+            contour: 轮廓
+            img_shape: 图像形状 (h, w)
+
+        Returns:
+            颜色名称或 None
+        """
+        # 创建轮廓掩码
+        mask = np.zeros(img_shape[:2], dtype=np.uint8)
+        cv2.drawContours(mask, [contour], -1, 255, -1)
+
+        # 计算轮廓内部的平均 HSV 值
+        mean_val = cv2.mean(hsv, mask=mask)[:3]
+        h, s, v = mean_val
+
+        if self.debug_color:
+            print(f"[ColorDebug] HSV: H={h:.1f}, S={s:.1f}, V={v:.1f}")
+
+        # 低明度：黑色
+        if v < self.color_v_min:
+            return "Black"
+
+        # 低饱和度：灰色/白色，无法判断颜色
+        if s < self.color_s_min:
+            return None
+
+        # 红色判断（跨越 0 度）
+        h_low, h_high, h_low2, h_high2 = self.color_h_ranges["Red"]
+        if (h_low <= h < h_high) or (h_low2 <= h <= h_high2):
+            return "Red"
+
+        # 绿色判断
+        h_low, h_high, _, _ = self.color_h_ranges["Green"]
+        if h_low <= h < h_high:
+            return "Green"
+
+        # 蓝色判断
+        h_low, h_high, _, _ = self.color_h_ranges["Blue"]
+        if h_low <= h < h_high:
+            return "Blue"
+
+        return None
 
     def _detect_by_hough_ellipse(
         self, frame: np.ndarray, target_color: Optional[str] = None

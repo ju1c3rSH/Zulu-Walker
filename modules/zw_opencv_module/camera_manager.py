@@ -21,6 +21,7 @@ from .ffmpeg_pusher import FFmpegPusher
 from .processors.base import VisionResult
 from .processors.circle_target_processor import CircleTargetProcessor
 from .performance import profiler
+from .debug_window import DebugWindow
 from utils.state_machine import VisualStateMachine
 from modules.zw_uart_module.protocol import ERROR_TYPE_X, ERROR_TYPE_Y
 
@@ -45,6 +46,7 @@ class CameraSystemConfig:
     enable_streaming: bool = False
     rtmp_url: str = ""
     enable_local_display: bool = False  # 本地显示窗口
+    enable_debug_window: bool = False  # 调试窗口
     cameras: List[CameraConfig] = field(default_factory=list)
 
 
@@ -168,6 +170,9 @@ class CameraManager:
         self._fps_start_time = time.time()
         self._fps = 0.0
 
+        # 调试窗口
+        self.debug_window: Optional[DebugWindow] = None
+
         self._setup_state_callbacks()
 
     def _setup_state_callbacks(self):
@@ -206,6 +211,7 @@ class CameraManager:
             enable_streaming=system.get("enable_streaming", False),
             rtmp_url=system.get("rtmp_url", ""),
             enable_local_display=system.get("enable_local_display", False),
+            enable_debug_window=system.get("enable_debug_window", False),
         )
 
         self.frame_composer = FrameComposer(
@@ -218,15 +224,17 @@ class CameraManager:
             if not cam_id:
                 continue
 
+            preprocess = cam_data.get("preprocess", {})
+            gaussian_blur = preprocess.get("gaussian_blur", {})
             cam_config = CameraConfig(
                 source=cam_data.get("source", 0),
                 width=cam_data.get("width", 640),
                 height=cam_data.get("height", 480),
                 enabled=cam_data.get("enabled", True),
                 tasks=cam_data.get("tasks", []),
-                gaussian_blur_enabled=cam_data.get("gaussian_blur", {}).get("enabled", False),
-                gaussian_blur_kernel_size=cam_data.get("gaussian_blur", {}).get("kernel_size", 5),
-                gaussian_blur_sigma=cam_data.get("gaussian_blur", {}).get("sigma", 1.5),
+                gaussian_blur_enabled=gaussian_blur.get("enabled", False),
+                gaussian_blur_kernel_size=gaussian_blur.get("kernel_size", 5),
+                gaussian_blur_sigma=gaussian_blur.get("sigma", 1.5),
             )
             self.add_camera(cam_id, cam_config)
 
@@ -296,14 +304,40 @@ class CameraManager:
                 use_hardware_accel=True,
             )
 
+        # 初始化调试窗口
+        if self.config and self.config.enable_debug_window:
+            print("[CameraManager] Initializing debug window")
+            self.debug_window = DebugWindow(
+                on_params_change=self._on_debug_params_change
+            )
+            # 注意：窗口将在 _process_loop 主线程中创建
+
         self.state_machine.start()
 
         self._running = True
         self._process_thread = Thread(target=self._process_loop, daemon=True)
         self._process_thread.start()
 
+    def _on_debug_params_change(self, method_name: str, params: dict):
+        """调试窗口参数变化回调"""
+        for camera in self.cameras.values():
+            task = camera.get_task("circle_detect")
+            if task and hasattr(task.processor, 'detector'):
+                detector = task.processor.detector
+                from .circle_target_detector import DetectMethod
+                try:
+                    new_method = DetectMethod(method_name)
+                    if detector.get_detect_method() != new_method:
+                        detector.set_detect_method(new_method)
+                except ValueError:
+                    pass
+                detector.set_method_params(new_method, params)
+
     def stop(self):
         self._running = False
+        if self.debug_window:
+            self.debug_window.destroy_window()
+            self.debug_window = None
         if self._process_thread:
             self._process_thread.join(timeout=2.0)
             self._process_thread = None
@@ -315,6 +349,9 @@ class CameraManager:
             except Exception as e:
                 print(f"[CameraManager] Failed to start FFmpegPusher: {e}")
 
+        # 在主线程中创建调试窗口
+        if self.debug_window:
+            self.debug_window.setup_window()
 
         while self._running:
             profiler.start("total")
@@ -329,6 +366,23 @@ class CameraManager:
 
             composed_frame, all_results = self.process_all()
 
+            # 更新调试窗口
+            if self.debug_window and self.debug_window.is_enabled():
+                # 获取第一个摄像头的帧用于调试预览
+                for camera in self.cameras.values():
+                    if camera.enabled:
+                        task = camera.get_task("circle_detect")
+                        if task and hasattr(task.processor, 'detector'):
+                            detector = task.processor.detector
+                            # 获取当前帧
+                            frame = camera._last_frame
+                            if frame is not None:
+                                canny = detector.get_edge_preview(frame)
+                                # 获取检测结果帧
+                                result_frame = composed_frame if composed_frame is not None else frame
+                                self.debug_window.update_frame(frame, canny, result_frame)
+                        break
+
             self._handle_detection(all_results)
 
             self.state_machine.update()
@@ -339,11 +393,15 @@ class CameraManager:
 
             # 本地显示窗口
             if self.config and self.config.enable_local_display and composed_frame is not None:
-                cv2.imshow("Zulu-Walker Camera", composed_frame)
+                cv2.imshow("Zulu-Walker Camera Preview", composed_frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q') or key == 27:  # q 或 ESC 退出
                     self._running = False
                     break
+
+            # 更新调试窗口 GUI（必须在主线程）
+            if self.debug_window:
+                self.debug_window.update_gui()
 
             # 定期日志输出
             if self._fps_frame_count == 0 and self._fps > 0:

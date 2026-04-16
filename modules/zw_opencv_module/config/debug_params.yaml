@@ -1,0 +1,14 @@
+# Edge Detection Debug Parameters
+# 此文件由调试窗口自动生成和更新
+
+params:
+  canny_threshold1: 50
+  canny_threshold2: 150
+  dilate_kernel: 3
+  dilate_iterations: 1
+  min_area: 150
+  min_contour_points: 15
+  blur_kernel: 5
+  blur_sigma: 10  # 实际值 = 此值 / 10
+
+enabled: true

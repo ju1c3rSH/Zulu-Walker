@@ -4,9 +4,12 @@ from .state import (
     RobotState, EventType, StateMachine,
     get_state_machine, get_state, set_state, trigger_event, on_state_change
 )
+from .point import Point
 __all__ = [
     'SerialController', 'LoggerFactory', 'ConfigurableLogger',
     'UARTModuleLogger', 'DataPipelineLogger',
     'RobotState', 'EventType', 'StateMachine',
-    'get_state_machine', 'get_state', 'set_state', 'trigger_event', 'on_state_change'
+    'get_state_machine', 'get_state', 'set_state', 'trigger_event', 'on_state_change',
+    'Point'
+    
 ]
