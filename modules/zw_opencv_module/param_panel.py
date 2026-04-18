@@ -39,20 +39,6 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
         ParamDef("min_area_threshold", "Min Area", 150, 10, 2000, 10),
         ParamDef("min_contour_points", "Min Points", 15, 5, 50, 1),
     ],
-    "hough_ellipse": [
-        ParamDef("hough_ellipse_accuracy", "Accuracy", 20, 1, 50, 1),
-        ParamDef("hough_ellipse_threshold", "Threshold", 250, 50, 500, 10),
-        ParamDef("hough_ellipse_min_size", "Min Size", 30, 10, 100, 5),
-        ParamDef("hough_ellipse_max_size", "Max Size", 300, 100, 500, 10),
-    ],
-    "hough_circle": [
-        ParamDef("hough_circle_dp", "DP", 12, 1, 30, 1, scale=0.1),  # 1.2 = 12 * 0.1
-        ParamDef("hough_circle_min_dist", "Min Dist", 20, 5, 100, 5),
-        ParamDef("hough_circle_param1", "Param1", 50, 10, 200, 5),
-        ParamDef("hough_circle_param2", "Param2", 30, 10, 100, 5),
-        ParamDef("hough_circle_min_radius", "Min Radius", 5, 1, 50, 1),
-        ParamDef("hough_circle_max_radius", "Max Radius", 100, 20, 300, 10),
-    ],
 }
 
 

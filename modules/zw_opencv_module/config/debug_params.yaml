@@ -18,15 +18,3 @@ methods:
     morph_iterations: 1
     morph_kernel: 3
     morph_type: 4
-  hough_circle:
-    hough_circle_dp: 1
-    hough_circle_max_radius: 100
-    hough_circle_min_dist: 20
-    hough_circle_min_radius: 5
-    hough_circle_param1: 50
-    hough_circle_param2: 30
-  hough_ellipse:
-    hough_ellipse_accuracy: 20
-    hough_ellipse_max_size: 300
-    hough_ellipse_min_size: 30
-    hough_ellipse_threshold: 250

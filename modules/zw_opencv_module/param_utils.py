@@ -35,24 +35,6 @@ def get_default_params() -> Dict[str, Dict[str, Any]]:
             "min_area_threshold": 150,
             "min_contour_points": 15,
         },
-        "hough_ellipse": {
-            "hough_ellipse_accuracy": 20,
-            "hough_ellipse_threshold": 250,
-            "hough_ellipse_min_size": 30,
-            "hough_ellipse_max_size": 300,
-            "min_area_threshold": 150,
-            "min_contour_points": 15,
-        },
-        "hough_circle": {
-            "hough_circle_dp": 1.2,
-            "hough_circle_min_dist": 20,
-            "hough_circle_param1": 50,
-            "hough_circle_param2": 30,
-            "hough_circle_min_radius": 5,
-            "hough_circle_max_radius": 100,
-            "min_area_threshold": 150,
-            "min_contour_points": 15,
-        },
     }
 
 

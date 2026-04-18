@@ -2,7 +2,6 @@ from typing import Optional
 from .circle import CircleTargets, CircleTargetItem, ShapeType
 import cv2
 import numpy as np
-from skimage import transform
 from enum import Enum
 from utils.point import Point
 
@@ -12,8 +11,6 @@ class DetectMethod(Enum):
     EDGE_CONTOUR_ELLIPSE = (
         "edge_contour_ellipse"  # 边缘检测 + 椭圆拟合,无需颜色二值化
     )
-    HOUGH_ELLIPSE = "hough_ellipse"  # 霍夫椭圆变换
-    HOUGH_CIRCLE = "hough_circle"  # 霍夫圆变换
 
 
 class CircleTargetDetector:
@@ -34,20 +31,6 @@ class CircleTargetDetector:
         self.min_contour_points = 15  # 椭圆拟合最少需要20个点
 
         self.detect_method = DetectMethod.EDGE_CONTOUR_ELLIPSE
-
-        # 霍夫圆参数
-        self.hough_circle_dp = 1.2
-        self.hough_circle_min_dist = 20
-        self.hough_circle_param1 = 50
-        self.hough_circle_param2 = 30
-        self.hough_circle_min_radius = 5
-        self.hough_circle_max_radius = 100
-
-        # 霍夫椭圆参数
-        self.hough_ellipse_accuracy = 20
-        self.hough_ellipse_threshold = 250
-        self.hough_ellipse_min_size = 30
-        self.hough_ellipse_max_size = 300
 
         # 边缘检测参数
         self.edge_canny_threshold1 = 50
@@ -114,20 +97,6 @@ class CircleTargetDetector:
             params["blur_kernel"] = self.blur_kernel
             params["blur_sigma"] = self.blur_sigma
 
-        elif method_name == "hough_ellipse":
-            params["hough_ellipse_accuracy"] = self.hough_ellipse_accuracy
-            params["hough_ellipse_threshold"] = self.hough_ellipse_threshold
-            params["hough_ellipse_min_size"] = self.hough_ellipse_min_size
-            params["hough_ellipse_max_size"] = self.hough_ellipse_max_size
-
-        elif method_name == "hough_circle":
-            params["hough_circle_dp"] = self.hough_circle_dp
-            params["hough_circle_min_dist"] = self.hough_circle_min_dist
-            params["hough_circle_param1"] = self.hough_circle_param1
-            params["hough_circle_param2"] = self.hough_circle_param2
-            params["hough_circle_min_radius"] = self.hough_circle_min_radius
-            params["hough_circle_max_radius"] = self.hough_circle_max_radius
-
         return params
 
     def set_method_params(self, method: DetectMethod, params: dict):
@@ -161,30 +130,6 @@ class CircleTargetDetector:
                 self.blur_kernel = params["blur_kernel"]
             if "blur_sigma" in params:
                 self.blur_sigma = params["blur_sigma"]
-
-        elif method_name == "hough_ellipse":
-            if "hough_ellipse_accuracy" in params:
-                self.hough_ellipse_accuracy = params["hough_ellipse_accuracy"]
-            if "hough_ellipse_threshold" in params:
-                self.hough_ellipse_threshold = params["hough_ellipse_threshold"]
-            if "hough_ellipse_min_size" in params:
-                self.hough_ellipse_min_size = params["hough_ellipse_min_size"]
-            if "hough_ellipse_max_size" in params:
-                self.hough_ellipse_max_size = params["hough_ellipse_max_size"]
-
-        elif method_name == "hough_circle":
-            if "hough_circle_dp" in params:
-                self.hough_circle_dp = params["hough_circle_dp"]
-            if "hough_circle_min_dist" in params:
-                self.hough_circle_min_dist = params["hough_circle_min_dist"]
-            if "hough_circle_param1" in params:
-                self.hough_circle_param1 = params["hough_circle_param1"]
-            if "hough_circle_param2" in params:
-                self.hough_circle_param2 = params["hough_circle_param2"]
-            if "hough_circle_min_radius" in params:
-                self.hough_circle_min_radius = params["hough_circle_min_radius"]
-            if "hough_circle_max_radius" in params:
-                self.hough_circle_max_radius = params["hough_circle_max_radius"]
 
     def update_params(self, params: dict):
         """
@@ -310,10 +255,6 @@ class CircleTargetDetector:
             self._detect_by_contour_ellipse(frame, target_color)
         elif self.detect_method == DetectMethod.EDGE_CONTOUR_ELLIPSE:
             self._detect_by_edge_contour_ellipse(frame, target_color)
-        elif self.detect_method == DetectMethod.HOUGH_ELLIPSE:
-            self._detect_by_hough_ellipse(frame, target_color)
-        elif self.detect_method == DetectMethod.HOUGH_CIRCLE:
-            self._detect_by_hough_circle(frame, target_color)
 
         return self.circle_target
 
@@ -625,128 +566,6 @@ class CircleTargetDetector:
             return "Blue"
 
         return None
-
-    def _detect_by_hough_ellipse(
-        self, frame: np.ndarray, target_color: Optional[str] = None
-    ):
-        """
-        霍夫椭圆变换（skimage）
-        注意：skimage的hough_ellipse是纯Python实现，非常慢
-        已优化：先缩小图像再检测
-        """
-        try:
-            # 步骤 1: 缩小图像
-            h, w = frame.shape[:2]
-            scale = min(320 / h, 320 / w, 1.0)
-            if scale < 1.0:
-                small = cv2.resize(frame, (int(w * scale), int(h * scale)))
-            else:
-                small = frame
-
-            hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-
-            colors_to_detect = (
-                [target_color] if target_color else list(self.color_ranges.keys())
-            )
-
-            # 缩放后的尺寸参数
-            min_size_scaled = max(int(self.hough_ellipse_min_size * scale), 10)
-            max_size_scaled = int(self.hough_ellipse_max_size * scale)
-
-            for color_name in colors_to_detect:
-                if color_name not in self.color_ranges:
-                    continue
-                mask = self._get_color_mask(hsv, color_name)
-                masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
-
-                # 检查边缘图像是否有效
-                if masked_edges.max() == 0:
-                    continue
-
-                ellipses = transform.hough_ellipse(
-                    masked_edges,
-                    accuracy=self.hough_ellipse_accuracy,
-                    threshold=self.hough_ellipse_threshold,
-                    min_size=min_size_scaled,
-                    max_size=max_size_scaled,
-                )
-                if ellipses is not None and len(ellipses) > 0:
-                    # 按累加器值排序，只取前几个最佳结果
-                    ellipses = sorted(ellipses, key=lambda e: e[-1], reverse=True)[:5]
-                    for e in ellipses:
-                        cy, cx, a, b, angle, acc = e
-                        # 坐标还原到原始图像尺寸
-                        cx = int(round(cx / scale))
-                        cy = int(round(cy / scale))
-                        a = int(round(a / scale))
-                        b = int(round(b / scale))
-                        radius = int(np.sqrt(a * b))
-
-                        target_item = CircleTargetItem(
-                            index=0,
-                            center_coordinates=(cx, cy),
-                            radius=radius,
-                            area=np.pi * a * b,
-                            shape_type=ShapeType.ELLIPSE,
-                            contour_points=None,
-                            bounding_box=(cx - a, cy - b, cx + a, cy + b),
-                            color=color_name,
-                        )
-                        self.circle_target.add_target(target_item)
-        except Exception as e:
-            print(f"[CircleTargetDetector] Hough ellipse detection error: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    def _detect_by_hough_circle(
-        self, frame: np.ndarray, target_color: Optional[str] = None
-    ):
-        """
-        OpenCV 霍夫圆变换
-        """
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        colors_to_detect = (
-            [target_color] if target_color else list(self.color_ranges.keys())
-        )
-
-        for color_name in colors_to_detect:
-            if color_name not in self.color_ranges:
-                continue
-            mask = self._get_color_mask(hsv, color_name)
-            masked_gray = cv2.bitwise_and(gray, gray, mask=mask)
-            blurred = cv2.GaussianBlur(masked_gray, (9, 9), 2)
-
-            circles = cv2.HoughCircles(
-                blurred,
-                cv2.HOUGH_GRADIENT,
-                dp=self.hough_circle_dp,
-                minDist=self.hough_circle_min_dist,
-                param1=self.hough_circle_param1,
-                param2=self.hough_circle_param2,
-                minRadius=self.hough_circle_min_radius,
-                maxRadius=self.hough_circle_max_radius,
-            )
-
-            if circles is not None:
-                circles = np.round(circles[0, :]).astype("int")
-
-                for cx, cy, r in circles:
-                    target_item = CircleTargetItem(
-                        shape_type=None,
-                        index=0,
-                        center_coordinates=(cx, cy),
-                        radius=r,
-                        area=np.pi * r * r,
-                        contour_points=None,  # 霍夫方法没有轮廓点
-                        bounding_box=(cx - r, cy - r, cx + r, cy + r),
-                        color=color_name,
-                    )
-                    self.circle_target.add_target(target_item)
 
     def _get_color_mask(self, hsv: np.ndarray, color_name: str) -> np.ndarray:
         """获取指定颜色的mask"""

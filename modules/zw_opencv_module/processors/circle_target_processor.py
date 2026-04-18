@@ -35,7 +35,7 @@ class CircleTargetProcessor(Processor):
         设置检测方法
 
         Args:
-            method: 检测方法 (DetectMethod.CONTOUR_ELLIPSE, HOUGH_ELLIPSE, HOUGH_CIRCLE)
+            method: 检测方法 (DetectMethod.CONTOUR_ELLIPSE, EDGE_CONTOUR_ELLIPSE)
         """
         self.detector.set_detect_method(method)
 

@@ -2,8 +2,6 @@
 # 检测方法说明:
 #   contour_ellipse: 轮廓检测 + 椭圆拟合（颜色二值化）
 #   edge_contour_ellipse: 边缘检测 + 椭圆拟合（无需颜色二值化，使用Canny+膨胀）
-#   hough_ellipse: 霍夫椭圆变换（较慢）
-#   hough_circle: 霍夫圆变换
 # 检测参数由 debug_params.yaml 控制，使用 debug_detector.py 进行参数整定
 system:
   output_width: 640
