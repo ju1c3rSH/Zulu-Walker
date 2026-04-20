@@ -1,4 +1,5 @@
-from typing import Optional
+from typing import Optional, Tuple, List
+
 from .circle import CircleTargets, CircleTargetItem, ShapeType
 import cv2
 import numpy as np
@@ -11,11 +12,36 @@ class DetectMethod(Enum):
     EDGE_CONTOUR_ELLIPSE = (
         "edge_contour_ellipse"  # 边缘检测 + 椭圆拟合,无需颜色二值化
     )
+    TEST_LINE_QUAD = (
+        "test_line_quad"  # 测试：线段+四边形+透视变换+霍夫圆
+    )
 
 
 class CircleTargetDetector:
     def __init__(self, name: str = "circle_target"):
         self.name = name
+        
+        
+        self.ed = cv2.ximgproc.createEdgeDrawing()
+        ed_params = self.ed.Params()
+        ed_params.MinPathLength = 50       # 最小边缘段长度
+        ed_params.GradientThresholdValue = 20
+        ed_params.NFAValidation = True
+        self.ed.setParams(ed_params)
+        
+        self.lsd = cv2.createLineSegmentDetector(0)
+        
+        self.kf = cv2.KalmanFilter(4, 2)
+        self.kf.transitionMatrix = np.array([[1,0,1,0], [0,1,0,1], [0,0,1,0], [0,0,0,1]], np.float32)
+        self.kf.measurementMatrix = np.array([[1,0,0,0], [0,1,0,0]], np.float32)
+        self.kf.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
+        self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1.0
+        self.kf.errorCovPost = np.eye(4, dtype=np.float32)
+
+        self.tracking_initialized = False
+        self.lost_frames = 0  # 连续丢失帧计数
+        self.max_lost_frames = 10  # 最大允许丢失帧数，超过则重置Kalman滤波器
+        
         self.color_ranges = {
             "Red": [
                 # 亮红到暗红（包含黑色调的红色）
@@ -255,6 +281,8 @@ class CircleTargetDetector:
             self._detect_by_contour_ellipse(frame, target_color)
         elif self.detect_method == DetectMethod.EDGE_CONTOUR_ELLIPSE:
             self._detect_by_edge_contour_ellipse(frame, target_color)
+        elif self.detect_method == DetectMethod.TEST_LINE_QUAD:
+            self._detect_by_test_line_quad(frame, target_color)
 
         return self.circle_target
 
@@ -475,8 +503,7 @@ class CircleTargetDetector:
         self, frame: np.ndarray, target_color: Optional[str] = None
     ):
         """
-        边缘检测 + 椭圆拟合（不使用颜色二值化）
-        逻辑：先检测四边形，然后检测四边形内部面积最大的椭圆
+        鲁棒椭圆检测：优先快速回退方法 + 卡尔曼滤波平滑
         """
         h, w = frame.shape[:2]
         scale = min(320 / h, 320 / w, 1.0)
@@ -491,32 +518,135 @@ class CircleTargetDetector:
             kernel_size += 1
         blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
 
+        result = None
+
+        # 优先使用快速的回退方法
+        fallback_result = self._fallback_ellipse_detection(small, gray, scale)
+        if fallback_result is not None:
+            ellipse, contour, quad = fallback_result
+            center = ellipse[0]
+            radius = max(ellipse[1]) / 2
+            result = (center, radius, quad)
+
+        # 卡尔曼滤波平滑
+        final_center = None
+        final_radius = None
+
+        if result is not None:
+            center, radius, quad = result
+            final_radius = radius
+            smoothed_center = self._kalman_update(center)
+            if smoothed_center is not None:
+                final_center = smoothed_center
+            else:
+                final_center = center
+        else:
+            # 检测失败，尝试预测
+            predicted = self._kalman_update(None)
+            if predicted is not None:
+                final_center = predicted
+                final_radius = None
+
+        # 生成结果
+        if final_center is not None and final_radius is not None:
+            color_name = target_color if target_color else 'Red'
+            target_item = self._create_target_item_from_center(
+                final_center, final_radius, scale, color_name
+            )
+            self.circle_target.add_target(target_item)
+
+        # 缓存边缘图像用于调试
         edges = cv2.Canny(
             blurred,
             self.edge_canny_threshold1,
             self.edge_canny_threshold2,
             apertureSize=3,
         )
+        self._last_canny_preview = self._apply_morphology(edges)
 
-        morphed = self._apply_morphology(edges)
+    def _detect_by_robust_line_quad(
+        self, frame: np.ndarray, target_color: Optional[str] = None
+    ):
+        """
+        鲁棒椭圆检测：线段+四边形+透视变换+霍夫圆+卡尔曼滤波
 
-        contours, _ = cv2.findContours(
-            morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-        # 保存形态学处理后的边缘图像，供调试窗口使用
-        self._last_canny_preview = morphed
+        适用于：遮挡、边缘断裂、相机运动等复杂场景
+        性能较慢，但更鲁棒
+        """
+        h, w = frame.shape[:2]
+        scale = min(320 / h, 320 / w, 1.0)
+        if scale < 1.0:
+            small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+        else:
+            small = frame
 
-        quadrilaterals = self._find_quadrilaterals(contours, scale)
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        kernel_size = self.blur_kernel
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
 
-        for quad in quadrilaterals:
-            result = self._fit_ellipse_in_quad(morphed, quad, small.shape)
-            if result is None:
-                continue
+        result = None
+        detection_method = None
 
-            best_ellipse, best_contour, _ = result
-            target_item = self._create_target_item(best_ellipse, best_contour, scale, 'Red')
+        # Step A: 提取线段
+        lines = self._extract_lines_ed_lsd(blurred)
+
+        # Step B: 从线段寻找四边形
+        if lines is not None and len(lines) >= 4:
+            quad = self._find_quad_from_lines(lines, small.shape)
+            if quad is not None:
+                # Step C: 透视变换 + 霍夫圆检测
+                circle_result = self._detect_circle_in_quad(blurred, quad)
+                if circle_result is not None:
+                    circle_center, radius = circle_result
+
+                    # Step D: 中心对齐验证
+                    quad_center = self._compute_quad_center(quad)
+                    max_offset = 20.0 * scale
+                    if self._validate_center_alignment(quad_center, circle_center, max_offset):
+                        result = (circle_center, radius, quad)
+                        detection_method = "line_quad_circle"
+
+        # 回退到快速方法
+        if result is None:
+            fallback_result = self._fallback_ellipse_detection(small, gray, scale)
+            if fallback_result is not None:
+                ellipse, contour, quad = fallback_result
+                center = ellipse[0]
+                radius = max(ellipse[1]) / 2
+                result = (center, radius, quad)
+                detection_method = "fallback_contour"
+
+        # 卡尔曼滤波平滑
+        final_center = None
+        final_radius = None
+
+        if result is not None:
+            center, radius, quad = result
+            final_radius = radius
+            smoothed_center = self._kalman_update(center)
+            if smoothed_center is not None:
+                final_center = smoothed_center
+            else:
+                final_center = center
+        else:
+            predicted = self._kalman_update(None)
+            if predicted is not None:
+                final_center = predicted
+                final_radius = None
+
+        # 生成结果
+        if final_center is not None and final_radius is not None:
+            color_name = target_color if target_color else 'Red'
+            target_item = self._create_target_item_from_center(
+                final_center, final_radius, scale, color_name
+            )
             self.circle_target.add_target(target_item)
 
+        # 缓存边缘图像
+        self.ed.detectEdges(gray)
+        self._last_canny_preview = self.ed.getEdgeImage()
     def _detect_contour_color(
         self, hsv: np.ndarray, contour, img_shape: tuple
     ) -> Optional[str]:
@@ -575,3 +705,554 @@ class CircleTargetDetector:
             color_mask = cv2.inRange(hsv, lower, upper)
             mask = color_mask if mask is None else cv2.bitwise_or(mask, color_mask)
         return mask
+
+    def _order_quad_points(self, quad: np.ndarray) -> np.ndarray:
+        """
+        将四边形的四个顶点按顺时针顺序排列：左上、右上、右下、左下
+
+        Args:
+            quad: 四边形顶点，形状为 (4, 1, 2) 或 (4, 2)
+
+        Returns:
+            有序的四边形顶点，形状为 (4, 1, 2)
+        """
+        # 展平为 (4, 2)
+        points = quad.reshape(4, 2).astype(np.float32)
+
+        # 计算质心
+        center = np.mean(points, axis=0)
+
+        # 计算每个点相对于质心的角度
+        angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+
+        # 按角度排序（顺时针）
+        sorted_indices = np.argsort(angles)
+        sorted_points = points[sorted_indices]
+
+        # 找到左上角点（x+y最小）
+        sums = sorted_points[:, 0] + sorted_points[:, 1]
+        top_left_idx = np.argmin(sums)
+
+        # 重新排列：从左上角开始顺时针
+        ordered = np.roll(sorted_points, -top_left_idx, axis=0)
+
+        return ordered.reshape(4, 1, 2).astype(np.float32)
+
+    def _extract_lines_ed_lsd(self, gray: np.ndarray) -> np.ndarray:
+        """
+        使用 EdgeDrawing + LSD 提取线段（不做合并，性能优化）
+
+        Args:
+            gray: 灰度图像
+
+        Returns:
+            np.ndarray: (N, 4) 线段端点数组 [x1, y1, x2, y2]，无线段时返回空数组
+        """
+        try:
+            # EdgeDrawing 检测边缘
+            self.ed.detectEdges(gray)
+            edges = self.ed.getEdgeImage()
+
+            if edges is None or np.count_nonzero(edges) < 100:
+                return np.array([])
+
+            # LSD 检测线段
+            lines = self.lsd.detect(edges)[0]
+
+            if lines is None or len(lines) == 0:
+                return np.array([])
+
+            # 去除多余的维度，LSD返回 (N, 1, 4)
+            lines = lines.reshape(-1, 4)
+
+            # 性能优化：不做线段合并，直接返回
+            return lines
+
+        except cv2.error:
+            return np.array([])
+
+    def _merge_collinear_lines(self, lines: np.ndarray,
+                                angle_threshold: float = 5.0,
+                                dist_threshold: float = 10.0) -> np.ndarray:
+        """
+        合并共线的线段
+
+        Args:
+            lines: (N, 4) 线段数组
+            angle_threshold: 角度阈值（度）
+            dist_threshold: 距离阈值（像素）
+
+        Returns:
+            合并后的线段数组
+        """
+        if len(lines) == 0:
+            return lines
+
+        merged = []
+        used = np.zeros(len(lines), dtype=bool)
+
+        # 计算每条线的角度和长度
+        angles = np.arctan2(lines[:, 3] - lines[:, 1], lines[:, 2] - lines[:, 0])
+        angles_deg = np.degrees(angles) % 180  # 归一化到 0-180
+
+        for i in range(len(lines)):
+            if used[i]:
+                continue
+
+            group = [i]
+            used[i] = True
+
+            for j in range(i + 1, len(lines)):
+                if used[j]:
+                    continue
+
+                # 检查角度是否相近（考虑180度对称）
+                angle_diff = abs(angles_deg[i] - angles_deg[j])
+                angle_diff = min(angle_diff, 180 - angle_diff)
+
+                if angle_diff < angle_threshold:
+                    # 检查距离是否相近
+                    dist = self._line_to_line_distance(lines[i], lines[j])
+                    if dist < dist_threshold:
+                        group.append(j)
+                        used[j] = True
+
+            # 合并组内的线段
+            if len(group) > 1:
+                merged_line = self._merge_line_group(lines[group])
+                merged.append(merged_line)
+            else:
+                merged.append(lines[i])
+
+        return np.array(merged) if merged else np.array([])
+
+    def _line_to_line_distance(self, line1: np.ndarray, line2: np.ndarray) -> float:
+        """计算两条线段之间的最小距离"""
+        x1, y1, x2, y2 = line1
+        x3, y3, x4, y4 = line2
+
+        # 计算线段中点
+        mid1 = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+        mid2 = np.array([(x3 + x4) / 2, (y3 + y4) / 2])
+
+        # 返回中点距离
+        return np.linalg.norm(mid1 - mid2)
+
+    def _merge_line_group(self, lines: np.ndarray) -> np.ndarray:
+        """合并一组共线线段为一条线段"""
+        # 收集所有端点
+        points = lines.reshape(-1, 2)
+
+        # 计算主方向
+        dx = lines[:, 2] - lines[:, 0]
+        dy = lines[:, 3] - lines[:, 1]
+        main_angle = np.arctan2(np.mean(dy), np.mean(dx))
+
+        # 沿主方向投影
+        cos_a, sin_a = np.cos(main_angle), np.sin(main_angle)
+        projections = points[:, 0] * cos_a + points[:, 1] * sin_a
+
+        # 找到最远的两个点
+        min_idx, max_idx = np.argmin(projections), np.argmax(projections)
+
+        return np.array([points[min_idx, 0], points[min_idx, 1],
+                        points[max_idx, 0], points[max_idx, 1]])
+
+    def _find_quad_from_lines(self, lines: np.ndarray, img_shape: tuple) -> Optional[np.ndarray]:
+        """
+        从线段组合中寻找最佳四边形
+
+        Args:
+            lines: (N, 4) 线段数组
+            img_shape: 图像形状 (h, w)
+
+        Returns:
+            四边形顶点 (4, 1, 2) 或 None
+        """
+        if lines is None or len(lines) < 4:
+            return None
+
+        h, w = img_shape[:2]
+        min_line_length = 30  # 最小线段长度
+
+        # 过滤短线段
+        lengths = np.sqrt((lines[:, 2] - lines[:, 0])**2 + (lines[:, 3] - lines[:, 1])**2)
+        valid_mask = lengths >= min_line_length
+        valid_lines = lines[valid_mask]
+
+        if len(valid_lines) < 4:
+            return None
+
+        # 计算线段角度
+        angles = np.arctan2(valid_lines[:, 3] - valid_lines[:, 1],
+                           valid_lines[:, 2] - valid_lines[:, 0])
+        angles_deg = np.degrees(angles) % 180  # 归一化到 0-180
+
+        # 直方图聚类找主方向
+        hist, bin_edges = np.histogram(angles_deg, bins=36, range=(0, 180))  # 5度一个bin
+
+        # 找到两个峰值（应该相差约90度）
+        peak_indices = np.argsort(hist)[-4:]  # 取前4个峰值
+        peak_angles = (bin_edges[peak_indices] + bin_edges[peak_indices + 1]) / 2
+
+        # 寻找相差约90度的两个方向
+        best_pair = None
+        best_score = 0
+
+        for i in range(len(peak_angles)):
+            for j in range(i + 1, len(peak_angles)):
+                diff = abs(peak_angles[i] - peak_angles[j])
+                diff = min(diff, 180 - diff)
+                if 70 < diff < 110:  # 允许20度误差
+                    score = hist[peak_indices[i]] + hist[peak_indices[j]]
+                    if score > best_score:
+                        best_score = score
+                        best_pair = (peak_angles[i], peak_angles[j])
+
+        if best_pair is None:
+            return None
+
+        angle1, angle2 = best_pair
+
+        # 按角度分组线段
+        group1, group2 = [], []
+        for i, line in enumerate(valid_lines):
+            angle = angles_deg[i]
+            diff1 = min(abs(angle - angle1), 180 - abs(angle - angle1))
+            diff2 = min(abs(angle - angle2), 180 - abs(angle - angle2))
+            if diff1 < diff2:
+                group1.append(line)
+            else:
+                group2.append(line)
+
+        if len(group1) < 2 or len(group2) < 2:
+            return None
+
+        # 找每组中距离最远的两条平行线
+        def find_extreme_parallel(lines_group, ref_angle):
+            if len(lines_group) < 2:
+                return None, None
+
+            # 计算每条线到原点的距离
+            distances = []
+            for line in lines_group:
+                x1, y1, x2, y2 = line
+                # 使用点到直线距离公式
+                mid_x, mid_y = (x1 + x2) / 2, (y1 + y2) / 2
+                # 垂直于线段方向的距离
+                perp_angle = ref_angle + 90
+                dist = mid_x * np.cos(np.radians(perp_angle)) + mid_y * np.sin(np.radians(perp_angle))
+                distances.append(dist)
+
+            distances = np.array(distances)
+            min_idx = np.argmin(distances)
+            max_idx = np.argmax(distances)
+
+            return lines_group[min_idx], lines_group[max_idx]
+
+        line1a, line1b = find_extreme_parallel(group1, angle1)
+        line2a, line2b = find_extreme_parallel(group2, angle2)
+
+        if line1a is None or line1b is None or line2a is None or line2b is None:
+            return None
+
+        # 计算四条线的交点
+        def line_intersection(line1, line2):
+            x1, y1, x2, y2 = line1
+            x3, y3, x4, y4 = line2
+
+            denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+            if abs(denom) < 1e-10:
+                return None
+
+            t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+            x = x1 + t * (x2 - x1)
+            y = y1 + t * (y2 - y1)
+
+            return (x, y)
+
+        corners = []
+        for l1 in [line1a, line1b]:
+            for l2 in [line2a, line2b]:
+                pt = line_intersection(l1, l2)
+                if pt is not None:
+                    corners.append(pt)
+
+        if len(corners) != 4:
+            return None
+
+        # 验证四边形
+        corners = np.array(corners, dtype=np.float32)
+
+        # 检查点是否在图像范围内
+        if np.any(corners[:, 0] < -w * 0.1) or np.any(corners[:, 0] > w * 1.1):
+            return None
+        if np.any(corners[:, 1] < -h * 0.1) or np.any(corners[:, 1] > h * 1.1):
+            return None
+
+        # 计算凸包面积
+        hull = cv2.convexHull(corners.astype(np.float32))
+        area = cv2.contourArea(hull)
+
+        min_area_scaled = self.min_area_threshold * 0.5  # 放宽阈值
+        if area < min_area_scaled:
+            return None
+
+        # 检查长宽比
+        rect = cv2.minAreaRect(hull)
+        width, height = rect[1]
+        if width > 0 and height > 0:
+            aspect = max(width, height) / min(width, height)
+            if aspect > 5.0:  # 太扁了
+                return None
+
+        # 排序顶点
+        ordered = self._order_quad_points(corners)
+
+        return ordered
+
+    def _detect_circle_in_quad(self, gray: np.ndarray, quad: np.ndarray) -> Optional[Tuple[Tuple[float, float], float]]:
+        """
+        在四边形内使用透视变换和霍夫圆检测
+
+        Args:
+            gray: 灰度图像
+            quad: 四边形顶点 (4, 1, 2)
+
+        Returns:
+            (center, radius) 圆心和半径（原图坐标），或 None
+        """
+        # 排序四边形顶点
+        ordered_quad = self._order_quad_points(quad)
+        src_points = ordered_quad.reshape(4, 2).astype(np.float32)
+
+        # 计算四边形面积，自适应目标尺寸
+        quad_area = cv2.contourArea(src_points)
+        target_size = int(np.sqrt(quad_area) * 0.8)  # 目标尺寸约为四边形边长的80%
+        target_size = max(100, min(400, target_size))  # 限制在100-400之间
+
+        # 目标正方形顶点
+        dst_points = np.array([
+            [0, 0],
+            [target_size, 0],
+            [target_size, target_size],
+            [0, target_size]
+        ], dtype=np.float32)
+
+        # 计算透视变换矩阵
+        M = cv2.getPerspectiveTransform(src_points, dst_points)
+        M_inv = cv2.getPerspectiveTransform(dst_points, src_points)
+
+        # 透视变换
+        warped = cv2.warpPerspective(gray, M, (target_size, target_size))
+
+        # 自适应霍夫圆参数
+        min_radius = int(target_size * 0.15)
+        max_radius = int(target_size * 0.4)
+
+        # 霍夫圆检测
+        circles = cv2.HoughCircles(
+            warped,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,
+            minDist=target_size // 2,
+            param1=50,
+            param2=30,
+            minRadius=min_radius,
+            maxRadius=max_radius
+        )
+
+        if circles is None or len(circles) == 0:
+            return None
+
+        # 取最佳圆（最接近中心）
+        center_target = np.array([target_size / 2, target_size / 2])
+        best_circle = None
+        best_dist = float('inf')
+
+        for circle in circles[0]:
+            cx, cy, r = circle
+            dist = np.sqrt((cx - center_target[0])**2 + (cy - center_target[1])**2)
+            if dist < best_dist:
+                best_dist = dist
+                best_circle = (cx, cy, r)
+
+        if best_circle is None:
+            return None
+
+        cx, cy, r = best_circle
+
+        # 将圆心变换回原图坐标
+        src_center = cv2.perspectiveTransform(
+            np.array([[[cx, cy]]], dtype=np.float32), M_inv
+        )[0, 0]
+
+        # 半径也需要缩放
+        # 计算缩放因子（近似）
+        scale_factor = np.sqrt(quad_area) / target_size
+        src_radius = r * scale_factor
+
+        return ((float(src_center[0]), float(src_center[1])), float(src_radius))
+
+    def _compute_quad_center(self, quad: np.ndarray) -> Tuple[float, float]:
+        """计算四边形中心"""
+        points = quad.reshape(4, 2)
+        center = np.mean(points, axis=0)
+        return (float(center[0]), float(center[1]))
+
+    def _validate_center_alignment(self, quad_center: Tuple[float, float],
+                                    circle_center: Tuple[float, float],
+                                    max_offset: float = 20.0) -> bool:
+        """
+        验证四边形中心和圆心是否对齐
+
+        Args:
+            quad_center: 四边形中心
+            circle_center: 圆心
+            max_offset: 最大允许偏移（像素）
+
+        Returns:
+            是否对齐
+        """
+        dist = np.sqrt((quad_center[0] - circle_center[0])**2 +
+                      (quad_center[1] - circle_center[1])**2)
+        return dist <= max_offset
+
+    def _kalman_update(self, measurement: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+        """
+        使用卡尔曼滤波更新位置
+
+        Args:
+            measurement: 测量到的位置 (x, y)，None 表示检测失败
+
+        Returns:
+            平滑后的位置 (x, y)，未初始化时返回 None
+        """
+        if measurement is not None:
+            # 有测量值
+            x, y = measurement
+            measurement_array = np.array([[x], [y]], dtype=np.float32)
+
+            if not self.tracking_initialized:
+                # 初始化状态
+                self.kf.statePost = np.array([[x], [y], [0], [0]], dtype=np.float32)
+                self.kf.errorCovPost = np.eye(4, dtype=np.float32)
+                self.tracking_initialized = True
+                self.lost_frames = 0
+            else:
+                # 校正
+                self.kf.correct(measurement_array)
+                self.lost_frames = 0
+        else:
+            # 无测量值
+            if self.tracking_initialized:
+                self.lost_frames += 1
+
+                # 超过最大丢失帧数，重置滤波器
+                if self.lost_frames > self.max_lost_frames:
+                    self.tracking_initialized = False
+                    self.lost_frames = 0
+                    return None
+
+        # 预测
+        if self.tracking_initialized:
+            prediction = self.kf.predict()
+            return (float(prediction[0, 0]), float(prediction[1, 0]))
+
+        return None
+
+    def _fallback_ellipse_detection(self, small: np.ndarray, gray: np.ndarray,
+                                     scale: float) -> Optional[Tuple]:
+        """
+        回退方法：原始的轮廓椭圆拟合
+
+        纯函数，无副作用。
+
+        Args:
+            small: 缩放后的BGR图像
+            gray: 灰度图像
+            scale: 缩放比例
+
+        Returns:
+            (ellipse, contour, quad) 或 None
+        """
+        # 高斯模糊
+        kernel_size = self.blur_kernel
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
+
+        # Canny边缘检测
+        edges = cv2.Canny(
+            blurred,
+            self.edge_canny_threshold1,
+            self.edge_canny_threshold2,
+            apertureSize=3,
+        )
+
+        # 形态学操作
+        morphed = self._apply_morphology(edges)
+
+        # 查找轮廓
+        contours, _ = cv2.findContours(
+            morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        # 查找四边形
+        quadrilaterals = self._find_quadrilaterals(contours, scale)
+        if not quadrilaterals:
+            return None
+
+        # 按面积排序
+        largest_quads = sorted(quadrilaterals, key=cv2.contourArea, reverse=True)[:5]
+
+        for quad in largest_quads:
+            result = self._fit_ellipse_in_quad(morphed, quad, small.shape)
+            if result is not None:
+                ellipse, contour, score = result
+                return (ellipse, contour, quad)
+
+        return None
+
+    def _create_target_item_from_center(self, center: Tuple[float, float], radius: float,
+                                         scale: float, color: str) -> CircleTargetItem:
+        """
+        从圆心和半径创建 CircleTargetItem
+
+        Args:
+            center: 圆心坐标（缩放后的图像坐标）
+            radius: 半径（缩放后的图像坐标）
+            scale: 缩放比例
+            color: 颜色名称
+
+        Returns:
+            CircleTargetItem 实例
+        """
+        center_orig = (int(center[0] / scale), int(center[1] / scale))
+        radius_orig = radius / scale
+        area = np.pi * radius_orig * radius_orig
+
+        # 生成圆形轮廓点用于可视化
+        contour_points = cv2.ellipse2Poly(
+            center_orig,
+            (int(radius_orig), int(radius_orig)),
+            0, 0, 360, 5
+        )
+
+        return CircleTargetItem(
+            index=0,
+            center_coordinates=center_orig,
+            radius=radius_orig,
+            area=area,
+            shape_type=ShapeType.CIRCLE,
+            contour_points=contour_points,
+            bounding_box=(
+                int(center_orig[0] - radius_orig),
+                int(center_orig[1] - radius_orig),
+                int(2 * radius_orig),
+                int(2 * radius_orig),
+            ),
+            color=color,
+            major_axis=2 * radius_orig,
+            minor_axis=2 * radius_orig,
+        )

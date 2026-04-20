@@ -39,6 +39,12 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
         ParamDef("min_area_threshold", "Min Area", 150, 10, 2000, 10),
         ParamDef("min_contour_points", "Min Points", 15, 5, 50, 1),
     ],
+    "robust_line_quad": [
+        ParamDef("blur_kernel", "Blur Kernel", 5, 1, 15, 2, is_odd=True),
+        ParamDef("blur_sigma", "Blur Sigma", 10, 1, 50, 1, scale=0.1),
+        ParamDef("min_area_threshold", "Min Area", 150, 10, 2000, 10),
+        ParamDef("min_contour_points", "Min Points", 15, 5, 50, 1),
+    ],
 }
 
 
