@@ -60,7 +60,8 @@ class ModuleManager:
                                     module.loop()
                                 except Exception as e:
                                     print(f"Error in {module_name} loop: {e}")
-                    gc.collect()
+                    #gc.collect()
+                    #这里先移除了gc，排查是不是gc引起的性能问题，后续再优化
                     time.sleep(SystemConfig.MAIN_LOOP_DELAY)
                 except KeyboardInterrupt:
                     print("Program interrupted")

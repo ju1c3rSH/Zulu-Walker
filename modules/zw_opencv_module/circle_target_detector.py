@@ -58,6 +58,9 @@ class CircleTargetDetector:
 
         self.detect_method = DetectMethod.EDGE_CONTOUR_ELLIPSE
 
+        
+        self.quad_participation = False
+        
         # 边缘检测参数
         self.edge_canny_threshold1 = 50
         self.edge_canny_threshold2 = 150
@@ -123,6 +126,10 @@ class CircleTargetDetector:
             params["blur_kernel"] = self.blur_kernel
             params["blur_sigma"] = self.blur_sigma
 
+        elif method_name == "test_line_quad":
+            params["blur_kernel"] = self.blur_kernel
+            params["blur_sigma"] = self.blur_sigma
+
         return params
 
     def set_method_params(self, method: DetectMethod, params: dict):
@@ -152,6 +159,12 @@ class CircleTargetDetector:
                 self.morph_kernel = params["morph_kernel"]
             if "morph_iterations" in params:
                 self.morph_iterations = params["morph_iterations"]
+            if "blur_kernel" in params:
+                self.blur_kernel = params["blur_kernel"]
+            if "blur_sigma" in params:
+                self.blur_sigma = params["blur_sigma"]
+
+        elif method_name == "test_line_quad":
             if "blur_kernel" in params:
                 self.blur_kernel = params["blur_kernel"]
             if "blur_sigma" in params:
@@ -505,6 +518,9 @@ class CircleTargetDetector:
         """
         鲁棒椭圆检测：优先快速回退方法 + 卡尔曼滤波平滑
         """
+        import time
+        t0 = time.time()
+
         h, w = frame.shape[:2]
         scale = min(320 / h, 320 / w, 1.0)
         if scale < 1.0:
@@ -512,16 +528,19 @@ class CircleTargetDetector:
         else:
             small = frame
 
+        t1 = time.time()
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         kernel_size = self.blur_kernel
         if kernel_size % 2 == 0:
             kernel_size += 1
         blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
+        t2 = time.time()
 
         result = None
 
-        # 优先使用快速的回退方法
         fallback_result = self._fallback_ellipse_detection(small, gray, scale)
+        t3 = time.time()
+
         if fallback_result is not None:
             ellipse, contour, quad = fallback_result
             center = ellipse[0]
@@ -555,6 +574,8 @@ class CircleTargetDetector:
             )
             self.circle_target.add_target(target_item)
 
+        t4 = time.time()
+
         # 缓存边缘图像用于调试
         edges = cv2.Canny(
             blurred,
@@ -563,16 +584,22 @@ class CircleTargetDetector:
             apertureSize=3,
         )
         self._last_canny_preview = self._apply_morphology(edges)
+        t5 = time.time()
 
-    def _detect_by_robust_line_quad(
+        print(f"[EDGE] preprocess: {(t2-t1)*1000:.1f}ms, fallback: {(t3-t2)*1000:.1f}ms, kalman: {(t4-t3)*1000:.1f}ms, canny: {(t5-t4)*1000:.1f}ms, total: {(t5-t0)*1000:.1f}ms")
+
+    def _detect_by_test_line_quad(
         self, frame: np.ndarray, target_color: Optional[str] = None
     ):
         """
-        鲁棒椭圆检测：线段+四边形+透视变换+霍夫圆+卡尔曼滤波
+        测试方法：线段+四边形+透视变换+霍夫圆+卡尔曼滤波
 
         适用于：遮挡、边缘断裂、相机运动等复杂场景
         性能较慢，但更鲁棒
         """
+        import time
+        t0 = time.time()
+
         h, w = frame.shape[:2]
         scale = min(320 / h, 320 / w, 1.0)
         if scale < 1.0:
@@ -587,36 +614,59 @@ class CircleTargetDetector:
         blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
 
         result = None
-        detection_method = None
 
-        # Step A: 提取线段
-        lines = self._extract_lines_ed_lsd(blurred)
+        try:
+            # Step A: 提取线段
+            t1 = time.time()
+            lines = self._extract_lines_ed_lsd(blurred)
+            print(f"[TEST] extract_lines: {time.time()-t1:.3f}s, n_lines={len(lines) if lines is not None else 0}")
 
-        # Step B: 从线段寻找四边形
-        if lines is not None and len(lines) >= 4:
-            quad = self._find_quad_from_lines(lines, small.shape)
-            if quad is not None:
-                # Step C: 透视变换 + 霍夫圆检测
-                circle_result = self._detect_circle_in_quad(blurred, quad)
-                if circle_result is not None:
-                    circle_center, radius = circle_result
+            # Step B: 从线段寻找四边形（限制线段数量以避免性能问题）
+            if lines is not None and len(lines) >= 4 and len(lines) <= 200:
+                t2 = time.time()
+                quad = self._find_quad_from_lines(lines, small.shape)
+                print(f"[TEST] find_quad: {time.time()-t2:.3f}s, quad={'found' if quad is not None else 'None'}")
 
-                    # Step D: 中心对齐验证
-                    quad_center = self._compute_quad_center(quad)
-                    max_offset = 20.0 * scale
-                    if self._validate_center_alignment(quad_center, circle_center, max_offset):
-                        result = (circle_center, radius, quad)
-                        detection_method = "line_quad_circle"
+                if quad is not None:
+                    # Step C: 透视变换 + 霍夫圆检测
+                    t3 = time.time()
+                    circle_result = self._detect_circle_in_quad(blurred, quad)
+                    print(f"[TEST] detect_circle: {time.time()-t3:.3f}s")
 
-        # 回退到快速方法
-        if result is None:
-            fallback_result = self._fallback_ellipse_detection(small, gray, scale)
-            if fallback_result is not None:
-                ellipse, contour, quad = fallback_result
-                center = ellipse[0]
-                radius = max(ellipse[1]) / 2
-                result = (center, radius, quad)
-                detection_method = "fallback_contour"
+                    if circle_result is not None:
+                        circle_center, radius = circle_result
+
+                        # Step D: 中心对齐验证
+                        quad_center = self._compute_quad_center(quad)
+                        max_offset = 20.0 * scale
+                        if self._validate_center_alignment(quad_center, circle_center, max_offset):
+                            result = (circle_center, radius, quad)
+
+            # 回退到快速方法
+            if result is None:
+                t4 = time.time()
+                fallback_result = self._fallback_ellipse_detection(small, gray, scale)
+                print(f"[TEST] fallback: {time.time()-t4:.3f}s")
+                if fallback_result is not None:
+                    ellipse, contour, quad = fallback_result
+                    center = ellipse[0]
+                    radius = max(ellipse[1]) / 2
+                    result = (center, radius, quad)
+
+        except Exception as e:
+            print(f"[TEST_LINE_QUAD] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            # 回退到快速方法
+            try:
+                fallback_result = self._fallback_ellipse_detection(small, gray, scale)
+                if fallback_result is not None:
+                    ellipse, contour, quad = fallback_result
+                    center = ellipse[0]
+                    radius = max(ellipse[1]) / 2
+                    result = (center, radius, quad)
+            except Exception as e2:
+                print(f"[TEST_LINE_QUAD] Fallback error: {e2}")
 
         # 卡尔曼滤波平滑
         final_center = None
@@ -644,9 +694,17 @@ class CircleTargetDetector:
             )
             self.circle_target.add_target(target_item)
 
-        # 缓存边缘图像
-        self.ed.detectEdges(gray)
-        self._last_canny_preview = self.ed.getEdgeImage()
+        # 缓存边缘图像（安全检查）
+        try:
+            self.ed.detectEdges(gray)
+            edge_img = self.ed.getEdgeImage()
+            if edge_img is not None:
+                self._last_canny_preview = edge_img
+            else:
+                # 使用 Canny 作为备选
+                self._last_canny_preview = cv2.Canny(blurred, self.edge_canny_threshold1, self.edge_canny_threshold2)
+        except Exception:
+            self._last_canny_preview = np.zeros((small.shape[0], small.shape[1]), dtype=np.uint8)
     def _detect_contour_color(
         self, hsv: np.ndarray, contour, img_shape: tuple
     ) -> Optional[str]:
@@ -1010,7 +1068,16 @@ class CircleTargetDetector:
         ordered = self._order_quad_points(corners)
 
         return ordered
+    def _get_quad_center_with_pnp(self, quad: np.ndarray) -> Optional[Tuple[float, float]]:
+        """
+        使用 solvePnP 计算四边形中心的3D位置，并投影回2D坐标
+        
+        Args:
+            quad (np.ndarray): _description_
 
+        Returns:
+            Optional[Tuple[float, float]]: _description_
+        """
     def _detect_circle_in_quad(self, gray: np.ndarray, quad: np.ndarray) -> Optional[Tuple[Tuple[float, float], float]]:
         """
         在四边形内使用透视变换和霍夫圆检测
@@ -1176,7 +1243,6 @@ class CircleTargetDetector:
         Returns:
             (ellipse, contour, quad) 或 None
         """
-        # 高斯模糊
         kernel_size = self.blur_kernel
         if kernel_size % 2 == 0:
             kernel_size += 1
