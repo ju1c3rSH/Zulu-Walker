@@ -53,8 +53,13 @@ class CircleTargetDetector:
             "Black": [(np.array([0, 0, 0]), np.array([180, 255, 50]))],
         }
         self.circle_target = CircleTargets()
-        self.min_area_threshold = 150  # 最小面积阈值
+        self.min_area_threshold_quad = 150  # 四边形最小面积阈值
+        self.min_area_threshold_ellipse = 100  # 椭圆最小面积阈值
         self.min_contour_points = 15  # 椭圆拟合最少需要20个点
+
+        # 椭圆验证参数
+        self.max_aspect_ratio = 2.0  # 长短轴比上限
+        self.min_circularity = 0.4  # 圆度下限
 
         self.detect_method = DetectMethod.EDGE_CONTOUR_ELLIPSE
 
@@ -87,6 +92,9 @@ class CircleTargetDetector:
         self.color_v_min = 50  # 明度最小值
         self.debug_color = False  # 调试模式：打印检测到的 HSV 值
 
+        # 目标四边形的长宽比（width / height），1.0 表示正方形
+        self.quad_aspect_ratio = 1.0  # 默认正方形，可配置为其他值如 1.5, 2.0 等
+
     def set_detect_method(self, method: DetectMethod):
         """设置检测方法"""
         self.detect_method = method
@@ -114,7 +122,8 @@ class CircleTargetDetector:
         params = {}
 
         # 通用参数
-        params["min_area_threshold"] = self.min_area_threshold
+        params["min_area_threshold_quad"] = self.min_area_threshold_quad
+        params["min_area_threshold_ellipse"] = self.min_area_threshold_ellipse
         params["min_contour_points"] = self.min_contour_points
 
         if method_name == "edge_contour_ellipse":
@@ -125,6 +134,8 @@ class CircleTargetDetector:
             params["morph_iterations"] = self.morph_iterations
             params["blur_kernel"] = self.blur_kernel
             params["blur_sigma"] = self.blur_sigma
+            params["max_aspect_ratio"] = self.max_aspect_ratio
+            params["min_circularity"] = self.min_circularity
 
         elif method_name == "test_line_quad":
             params["blur_kernel"] = self.blur_kernel
@@ -141,8 +152,10 @@ class CircleTargetDetector:
             params: 参数字典
         """
         # 通用参数
-        if "min_area_threshold" in params:
-            self.min_area_threshold = params["min_area_threshold"]
+        if "min_area_threshold_quad" in params:
+            self.min_area_threshold_quad = params["min_area_threshold_quad"]
+        if "min_area_threshold_ellipse" in params:
+            self.min_area_threshold_ellipse = params["min_area_threshold_ellipse"]
         if "min_contour_points" in params:
             self.min_contour_points = params["min_contour_points"]
 
@@ -163,6 +176,10 @@ class CircleTargetDetector:
                 self.blur_kernel = params["blur_kernel"]
             if "blur_sigma" in params:
                 self.blur_sigma = params["blur_sigma"]
+            if "max_aspect_ratio" in params:
+                self.max_aspect_ratio = params["max_aspect_ratio"]
+            if "min_circularity" in params:
+                self.min_circularity = params["min_circularity"]
 
         elif method_name == "test_line_quad":
             if "blur_kernel" in params:
@@ -187,14 +204,20 @@ class CircleTargetDetector:
             self.morph_kernel = params["morph_kernel"]
         if "morph_iterations" in params:
             self.morph_iterations = params["morph_iterations"]
-        if "min_area" in params:
-            self.min_area_threshold = params["min_area"]
+        if "min_area_threshold_quad" in params:
+            self.min_area_threshold_quad = params["min_area_threshold_quad"]
+        if "min_area_threshold_ellipse" in params:
+            self.min_area_threshold_ellipse = params["min_area_threshold_ellipse"]
         if "min_contour_points" in params:
             self.min_contour_points = params["min_contour_points"]
         if "blur_kernel" in params:
             self.blur_kernel = params["blur_kernel"]
         if "blur_sigma" in params:
             self.blur_sigma = params["blur_sigma"]
+        if "max_aspect_ratio" in params:
+            self.max_aspect_ratio = params["max_aspect_ratio"]
+        if "min_circularity" in params:
+            self.min_circularity = params["min_circularity"]
 
     def get_edge_preview(self, frame: np.ndarray) -> np.ndarray:
         """
@@ -318,7 +341,7 @@ class CircleTargetDetector:
             [target_color] if target_color else list(self.color_ranges.keys())
         )
 
-        min_area_scaled = self.min_area_threshold * (scale * scale)
+        min_area_scaled = self.min_area_threshold_ellipse * (scale * scale)
 
         for color_name in colors_to_detect:
             if color_name not in self.color_ranges:
@@ -381,7 +404,7 @@ class CircleTargetDetector:
                 )
                 self.circle_target.add_target(target_item)
 
-    def _find_quadrilaterals(self, contours, scale: float) -> list:
+    def _find_quadrilaterals_from_contours(self, contours, scale: float) -> list:
         """
         从轮廓中筛选四边形
 
@@ -393,11 +416,12 @@ class CircleTargetDetector:
             面积大于阈值的四边形列表
         """
         quadrilaterals = []
-        min_area_scaled = self.min_area_threshold * (scale * scale)
+        min_area_scaled = self.min_area_threshold_quad * (scale * scale)
 
         for contour in contours:
             epsilon = cv2.arcLength(contour, True) * 0.02
             approx = cv2.approxPolyDP(contour, epsilon, True)
+
             if len(approx) == 4:
                 area = cv2.contourArea(approx)
                 if area > min_area_scaled:
@@ -430,38 +454,55 @@ class CircleTargetDetector:
         best_score = 0
 
         for cnt in inner_contours:
+            # 1. 轮廓点数检查
             if len(cnt) < self.min_contour_points:
                 continue
+
+            # 2. 面积检查
+            contour_area = cv2.contourArea(cnt)
+            if contour_area < self.min_area_threshold_ellipse:
+                continue
+
             try:
                 ellipse = cv2.fitEllipse(cnt)
-                axes = ellipse[1]
-                major_axis = max(axes)
-                minor_axis = min(axes)
-
-                if minor_axis <= 0 or major_axis <= 0:
-                    continue
-
-                aspect_ratio = major_axis / minor_axis
-                if aspect_ratio > 3.0:
-                    continue
-
-                area = np.pi * ellipse[1][0] * ellipse[1][1] / 4
-                ellipse_contour = cv2.ellipse2Poly(
-                    (int(ellipse[0][0]), int(ellipse[0][1])),
-                    (int(major_axis / 2), int(minor_axis / 2)),
-                    int(ellipse[2]),
-                    0, 360, 5
-                )
-
-                similarity = cv2.matchShapes(cnt, ellipse_contour, cv2.CONTOURS_MATCH_I1, 0)
-                score = area / (1 + similarity)
-
-                if score > best_score:
-                    best_score = score
-                    best_ellipse = ellipse
-                    best_contour = cnt
             except cv2.error:
                 continue
+
+            axes = ellipse[1]
+            major_axis = max(axes)
+            minor_axis = min(axes)
+
+            # 3. 轴长有效性
+            if minor_axis <= 0 or major_axis <= 0:
+                continue
+
+            # 4. 长短轴比检查
+            aspect_ratio = major_axis / minor_axis
+            if aspect_ratio > self.max_aspect_ratio:
+                continue
+
+            # 5. 圆度检查
+            perimeter = cv2.arcLength(cnt, True)
+            if perimeter > 0:
+                circularity = 4 * np.pi * contour_area / (perimeter * perimeter)
+                if circularity < self.min_circularity:
+                    continue
+
+            area = np.pi * ellipse[1][0] * ellipse[1][1] / 4
+            ellipse_contour = cv2.ellipse2Poly(
+                (int(ellipse[0][0]), int(ellipse[0][1])),
+                (int(major_axis / 2), int(minor_axis / 2)),
+                int(ellipse[2]),
+                0, 360, 5
+            )
+
+            similarity = cv2.matchShapes(cnt, ellipse_contour, cv2.CONTOURS_MATCH_I1, 0)
+            score = area / (1 + similarity)
+
+            if score > best_score:
+                best_score = score
+                best_ellipse = ellipse
+                best_contour = cnt
 
         if best_ellipse is None:
             return None
@@ -537,12 +578,13 @@ class CircleTargetDetector:
         t2 = time.time()
 
         result = None
+        morphed_edges = None
 
         fallback_result = self._fallback_ellipse_detection(small, gray, scale)
         t3 = time.time()
 
         if fallback_result is not None:
-            ellipse, contour, quad = fallback_result
+            ellipse, contour, quad, morphed_edges = fallback_result
             center = ellipse[0]
             radius = max(ellipse[1]) / 2
             result = (center, radius, quad)
@@ -566,7 +608,6 @@ class CircleTargetDetector:
                 final_center = predicted
                 final_radius = None
 
-        # 生成结果
         if final_center is not None and final_radius is not None:
             color_name = target_color if target_color else 'Red'
             target_item = self._create_target_item_from_center(
@@ -576,17 +617,21 @@ class CircleTargetDetector:
 
         t4 = time.time()
 
-        # 缓存边缘图像用于调试
-        edges = cv2.Canny(
-            blurred,
-            self.edge_canny_threshold1,
-            self.edge_canny_threshold2,
-            apertureSize=3,
-        )
-        self._last_canny_preview = self._apply_morphology(edges)
+        # 缓存边缘图像用于调试（复用 fallback 的结果，避免重复计算）
+        if morphed_edges is not None:
+            self._last_canny_preview = morphed_edges
+        else:
+            # 仅在 fallback 未返回边缘时重新计算
+            edges = cv2.Canny(
+                blurred,
+                self.edge_canny_threshold1,
+                self.edge_canny_threshold2,
+                apertureSize=3,
+            )
+            self._last_canny_preview = self._apply_morphology(edges)
         t5 = time.time()
 
-        print(f"[EDGE] preprocess: {(t2-t1)*1000:.1f}ms, fallback: {(t3-t2)*1000:.1f}ms, kalman: {(t4-t3)*1000:.1f}ms, canny: {(t5-t4)*1000:.1f}ms, total: {(t5-t0)*1000:.1f}ms")
+        print(f"[EDGE] preprocess: {(t2-t1)*1000:.1f}ms, fallback: {(t3-t2)*1000:.1f}ms, kalman: {(t4-t3)*1000:.1f}ms, preview: {(t5-t4)*1000:.1f}ms, total: {(t5-t0)*1000:.1f}ms")
 
     def _detect_by_test_line_quad(
         self, frame: np.ndarray, target_color: Optional[str] = None
@@ -1052,7 +1097,7 @@ class CircleTargetDetector:
         hull = cv2.convexHull(corners.astype(np.float32))
         area = cv2.contourArea(hull)
 
-        min_area_scaled = self.min_area_threshold * 0.5  # 放宽阈值
+        min_area_scaled = self.min_area_threshold_quad * 0.5  # 放宽阈值
         if area < min_area_scaled:
             return None
 
@@ -1068,16 +1113,71 @@ class CircleTargetDetector:
         ordered = self._order_quad_points(corners)
 
         return ordered
-    def _get_quad_center_with_pnp(self, quad: np.ndarray) -> Optional[Tuple[float, float]]:
+    def _get_quad_center_perspective(self, quad: np.ndarray) -> Optional[Tuple[float, float]]:
         """
-        使用 solvePnP 计算四边形中心的3D位置，并投影回2D坐标
-        
+        使用透视变换计算四边形的真实几何中心
+
+        当四边形因透视变形变成梯形时，简单平均中心不是真正的几何中心。
+        本方法通过透视变换将四边形校正为矩形，计算中心后再投影回原图。
+
         Args:
-            quad (np.ndarray): _description_
+            quad: 四边形顶点，形状为 (4, 1, 2) 或 (4, 2)
+                  来自 _find_quadrilaterals_from_contours 的 approx
 
         Returns:
-            Optional[Tuple[float, float]]: _description_
+            校正后的中心坐标 (x, y)，或 None（输入无效时）
         """
+        # 1. 验证输入
+        if quad is None or len(quad) != 4:
+            return None
+
+        # 2. 排序四边形顶点（左上、右上、右下、左下）
+        ordered_quad = self._order_quad_points(quad)
+        src_points = ordered_quad.reshape(4, 2).astype(np.float32)
+
+        # 3. 计算四边形的平均边长作为基准尺寸
+        edges = []
+        for i in range(4):
+            p1 = src_points[i]
+            p2 = src_points[(i + 1) % 4]
+            edges.append(np.linalg.norm(p2 - p1))
+
+        avg_edge = np.mean(edges)
+
+        # 4. 根据长宽比计算目标矩形的尺寸
+        # 使用配置的长宽比，默认为 1.0（正方形）
+        aspect_ratio = self.quad_aspect_ratio
+        if aspect_ratio >= 1.0:
+            target_width = int(avg_edge)
+            target_height = int(avg_edge / aspect_ratio)
+        else:
+            target_width = int(avg_edge * aspect_ratio)
+            target_height = int(avg_edge)
+
+        target_width = max(50, target_width)
+        target_height = max(50, target_height)
+
+        # 5. 定义目标矩形顶点（左上、右上、右下、左下）
+        dst_points = np.array([
+            [0, 0],
+            [target_width, 0],
+            [target_width, target_height],
+            [0, target_height]
+        ], dtype=np.float32)
+
+        # 6. 计算透视变换矩阵
+        M = cv2.getPerspectiveTransform(src_points, dst_points)
+        M_inv = cv2.getPerspectiveTransform(dst_points, src_points)
+
+        # 7. 计算矩形中心（透视校正后的中心）
+        corrected_center = np.array([[target_width / 2, target_height / 2]], dtype=np.float32)
+
+        # 8. 将中心投影回原图坐标
+        src_center = cv2.perspectiveTransform(
+            corrected_center.reshape(1, 1, 2), M_inv
+        )[0, 0]
+
+        return (float(src_center[0]), float(src_center[1]))
     def _detect_circle_in_quad(self, gray: np.ndarray, quad: np.ndarray) -> Optional[Tuple[Tuple[float, float], float]]:
         """
         在四边形内使用透视变换和霍夫圆检测
@@ -1233,15 +1333,14 @@ class CircleTargetDetector:
         """
         回退方法：原始的轮廓椭圆拟合
 
-        纯函数，无副作用。
-
         Args:
             small: 缩放后的BGR图像
             gray: 灰度图像
             scale: 缩放比例
 
         Returns:
-            (ellipse, contour, quad) 或 None
+            (ellipse, contour, quad, morphed_edges) 或 None
+            morphed_edges 用于调试预览，避免重复计算
         """
         kernel_size = self.blur_kernel
         if kernel_size % 2 == 0:
@@ -1265,7 +1364,7 @@ class CircleTargetDetector:
         )
 
         # 查找四边形
-        quadrilaterals = self._find_quadrilaterals(contours, scale)
+        quadrilaterals = self._find_quadrilaterals_from_contours(contours, scale)
         if not quadrilaterals:
             return None
 
@@ -1276,7 +1375,7 @@ class CircleTargetDetector:
             result = self._fit_ellipse_in_quad(morphed, quad, small.shape)
             if result is not None:
                 ellipse, contour, score = result
-                return (ellipse, contour, quad)
+                return (ellipse, contour, quad, morphed)
 
         return None
 
