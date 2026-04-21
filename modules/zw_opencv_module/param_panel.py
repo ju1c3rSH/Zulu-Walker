@@ -80,15 +80,10 @@ class ParamPanel:
         self._trackbars_created = False
 
     def load_params(self, params: Dict[str, int]):
-        """从字典加载参数值"""
+        """从字典加载参数值（原始滑动条值）"""
         for name, value in params.items():
             if name in self.params:
-                # 查找参数定义，反向应用 scale
-                pdef = self.get_param_def(name)
-                if pdef and pdef.scale != 1.0:
-                    self.params[name] = int(value / pdef.scale)
-                else:
-                    self.params[name] = int(value)
+                self.params[name] = int(value)
 
     def create_trackbars(self):
         """创建滑动条（必须在主线程调用）"""
