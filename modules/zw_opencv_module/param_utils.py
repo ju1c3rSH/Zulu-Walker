@@ -21,8 +21,9 @@ def get_default_params() -> Dict[str, Dict[str, Any]]:
     """获取各检测方法的默认参数"""
     return {
         "edge_contour_ellipse": {
-            "edge_canny_threshold1": 50,
-            "edge_canny_threshold2": 150,
+            "ed_min_path_length": 50,
+            "ed_gradient_threshold": 20,
+            "ed_nfa_validation": True,
             "morph_type": 1,
             "morph_kernel": 3,
             "morph_iterations": 1,

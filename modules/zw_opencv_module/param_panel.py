@@ -25,8 +25,11 @@ class ParamDef:
 # 各检测方法的参数定义
 METHOD_PARAMS: Dict[str, List[ParamDef]] = {
     "edge_contour_ellipse": [
-        ParamDef("edge_canny_threshold1", "Canny Th1", 50, 0, 255, 1),
-        ParamDef("edge_canny_threshold2", "Canny Th2", 150, 0, 255, 1),
+        # EdgeDrawing 参数（替代 Canny）
+        ParamDef("ed_min_path_length", "ED MinPath", 50, 10, 200, 5),
+        ParamDef("ed_gradient_threshold", "ED Gradient", 20, 5, 100, 1),
+        ParamDef("ed_nfa_validation", "ED NFA", 1, 0, 1, 1),  # 0=off, 1=on
+        # 形态学操作参数
         ParamDef("morph_type", "Morph Type", 1, 0, 4, 1),
         ParamDef("morph_kernel", "Morph Kernel", 3, 1, 15, 2, is_odd=True),
         ParamDef("morph_iterations", "Morph Iter", 1, 1, 10, 1),

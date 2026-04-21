@@ -22,7 +22,7 @@ from .param_panel import ParamPanel, METHOD_PARAMS
 class PreviewMode(Enum):
     """预览模式"""
     ORIGINAL = 0      # 原始图像
-    CANNY = 1         # Canny边缘
+    EDGE = 1          # EdgeDrawing边缘
     RESULT = 2        # 检测结果叠加
 
 
@@ -57,13 +57,13 @@ class DebugWindow:
 
         # 状态
         self.enabled = True
-        self.preview_mode = PreviewMode.CANNY
+        self.preview_mode = PreviewMode.EDGE
         self._window_created = False
 
         # 帧缓冲
         self._current_frame: Optional[np.ndarray] = None
         self._result_frame: Optional[np.ndarray] = None
-        self._canny_frame: Optional[np.ndarray] = None
+        self._edge_frame: Optional[np.ndarray] = None
 
         # 保存节流
         self._save_pending = False
@@ -147,17 +147,17 @@ class DebugWindow:
         # 保存配置
         self._save_config()
 
-    def update_frame(self, frame: np.ndarray, canny_frame: np.ndarray = None, result_frame: np.ndarray = None):
+    def update_frame(self, frame: np.ndarray, edge_frame: np.ndarray = None, result_frame: np.ndarray = None):
         """
         更新帧数据
 
         Args:
             frame: 原始帧
-            canny_frame: Canny边缘帧
+            edge_frame: EdgeDrawing边缘帧
             result_frame: 检测结果帧
         """
         self._current_frame = frame
-        self._canny_frame = canny_frame
+        self._edge_frame = edge_frame
         self._result_frame = result_frame
 
     def setup_window(self):
@@ -219,7 +219,7 @@ class DebugWindow:
         # 生成预览
         preview = self._generate_preview(
             self._current_frame,
-            self._canny_frame,
+            self._edge_frame,
             self._result_frame
         )
 
@@ -234,7 +234,7 @@ class DebugWindow:
             cv2.destroyWindow(self.window_name)
             self._window_created = False
 
-    def _generate_preview(self, frame: np.ndarray, canny: np.ndarray, result: np.ndarray) -> Optional[np.ndarray]:
+    def _generate_preview(self, frame: np.ndarray, edge: np.ndarray, result: np.ndarray) -> Optional[np.ndarray]:
         """生成预览图像"""
         if frame is None:
             # 返回黑色图像
@@ -249,11 +249,11 @@ class DebugWindow:
         if self.preview_mode == PreviewMode.ORIGINAL:
             return frame.copy()
 
-        elif self.preview_mode == PreviewMode.CANNY:
-            if canny is not None:
-                if canny.shape[:2] != frame.shape[:2]:
-                    canny = cv2.resize(canny, (frame.shape[1], frame.shape[0]))
-                return cv2.cvtColor(canny, cv2.COLOR_GRAY2BGR)
+        elif self.preview_mode == PreviewMode.EDGE:
+            if edge is not None:
+                if edge.shape[:2] != frame.shape[:2]:
+                    edge = cv2.resize(edge, (frame.shape[1], frame.shape[0]))
+                return cv2.cvtColor(edge, cv2.COLOR_GRAY2BGR)
             return frame.copy()
 
         elif self.preview_mode == PreviewMode.RESULT:

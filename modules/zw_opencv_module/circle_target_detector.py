@@ -28,6 +28,11 @@ class CircleTargetDetector:
         ed_params.GradientThresholdValue = 20
         ed_params.NFAValidation = True
         self.ed.setParams(ed_params)
+
+        # EdgeDrawing 参数（可调）
+        self.ed_min_path_length = 50
+        self.ed_gradient_threshold = 20
+        self.ed_nfa_validation = True
         
         self.lsd = cv2.createLineSegmentDetector(0)
         
@@ -66,9 +71,10 @@ class CircleTargetDetector:
         
         self.quad_participation = False
         
-        # 边缘检测参数
-        self.edge_canny_threshold1 = 50
-        self.edge_canny_threshold2 = 150
+        # EdgeDrawing 参数（替代 Canny）
+        self.ed_min_path_length = 50
+        self.ed_gradient_threshold = 20
+        self.ed_nfa_validation = True
 
         # 形态学操作参数
         self.morph_type = 1  # 0=none, 1=dilate, 2=erode, 3=open, 4=close
@@ -127,8 +133,9 @@ class CircleTargetDetector:
         params["min_contour_points"] = self.min_contour_points
 
         if method_name == "edge_contour_ellipse":
-            params["edge_canny_threshold1"] = self.edge_canny_threshold1
-            params["edge_canny_threshold2"] = self.edge_canny_threshold2
+            params["ed_min_path_length"] = self.ed_min_path_length
+            params["ed_gradient_threshold"] = self.ed_gradient_threshold
+            params["ed_nfa_validation"] = self.ed_nfa_validation
             params["morph_type"] = self.morph_type
             params["morph_kernel"] = self.morph_kernel
             params["morph_iterations"] = self.morph_iterations
@@ -162,10 +169,12 @@ class CircleTargetDetector:
         method_name = method.value
 
         if method_name == "edge_contour_ellipse":
-            if "edge_canny_threshold1" in params:
-                self.edge_canny_threshold1 = params["edge_canny_threshold1"]
-            if "edge_canny_threshold2" in params:
-                self.edge_canny_threshold2 = params["edge_canny_threshold2"]
+            if "ed_min_path_length" in params:
+                self.ed_min_path_length = params["ed_min_path_length"]
+            if "ed_gradient_threshold" in params:
+                self.ed_gradient_threshold = params["ed_gradient_threshold"]
+            if "ed_nfa_validation" in params:
+                self.ed_nfa_validation = params["ed_nfa_validation"]
             if "morph_type" in params:
                 self.morph_type = params["morph_type"]
             if "morph_kernel" in params:
@@ -180,6 +189,8 @@ class CircleTargetDetector:
                 self.max_aspect_ratio = params["max_aspect_ratio"]
             if "min_circularity" in params:
                 self.min_circularity = params["min_circularity"]
+            # 更新 EdgeDrawing 参数
+            self._update_ed_params()
 
         elif method_name == "test_line_quad":
             if "blur_kernel" in params:
@@ -194,10 +205,12 @@ class CircleTargetDetector:
         Args:
             params: 参数字典
         """
-        if "canny_threshold1" in params:
-            self.edge_canny_threshold1 = params["canny_threshold1"]
-        if "canny_threshold2" in params:
-            self.edge_canny_threshold2 = params["canny_threshold2"]
+        if "ed_min_path_length" in params:
+            self.ed_min_path_length = params["ed_min_path_length"]
+        if "ed_gradient_threshold" in params:
+            self.ed_gradient_threshold = params["ed_gradient_threshold"]
+        if "ed_nfa_validation" in params:
+            self.ed_nfa_validation = params["ed_nfa_validation"]
         if "morph_type" in params:
             self.morph_type = params["morph_type"]
         if "morph_kernel" in params:
@@ -218,6 +231,16 @@ class CircleTargetDetector:
             self.max_aspect_ratio = params["max_aspect_ratio"]
         if "min_circularity" in params:
             self.min_circularity = params["min_circularity"]
+        # 更新 EdgeDrawing 参数
+        self._update_ed_params()
+
+    def _update_ed_params(self):
+        """更新 EdgeDrawing 参数"""
+        ed_params = self.ed.Params()
+        ed_params.MinPathLength = self.ed_min_path_length
+        ed_params.GradientThresholdValue = self.ed_gradient_threshold
+        ed_params.NFAValidation = self.ed_nfa_validation
+        self.ed.setParams(ed_params)
 
     def get_edge_preview(self, frame: np.ndarray) -> np.ndarray:
         """
@@ -230,7 +253,7 @@ class CircleTargetDetector:
             frame: BGR格式的输入图像（仅在无缓存时使用）
 
         Returns:
-            Canny边缘图像（灰度）
+            EdgeDrawing边缘图像（灰度）
         """
         # 优先返回检测过程中缓存的边缘图像
         if self._last_canny_preview is not None:
@@ -259,15 +282,16 @@ class CircleTargetDetector:
             kernel_size += 1  # 确保为奇数
         blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
 
-        # Canny边缘检测
-        edges = cv2.Canny(
-            blurred,
-            self.edge_canny_threshold1,
-            self.edge_canny_threshold2,
-            apertureSize=3,
-        )
+        # EdgeDrawing 边缘检测
+        try:
+            self.ed.detectEdges(blurred)
+            edges = self.ed.getEdgeImage()
+            if edges is not None:
+                return edges
+        except cv2.error:
+            pass
 
-        return edges
+        return np.zeros((small.shape[0], small.shape[1]), dtype=np.uint8)
 
     def _apply_morphology(self, edges: np.ndarray) -> np.ndarray:
         """
@@ -446,7 +470,7 @@ class CircleTargetDetector:
 
         masked_edges = cv2.bitwise_and(edges, edges, mask=mask)
         inner_contours, _ = cv2.findContours(
-            masked_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            masked_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
         )
 
         best_ellipse = None
@@ -563,7 +587,8 @@ class CircleTargetDetector:
         t0 = time.time()
 
         h, w = frame.shape[:2]
-        scale = min(320 / h, 320 / w, 1.0)
+        target_w, target_h = 640, 480
+        scale = min(target_h / h, target_w / w, 1.0)
         if scale < 1.0:
             small = cv2.resize(frame, (int(w * scale), int(h * scale)))
         else:
@@ -622,16 +647,18 @@ class CircleTargetDetector:
             self._last_canny_preview = morphed_edges
         else:
             # 仅在 fallback 未返回边缘时重新计算
-            edges = cv2.Canny(
-                blurred,
-                self.edge_canny_threshold1,
-                self.edge_canny_threshold2,
-                apertureSize=3,
-            )
-            self._last_canny_preview = self._apply_morphology(edges)
+            try:
+                self.ed.detectEdges(blurred)
+                edges = self.ed.getEdgeImage()
+                if edges is not None:
+                    self._last_canny_preview = self._apply_morphology(edges)
+                else:
+                    self._last_canny_preview = np.zeros((small.shape[0], small.shape[1]), dtype=np.uint8)
+            except cv2.error:
+                self._last_canny_preview = np.zeros((small.shape[0], small.shape[1]), dtype=np.uint8)
         t5 = time.time()
 
-        print(f"[EDGE] preprocess: {(t2-t1)*1000:.1f}ms, fallback: {(t3-t2)*1000:.1f}ms, kalman: {(t4-t3)*1000:.1f}ms, preview: {(t5-t4)*1000:.1f}ms, total: {(t5-t0)*1000:.1f}ms")
+        #print(f"[EDGE] preprocess: {(t2-t1)*1000:.1f}ms, fallback: {(t3-t2)*1000:.1f}ms, kalman: {(t4-t3)*1000:.1f}ms, preview: {(t5-t4)*1000:.1f}ms, total: {(t5-t0)*1000:.1f}ms")
 
     def _detect_by_test_line_quad(
         self, frame: np.ndarray, target_color: Optional[str] = None
@@ -746,8 +773,7 @@ class CircleTargetDetector:
             if edge_img is not None:
                 self._last_canny_preview = edge_img
             else:
-                # 使用 Canny 作为备选
-                self._last_canny_preview = cv2.Canny(blurred, self.edge_canny_threshold1, self.edge_canny_threshold2)
+                self._last_canny_preview = np.zeros((small.shape[0], small.shape[1]), dtype=np.uint8)
         except Exception:
             self._last_canny_preview = np.zeros((small.shape[0], small.shape[1]), dtype=np.uint8)
     def _detect_contour_color(
@@ -1331,7 +1357,7 @@ class CircleTargetDetector:
     def _fallback_ellipse_detection(self, small: np.ndarray, gray: np.ndarray,
                                      scale: float) -> Optional[Tuple]:
         """
-        回退方法：原始的轮廓椭圆拟合
+        回退方法：使用 EdgeDrawing 进行边缘检测 + 轮廓椭圆拟合
 
         Args:
             small: 缩放后的BGR图像
@@ -1347,20 +1373,22 @@ class CircleTargetDetector:
             kernel_size += 1
         blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
 
-        # Canny边缘检测
-        edges = cv2.Canny(
-            blurred,
-            self.edge_canny_threshold1,
-            self.edge_canny_threshold2,
-            apertureSize=3,
-        )
+        # EdgeDrawing 边缘检测
+        try:
+            self.ed.detectEdges(blurred)
+            edges = self.ed.getEdgeImage()
+            if edges is None or np.count_nonzero(edges) < 100:
+                return None
+        except cv2.error:
+            return None
 
         # 形态学操作
         morphed = self._apply_morphology(edges)
 
         # 查找轮廓
         contours, _ = cv2.findContours(
-            morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            morphed, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE
+            #这里更改了cv2.RETR_EXTERNAL为cv2.RETR_LIST，以获取所有轮廓，增加检测机会，但是可能导致性能下降，和NONE
         )
 
         # 查找四边形
@@ -1372,9 +1400,15 @@ class CircleTargetDetector:
         largest_quads = sorted(quadrilaterals, key=cv2.contourArea, reverse=True)[:5]
 
         for quad in largest_quads:
+            quad_center = self._get_quad_center_perspective(quad)
+
             result = self._fit_ellipse_in_quad(morphed, quad, small.shape)
             if result is not None:
+                
                 ellipse, contour, score = result
+                if quad_center is not None:
+                    x,y = quad_center
+                print(f"[Fallback] Quad center: ({x:.1f}, {y:.1f})")   
                 return (ellipse, contour, quad, morphed)
 
         return None
