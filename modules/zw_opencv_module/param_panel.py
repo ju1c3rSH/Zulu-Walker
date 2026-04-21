@@ -24,11 +24,6 @@ class ParamDef:
 
 # 各检测方法的参数定义
 METHOD_PARAMS: Dict[str, List[ParamDef]] = {
-    "contour_ellipse": [
-        ParamDef("min_area_threshold_quad", "Min Quad Area", 150, 10, 2000, 10),
-        ParamDef("min_area_threshold_ellipse", "Min Ellipse Area", 100, 10, 2000, 10),
-        ParamDef("min_contour_points", "Min Points", 15, 5, 50, 1),
-    ],
     "edge_contour_ellipse": [
         ParamDef("edge_canny_threshold1", "Canny Th1", 50, 0, 255, 1),
         ParamDef("edge_canny_threshold2", "Canny Th2", 150, 0, 255, 1),
@@ -44,13 +39,6 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
         # 椭圆验证参数
         ParamDef("max_aspect_ratio", "Max Aspect", 20, 10, 50, 1, scale=0.1),  # 1.0-5.0
         ParamDef("min_circularity", "Min Circ", 4, 1, 10, 1, scale=0.1),       # 0.1-1.0
-    ],
-    "test_line_quad": [
-        ParamDef("blur_kernel", "Blur Kernel", 5, 1, 15, 2, is_odd=True),
-        ParamDef("blur_sigma", "Blur Sigma", 10, 1, 50, 1, scale=0.1),
-        ParamDef("min_area_threshold_quad", "Min Quad Area", 150, 10, 2000, 10),
-        ParamDef("min_area_threshold_ellipse", "Min Ellipse Area", 100, 10, 2000, 10),
-        ParamDef("min_contour_points", "Min Points", 15, 5, 50, 1),
     ],
 }
 
