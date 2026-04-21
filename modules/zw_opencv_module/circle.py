@@ -22,6 +22,7 @@ class CircleTargetItem:
     color: Optional[str] = None
     major_axis: Optional[float] = None
     minor_axis: Optional[float] = None
+    quad_points: Optional[np.ndarray] = None  # 四边形顶点，用于调试绘制
     def to_dict(self) -> dict:
         return {
             "index": self.index,

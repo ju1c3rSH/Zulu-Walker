@@ -604,22 +604,29 @@ class CircleTargetDetector:
 
         result = None
         morphed_edges = None
+        detected_quad = None
+        detected_quad_center = None
 
         fallback_result = self._fallback_ellipse_detection(small, gray, scale)
         t3 = time.time()
 
         if fallback_result is not None:
-            ellipse, contour, quad, morphed_edges = fallback_result
-            center = ellipse[0]
-            radius = max(ellipse[1]) / 2
-            result = (center, radius, quad)
+            ellipse, contour, quad, morphed_edges, quad_center = fallback_result
+            detected_quad = quad
+            detected_quad_center = quad_center
+            if ellipse is not None:
+                center = ellipse[0]
+                radius = max(ellipse[1]) / 2
+                result = (center, radius, quad, quad_center)
 
         # 卡尔曼滤波平滑
         final_center = None
         final_radius = None
+        final_quad = detected_quad
+        final_quad_center = detected_quad_center
 
         if result is not None:
-            center, radius, quad = result
+            center, radius, quad, quad_center = result
             final_radius = radius
             smoothed_center = self._kalman_update(center)
             if smoothed_center is not None:
@@ -632,12 +639,22 @@ class CircleTargetDetector:
             if predicted is not None:
                 final_center = predicted
                 final_radius = None
+            # 如果有四边形中心但没有椭圆，使用四边形中心
+            elif detected_quad_center is not None:
+                final_center = detected_quad_center
+                final_radius = None
 
-        if final_center is not None and final_radius is not None:
+        if final_center is not None:
             color_name = target_color if target_color else 'Red'
-            target_item = self._create_target_item_from_center(
-                final_center, final_radius, scale, color_name
-            )
+            if final_radius is not None:
+                target_item = self._create_target_item_from_center(
+                    final_center, final_radius, scale, color_name, final_quad
+                )
+            else:
+                # 没有半径时，创建一个默认半径用于可视化
+                target_item = self._create_target_item_from_center(
+                    final_center, 20.0, scale, color_name, final_quad
+                )
             self.circle_target.add_target(target_item)
 
         t4 = time.time()
@@ -1399,22 +1416,45 @@ class CircleTargetDetector:
         # 按面积排序
         largest_quads = sorted(quadrilaterals, key=cv2.contourArea, reverse=True)[:5]
 
+        best_quad = None
+        best_quad_center = None
+
         for quad in largest_quads:
             quad_center = self._get_quad_center_perspective(quad)
+            if quad_center is not None and best_quad is None:
+                best_quad = quad
+                best_quad_center = quad_center
 
             result = self._fit_ellipse_in_quad(morphed, quad, small.shape)
             if result is not None:
-                
                 ellipse, contour, score = result
+                ellipse_center = ellipse[0]
                 if quad_center is not None:
-                    x,y = quad_center
-                print(f"[Fallback] Quad center: ({x:.1f}, {y:.1f})")   
-                return (ellipse, contour, quad, morphed)
+                    x, y = quad_center
+                    if self._is_center_aligned(quad_center, ellipse_center, quad, max_offset_ratio=0.15):
+                        print(f"[Fallback] Quad center: ({x:.1f}, {y:.1f})")
+                        return (ellipse, contour, quad, morphed, quad_center)
+
+        # 没有椭圆对齐，返回最佳四边形信息
+        if best_quad is not None and best_quad_center is not None:
+            #print(f"[Fallback] No ellipse aligned, best quad center: ({best_quad_center[0]:.1f}, {best_quad_center[1]:.1f})")
+            return (None, None, best_quad, morphed, best_quad_center)
 
         return None
+    def _is_center_aligned(self, quad_center, ellipse_center, quad, max_offset_ratio=0.15):
+        """判断椭圆中心是否位于四边形中心附近"""
+        ordered = self._order_quad_points(quad)
+        # 计算四边形平均宽度
+        w_top = np.linalg.norm(ordered[1] - ordered[0])
+        w_bottom = np.linalg.norm(ordered[2] - ordered[3])
+        avg_width = (w_top + w_bottom) / 2.0
 
+        dist = np.hypot(ellipse_center[0] - quad_center[0],
+                        ellipse_center[1] - quad_center[1])
+        return dist <= avg_width * max_offset_ratio
+    
     def _create_target_item_from_center(self, center: Tuple[float, float], radius: float,
-                                         scale: float, color: str) -> CircleTargetItem:
+                                         scale: float, color: str, quad: np.ndarray = None) -> CircleTargetItem:
         """
         从圆心和半径创建 CircleTargetItem
 
@@ -1423,6 +1463,7 @@ class CircleTargetDetector:
             radius: 半径（缩放后的图像坐标）
             scale: 缩放比例
             color: 颜色名称
+            quad: 四边形顶点（缩放后的坐标）
 
         Returns:
             CircleTargetItem 实例
@@ -1437,6 +1478,11 @@ class CircleTargetDetector:
             (int(radius_orig), int(radius_orig)),
             0, 0, 360, 5
         )
+
+        # 将四边形坐标转换回原始尺寸
+        quad_orig = None
+        if quad is not None:
+            quad_orig = (quad.astype(np.float32) / scale).astype(np.int32)
 
         return CircleTargetItem(
             index=0,
@@ -1454,4 +1500,5 @@ class CircleTargetDetector:
             color=color,
             major_axis=2 * radius_orig,
             minor_axis=2 * radius_orig,
+            quad_points=quad_orig,
         )

@@ -131,11 +131,33 @@ class DebugDetector:
             # 绘制检测结果
             result_frame = frame.copy()
             for target in targets.targets:
+                # 绘制四边形（蓝色）
+                if target.quad_points is not None:
+                    cv2.polylines(result_frame, [target.quad_points], True, (255, 0, 0), 2)
+                    # 绘制四边形顶点
+                    for pt in target.quad_points:
+                        cv2.circle(result_frame, tuple(pt.ravel()), 3, (255, 100, 0), -1)
+                    # 计算并绘制四边形透视中心（黄色）
+                    # 使用透视变换计算真实中心
+                    ordered = self.processor._order_quad_points(target.quad_points) if hasattr(self.processor, '_order_quad_points') else None
+                    if ordered is not None:
+                        quad_center = self.processor._get_quad_center_perspective(target.quad_points) if hasattr(self.processor, '_get_quad_center_perspective') else None
+                        if quad_center is not None:
+                            cv2.circle(result_frame, (int(quad_center[0]), int(quad_center[1])), 8, (0, 255, 255), 2)
+                            cv2.putText(
+                                result_frame,
+                                "QC",
+                                (int(quad_center[0]) + 10, int(quad_center[1]) - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.4,
+                                (0, 255, 255),
+                                1
+                            )
                 # 绘制椭圆
                 if target.contour_points is not None:
                     cv2.drawContours(result_frame, [target.contour_points], -1, (0, 255, 0), 2)
                     self.processor._draw_target(result_frame, target)  # 使用处理器的绘制方法
-                # 绘制中心点
+                # 绘制中心点（红色）
                 cx, cy = target.center_coordinates
                 cv2.circle(result_frame, (cx, cy), 5, (0, 0, 255), -1)
                 # 绘制信息
