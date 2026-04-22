@@ -363,10 +363,11 @@ class CameraManager:
                     self.ffmpeg_pusher.push_frame_sync(composed_frame)
                     profiler.stop("ffmpeg_push")
 
-            # 本地显示窗口
+            # 本地显示窗口（降采样到 640x480 以提高性能）
             if self.config and self.config.enable_local_display and composed_frame is not None:
                 profiler.start("local_display")
-                cv2.imshow("Zulu-Walker Camera Preview", composed_frame)
+                display_frame = cv2.resize(composed_frame, (640, 480))
+                cv2.imshow("Zulu-Walker Camera Preview", display_frame)
                 key = cv2.waitKey(1) & 0xFF
                 profiler.stop("local_display")
                 if key == ord('q') or key == 27:  # q 或 ESC 退出

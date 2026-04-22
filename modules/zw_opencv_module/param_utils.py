@@ -47,6 +47,11 @@ def get_default_params() -> Dict[str, Dict[str, Any]]:
             "min_area_threshold": 150,
             "min_contour_points": 15,
         },
+        "test_line_quad": {
+            "blur_kernel": 5,
+            "blur_sigma": 1.0,
+            "min_area_threshold_quad": 150,
+        },
     }
 
 

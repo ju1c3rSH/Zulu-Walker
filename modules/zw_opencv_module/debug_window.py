@@ -80,12 +80,24 @@ class DebugWindow:
 
     def _init_param_panel(self):
         """初始化参数面板"""
-        # 只使用 edge_contour_ellipse 方法
-        method_name = "edge_contour_ellipse"
-        if method_name in METHOD_PARAMS:
+        # 从配置文件加载当前method，默认使用 edge_contour_ellipse
+        self.current_method = "edge_contour_ellipse"
+
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                    if data and "current_method" in data:
+                        method_name = data["current_method"]
+                        if method_name in METHOD_PARAMS:
+                            self.current_method = method_name
+            except Exception as e:
+                print(f"[DebugWindow] Failed to load current_method: {e}")
+
+        if self.current_method in METHOD_PARAMS:
             self.param_panel = ParamPanel(
-                method_name=method_name,
-                params_def=METHOD_PARAMS[method_name],
+                method_name=self.current_method,
+                params_def=METHOD_PARAMS[self.current_method],
                 window_name=self.window_name,
                 on_change=self._on_panel_change,
             )
@@ -105,9 +117,9 @@ class DebugWindow:
                 if "enabled" in data:
                     self.enabled = data["enabled"]
 
-                # 加载参数
-                if "methods" in data and "edge_contour_ellipse" in data["methods"]:
-                    params = data["methods"]["edge_contour_ellipse"]
+                # 加载当前method的参数
+                if "methods" in data and self.current_method in data["methods"]:
+                    params = data["methods"][self.current_method]
                     if self.param_panel:
                         self.param_panel.load_params(params)
 
@@ -124,9 +136,10 @@ class DebugWindow:
             os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
 
             data = {
+                "current_method": self.current_method,
                 "enabled": self.enabled,
                 "methods": {
-                    "edge_contour_ellipse": self.param_panel.get_raw_params() if self.param_panel else {}
+                    self.current_method: self.param_panel.get_raw_params() if self.param_panel else {}
                 },
             }
 

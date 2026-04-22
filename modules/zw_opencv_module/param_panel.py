@@ -57,6 +57,13 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
         # 四边形面积阈值
         ParamDef("min_area_threshold_quad", "Min Quad Area", 150, 10, 2000, 10),
     ],
+    "test_line_quad": [
+        # 高斯模糊参数
+        ParamDef("blur_kernel", "Blur Kernel", 5, 1, 15, 2, is_odd=True),
+        ParamDef("blur_sigma", "Blur Sigma", 10, 1, 50, 1, scale=0.1),
+        # 四边形面积阈值
+        ParamDef("min_area_threshold_quad", "Min Quad Area", 150, 10, 2000, 10),
+    ],
 }
 
 
