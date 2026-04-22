@@ -186,11 +186,14 @@ class DebugWindow:
             lambda val: self._on_enable_change(val)
         )
 
-        # 创建参数滑动条
         if self.param_panel:
             self.param_panel.create_trackbars()
 
         self._window_created = True
+
+        # 这里setup时触发一次参数回调，确保外部检测器应用加载的参数
+        if self.param_panel and self.on_params_change:
+            self.on_params_change(self.param_panel.method_name, self.param_panel.get_params())
 
     def _on_mode_change(self, value: int):
         """预览模式切换"""
