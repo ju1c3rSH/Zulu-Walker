@@ -43,6 +43,20 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
         ParamDef("max_aspect_ratio", "Max Aspect", 20, 10, 50, 1, scale=0.1),  # 1.0-5.0
         ParamDef("min_circularity", "Min Circ", 4, 1, 10, 1, scale=0.1),       # 0.1-1.0
     ],
+    "edge_drawing_quads": [
+        # EdgeDrawing 参数
+        ParamDef("ed_min_path_length", "ED MinPath", 50, 10, 200, 5),
+        ParamDef("ed_gradient_threshold", "ED Gradient", 20, 5, 100, 1),
+        ParamDef("ed_nfa_validation", "ED NFA", 1, 0, 1, 1),  # 0=off, 1=on
+        # 形态学操作参数
+        ParamDef("morph_type", "Morph Type", 1, 0, 4, 1),
+        ParamDef("morph_kernel", "Morph Kernel", 3, 1, 15, 2, is_odd=True),
+        ParamDef("morph_iterations", "Morph Iter", 1, 1, 10, 1),
+        ParamDef("blur_kernel", "Blur Kernel", 5, 1, 15, 2, is_odd=True),
+        ParamDef("blur_sigma", "Blur Sigma", 10, 1, 50, 1, scale=0.1),
+        # 四边形面积阈值
+        ParamDef("min_area_threshold_quad", "Min Quad Area", 150, 10, 2000, 10),
+    ],
 }
 
 

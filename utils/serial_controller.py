@@ -13,11 +13,11 @@ class SerialController:
     def __init__(self,  port: str = "/dev/ttyS4", baudrate: int = 115200):
         """
         @Brief: 初始化串口控制器
-        
+
         @Args:
             port: 串口设备，如 /dev/ttyS4, /dev/ttyUSB0
             baudrate: 波特率
-            
+
         """
         self.port = port
         self.baudrate = baudrate
@@ -26,6 +26,10 @@ class SerialController:
         self._receive_thread = None
         self._running = False
         self._callback = None
+
+        # 异步发送队列
+        self._send_queue: queue.Queue = None
+        self._send_thread = None
         
     def connect(self) -> bool:
         try:
@@ -39,6 +43,11 @@ class SerialController:
                 write_timeout=1.0
             )
             self.is_connected = True
+            # 启动异步发送线程
+            self._send_queue = queue.Queue()
+            self._running = True
+            self._send_thread = threading.Thread(target=self._send_loop, daemon=True)
+            self._send_thread.start()
             print(f"Connected to serial port successfully: {self.port} @ {self.baudrate}bps")
             return True
         except Exception as e:
@@ -48,6 +57,11 @@ class SerialController:
     def disconnect(self):
         """@Brief: 断开当前串口连接"""
         self._running = False
+        # 停止发送线程
+        if self._send_queue:
+            self._send_queue.put(None)  # 发送停止信号
+        if self._send_thread:
+            self._send_thread.join(timeout=2)
         if self._receive_thread:
             self._receive_thread.join(timeout=2)
         if self.serial and self.serial.is_open:
@@ -78,19 +92,38 @@ class SerialController:
             return 0
 
     def send_bytes(self, data: bytes) -> int:
-        """@Brief: 发送字节数据"""
+        """
+        @Brief: 发送字节数据（非阻塞）
+
+        将数据放入发送队列后立即返回，实际发送由后台线程完成。
+        """
         if not self.is_connected or not self.serial:
             return 0
-        
+
+        self._send_queue.put(data)
+        return len(data)
+
+    def _write_sync(self, data: bytes) -> int:
+        """实际写入串口（阻塞，由后台线程调用）"""
         try:
             bytes_written = self.serial.write(data)
             self.serial.flush()
             return bytes_written
         except Exception as e:
-            
             print(f"发送失败: {e}")
             self.disconnect()
             return 0
+
+    def _send_loop(self):
+        """后台发送线程循环"""
+        while self._running:
+            try:
+                data = self._send_queue.get(timeout=0.1)
+                if data is None:  # 停止信号
+                    break
+                self._write_sync(data)
+            except queue.Empty:
+                continue
 
     def receive(self, size: int = 1) -> Optional[bytes]:
         """

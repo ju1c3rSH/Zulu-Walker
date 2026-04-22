@@ -32,6 +32,17 @@ def get_default_params() -> Dict[str, Dict[str, Any]]:
             "min_area_threshold": 150,
             "min_contour_points": 15,
         },
+        "edge_drawing_quads": {
+            "ed_min_path_length": 50,
+            "ed_gradient_threshold": 20,
+            "ed_nfa_validation": True,
+            "morph_type": 1,
+            "morph_kernel": 3,
+            "morph_iterations": 1,
+            "blur_kernel": 5,
+            "blur_sigma": 1.0,
+            "min_area_threshold_quad": 150,
+        },
         "contour_ellipse": {
             "min_area_threshold": 150,
             "min_contour_points": 15,

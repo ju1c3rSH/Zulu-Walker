@@ -12,6 +12,9 @@ class DetectMethod(Enum):
     EDGE_CONTOUR_ELLIPSE = (
         "edge_contour_ellipse"  # 边缘检测 + 椭圆拟合,无需颜色二值化
     )
+    EDGE_DRAWING_QUADS = (
+        "edge_drawing_quads"  # 边缘检测 + 四边形检测
+    )
     TEST_LINE_QUAD = (
         "test_line_quad"  # 测试：线段+四边形+透视变换+霍夫圆
     )
@@ -66,7 +69,7 @@ class CircleTargetDetector:
         self.max_aspect_ratio = 2.0  # 长短轴比上限
         self.min_circularity = 0.4  # 圆度下限
 
-        self.detect_method = DetectMethod.EDGE_CONTOUR_ELLIPSE
+        self.detect_method = DetectMethod.EDGE_DRAWING_QUADS
 
         
         self.quad_participation = False
@@ -144,6 +147,16 @@ class CircleTargetDetector:
             params["max_aspect_ratio"] = self.max_aspect_ratio
             params["min_circularity"] = self.min_circularity
 
+        elif method_name == "edge_drawing_quads":
+            params["ed_min_path_length"] = self.ed_min_path_length
+            params["ed_gradient_threshold"] = self.ed_gradient_threshold
+            params["ed_nfa_validation"] = self.ed_nfa_validation
+            params["morph_type"] = self.morph_type
+            params["morph_kernel"] = self.morph_kernel
+            params["morph_iterations"] = self.morph_iterations
+            params["blur_kernel"] = self.blur_kernel
+            params["blur_sigma"] = self.blur_sigma
+
         elif method_name == "test_line_quad":
             params["blur_kernel"] = self.blur_kernel
             params["blur_sigma"] = self.blur_sigma
@@ -189,6 +202,26 @@ class CircleTargetDetector:
                 self.max_aspect_ratio = params["max_aspect_ratio"]
             if "min_circularity" in params:
                 self.min_circularity = params["min_circularity"]
+            # 更新 EdgeDrawing 参数
+            self._update_ed_params()
+
+        elif method_name == "edge_drawing_quads":
+            if "ed_min_path_length" in params:
+                self.ed_min_path_length = params["ed_min_path_length"]
+            if "ed_gradient_threshold" in params:
+                self.ed_gradient_threshold = params["ed_gradient_threshold"]
+            if "ed_nfa_validation" in params:
+                self.ed_nfa_validation = params["ed_nfa_validation"]
+            if "morph_type" in params:
+                self.morph_type = params["morph_type"]
+            if "morph_kernel" in params:
+                self.morph_kernel = params["morph_kernel"]
+            if "morph_iterations" in params:
+                self.morph_iterations = params["morph_iterations"]
+            if "blur_kernel" in params:
+                self.blur_kernel = params["blur_kernel"]
+            if "blur_sigma" in params:
+                self.blur_sigma = params["blur_sigma"]
             # 更新 EdgeDrawing 参数
             self._update_ed_params()
 
@@ -341,6 +374,8 @@ class CircleTargetDetector:
             self._detect_by_contour_ellipse(frame, target_color)
         elif self.detect_method == DetectMethod.EDGE_CONTOUR_ELLIPSE:
             self._detect_by_edge_contour_ellipse(frame, target_color)
+        elif self.detect_method == DetectMethod.EDGE_DRAWING_QUADS:
+            self._detect_by_edge_drawing_quads(frame, target_color)
         elif self.detect_method == DetectMethod.TEST_LINE_QUAD:
             self._detect_by_test_line_quad(frame, target_color)
 
@@ -676,6 +711,127 @@ class CircleTargetDetector:
         t5 = time.time()
 
         #print(f"[EDGE] preprocess: {(t2-t1)*1000:.1f}ms, fallback: {(t3-t2)*1000:.1f}ms, kalman: {(t4-t3)*1000:.1f}ms, preview: {(t5-t4)*1000:.1f}ms, total: {(t5-t0)*1000:.1f}ms")
+
+    def _detect_by_edge_drawing_quads(
+        self, frame: np.ndarray, target_color: Optional[str] = None
+    ):
+        """
+        四边形检测：EdgeDrawing边缘检测 + 四边形筛选
+
+        仅检测四边形边框，不进行椭圆拟合。输出四边形轮廓和透视中心。
+        """
+        h, w = frame.shape[:2]
+        target_w, target_h = 640, 480
+        scale = min(target_h / h, target_w / w, 1.0)
+        if scale < 1.0:
+            small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+        else:
+            small = frame
+
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        kernel_size = self.blur_kernel
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
+
+        # EdgeDrawing 边缘检测
+        try:
+            self.ed.detectEdges(blurred)
+            edges = self.ed.getEdgeImage()
+            if edges is None or np.count_nonzero(edges) < 100:
+                self._last_canny_preview = np.zeros((small.shape[0], small.shape[1]), dtype=np.uint8)
+                return
+        except cv2.error:
+            self._last_canny_preview = np.zeros((small.shape[0], small.shape[1]), dtype=np.uint8)
+            return
+
+        # 形态学操作
+        morphed = self._apply_morphology(edges)
+        self._last_canny_preview = morphed
+
+        # 查找轮廓
+        contours, _ = cv2.findContours(
+            morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        # 查找四边形
+        quadrilaterals = self._find_quadrilaterals_from_contours(contours, scale)
+        if not quadrilaterals:
+            return
+
+        # 按面积排序，取最大的四边形
+        largest_quads = sorted(quadrilaterals, key=cv2.contourArea, reverse=True)[:3]
+
+        best_quad = None
+        best_quad_center = None
+        best_area = 0
+
+        for quad in largest_quads:
+            quad_center = self._get_quad_center_perspective(quad)
+            if quad_center is not None:
+                area = cv2.contourArea(quad)
+                if area > best_area:
+                    best_area = area
+                    best_quad = quad
+                    best_quad_center = quad_center
+
+        if best_quad is None or best_quad_center is None:
+            return
+
+        # 卡尔曼滤波平滑
+        smoothed_center = self._kalman_update(best_quad_center)
+        if smoothed_center is not None:
+            final_center = smoothed_center
+        else:
+            final_center = best_quad_center
+
+        # 创建四边形目标项
+        color_name = target_color if target_color else 'Red'
+        target_item = self._create_quad_target_item(
+            final_center, best_quad, scale, color_name
+        )
+        self.circle_target.add_target(target_item)
+
+    def _create_quad_target_item(
+        self, center: Tuple[float, float], quad: np.ndarray,
+        scale: float, color: str
+    ) -> CircleTargetItem:
+        """
+        从四边形创建 CircleTargetItem
+
+        Args:
+            center: 四边形中心坐标（缩放后的图像坐标）
+            quad: 四边形顶点（缩放后的坐标）
+            scale: 缩放比例
+            color: 颜色名称
+
+        Returns:
+            CircleTargetItem 实例
+        """
+        center_orig = (int(center[0] / scale), int(center[1] / scale))
+
+        # 将四边形坐标转换回原始尺寸
+        quad_orig = (quad.astype(np.float32) / scale).astype(np.int32)
+
+        # 计算四边形面积
+        area = cv2.contourArea(quad_orig)
+
+        # 计算边界框
+        x, y, w_box, h_box = cv2.boundingRect(quad_orig)
+
+        return CircleTargetItem(
+            index=0,
+            center_coordinates=center_orig,
+            radius=0.0,  # 四边形没有半径概念
+            area=area,
+            shape_type=ShapeType.QUAD,
+            contour_points=quad_orig,
+            bounding_box=(x, y, w_box, h_box),
+            color=color,
+            major_axis=None,
+            minor_axis=None,
+            quad_points=quad_orig,
+        )
 
     def _detect_by_test_line_quad(
         self, frame: np.ndarray, target_color: Optional[str] = None
@@ -1165,7 +1321,7 @@ class CircleTargetDetector:
 
         Args:
             quad: 四边形顶点，形状为 (4, 1, 2) 或 (4, 2)
-                  来自 _find_quadrilaterals_from_contours 的 approx
+            来自 _find_quadrilaterals_from_contours 的 approx
 
         Returns:
             校正后的中心坐标 (x, y)，或 None（输入无效时）
@@ -1404,8 +1560,9 @@ class CircleTargetDetector:
 
         # 查找轮廓
         contours, _ = cv2.findContours(
-            morphed, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE
+            morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             #这里更改了cv2.RETR_EXTERNAL为cv2.RETR_LIST，以获取所有轮廓，增加检测机会，但是可能导致性能下降，和NONE
+            #会降低10+FPS.
         )
 
         # 查找四边形

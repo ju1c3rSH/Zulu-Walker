@@ -278,6 +278,24 @@ class PerformanceProfiler:
                         f"  ├─ {display_name:25s}: avg={stats.avg_ms:6.2f}ms"
                     )
 
+        # 流程细分计时
+        pipeline_timers = ["process_all", "handle_detection", "state_machine",
+                          "ffmpeg_push", "local_display", "callbacks"]
+        pipeline_lines = []
+        has_pipeline_data = False
+        for timer_name in pipeline_timers:
+            stats = self.get_window_stats(timer_name)
+            if stats and stats.count > 0:
+                has_pipeline_data = True
+                pipeline_lines.append(
+                    f"  ├─ {timer_name:25s}: avg={stats.avg_ms:6.2f}ms"
+                )
+
+        if has_pipeline_data:
+            lines.append("-" * 40)
+            lines.append("Pipeline breakdown:")
+            lines.extend(pipeline_lines)
+
         # 计算FPS（基于滑动窗口）
         total_stats = self.get_window_stats("total")
         if total_stats and total_stats.avg_ms > 0:

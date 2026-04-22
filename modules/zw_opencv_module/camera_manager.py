@@ -24,7 +24,7 @@ from .performance import profiler
 from .param_utils import load_detect_params, apply_params_to_detector, get_config_path
 from utils.state_machine import VisualStateMachine
 from modules.zw_uart_module.protocol import ERROR_TYPE_X, ERROR_TYPE_Y
-
+from modules.zw_uart_module import send_error
 
 @dataclass
 class CameraConfig:
@@ -345,20 +345,30 @@ class CameraManager:
                 self._fps_frame_count = 0
                 self._fps_start_time = time.time()
 
+            profiler.start("process_all")
             composed_frame, all_results = self.process_all()
+            profiler.stop("process_all")
 
+            profiler.start("handle_detection")
             self._handle_detection(all_results)
+            profiler.stop("handle_detection")
 
+            profiler.start("state_machine")
             self.state_machine.update()
+            profiler.stop("state_machine")
 
             if self.config and self.config.enable_streaming:
                 if self.ffmpeg_pusher and composed_frame is not None:
+                    profiler.start("ffmpeg_push")
                     self.ffmpeg_pusher.push_frame_sync(composed_frame)
+                    profiler.stop("ffmpeg_push")
 
             # 本地显示窗口
             if self.config and self.config.enable_local_display and composed_frame is not None:
+                profiler.start("local_display")
                 cv2.imshow("Zulu-Walker Camera Preview", composed_frame)
                 key = cv2.waitKey(1) & 0xFF
+                profiler.stop("local_display")
                 if key == ord('q') or key == 27:  # q 或 ESC 退出
                     self._running = False
                     break
@@ -372,11 +382,13 @@ class CameraManager:
                     target_info = f" | Target: {ctx.target_center} | Error: X={ctx.percent_error_x:+d}, Y={ctx.percent_error_y:+d}"
                 print(f"[CameraManager] FPS: {self._fps:.1f} | State: {status}{target_info}")
 
+            profiler.start("callbacks")
             for cb in self._result_callbacks:
                 try:
                     cb(all_results)
                 except Exception as e:
                     print(f"Error in result callback: {e}")
+            profiler.stop("callbacks")
 
             profiler.stop("total")
             profiler.end_frame()
@@ -412,7 +424,6 @@ class CameraManager:
 
     def _send_position_error(self, ctx):
         if ctx.target_found:
-            from modules.zw_uart_module import send_error
             send_error(ERROR_TYPE_X, ctx.percent_error_x)
             send_error(ERROR_TYPE_Y, ctx.percent_error_y)
 

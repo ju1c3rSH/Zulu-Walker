@@ -8,6 +8,7 @@ import numpy as np
 class ShapeType(Enum):
     CIRCLE = "circle"
     ELLIPSE = "ellipse"
+    QUAD = "quad"
     UNKNOWN = "unknown"
 
 @dataclass
