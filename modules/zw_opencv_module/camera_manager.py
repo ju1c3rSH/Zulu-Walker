@@ -23,8 +23,11 @@ from .processors.circle_target_processor import CircleTargetProcessor
 from .performance import profiler
 from .param_utils import load_detect_params, apply_params_to_detector, get_config_path
 from utils.state_machine import VisualStateMachine
-from modules.zw_uart_module.protocol import ERROR_TYPE_X, ERROR_TYPE_Y
-from modules.zw_uart_module import send_error
+from modules.zw_uart_module import send_orange_frame
+from modules.zw_uart_module.protocol import (
+    ORANGE_STATE_IDLE, ORANGE_STATE_SEARCH, ORANGE_STATE_TRACKING,
+    ORANGE_STATE_RECOVERY, ORANGE_STATE_FAIL
+)
 
 @dataclass
 class CameraConfig:
@@ -425,7 +428,7 @@ class CameraManager:
                         ctx.consecutive_lost_frames += 1
                         ctx.consecutive_detected_frames = 0
 
-                    self._send_position_error(ctx)
+                    self._send_error_frame(ctx)
 
                     if self.state_machine.is_searching() and ctx.target_found:
                         self.state_machine.trigger(VisualStateMachine.Events.TARGET_FOUND)
@@ -433,10 +436,28 @@ class CameraManager:
                         self.state_machine.trigger(VisualStateMachine.Events.TARGET_LOST)
                 break
 
-    def _send_position_error(self, ctx):
-        if ctx.target_found:
-            send_error(ERROR_TYPE_X, ctx.percent_error_x)
-            send_error(ERROR_TYPE_Y, ctx.percent_error_y)
+    def _send_error_frame(self, ctx):
+        """
+        Send error frame to STM32 using orange_send protocol.
+
+        Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + EE
+        - state: 根据当前状态机状态映射到枚举值
+        - deta_x: percent_error_x
+        - deta_y: percent_error_y
+        """
+        # 状态映射
+        if self.state_machine.is_idle():
+            state = ORANGE_STATE_IDLE
+        elif self.state_machine.is_searching():
+            state = ORANGE_STATE_SEARCH
+        elif self.state_machine.is_tracking():
+            state = ORANGE_STATE_TRACKING
+        elif self.state_machine.is_recovering():
+            state = ORANGE_STATE_RECOVERY
+        else:  # FAIL
+            state = ORANGE_STATE_FAIL
+
+        send_orange_frame(state, ctx.percent_error_x, ctx.percent_error_y)
 
     def process_all(self) -> Tuple[Optional[np.ndarray], Dict[str, Dict[str, VisionResult]]]:
         frames = []

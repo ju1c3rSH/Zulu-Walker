@@ -35,7 +35,9 @@ from .protocol import (
     SOF,
     TYPE_ERROR, TYPE_ARRIVED, TYPE_PICK, TYPE_SET,
     ERROR_TYPE_X, ERROR_TYPE_Y, ERROR_TYPE_Z, ERROR_TYPE_OTHER,
-    FrameData, build_error_frame, parse_frame
+    ORANGE_STATE_IDLE, ORANGE_STATE_SEARCH, ORANGE_STATE_TRACKING,
+    ORANGE_STATE_RECOVERY, ORANGE_STATE_FAIL,
+    FrameData, build_error_frame, parse_frame, build_orange_send_frame
 )
 from .exceptions import (
     UartError, InvalidFrameError, ChecksumError, ParameterError
@@ -132,6 +134,13 @@ def send_error(error_type: int, error_value: int) -> bool:
     """Send error frame to STM32 (convenience function)."""
     if _uart_interface:
         return _uart_interface.send_error(error_type, error_value)
+    return False
+
+
+def send_orange_frame(state: int, deta_x: int, deta_y: int) -> bool:
+    """Send orange frame to STM32 (convenience function)."""
+    if _uart_interface:
+        return _uart_interface.send_orange_frame(state, deta_x, deta_y)
     return False
 
 
