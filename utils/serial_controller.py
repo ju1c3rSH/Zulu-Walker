@@ -1,3 +1,4 @@
+import os
 import serial
 import serial.tools.list_ports
 import threading
@@ -30,6 +31,13 @@ class SerialController:
         # 异步发送队列
         self._send_queue: queue.Queue = None
         self._send_thread = None
+
+    def _set_thread_affinity(self, cores):
+        """设置当前线程的 CPU 亲和性"""
+        try:
+            os.sched_setaffinity(0, cores)
+        except (AttributeError, OSError, PermissionError):
+            pass  # Windows 或权限不足时忽略
         
     def connect(self) -> bool:
         try:
@@ -116,6 +124,9 @@ class SerialController:
 
     def _send_loop(self):
         """后台发送线程循环"""
+        # 绑定到小核心 (RK3588: 0-3 是小核心 A55)
+        self._set_thread_affinity([0, 1, 2, 3])
+
         while self._running:
             try:
                 data = self._send_queue.get(timeout=0.1)
@@ -189,6 +200,9 @@ class SerialController:
         
     def _receive_loop(self):
         """接收循环（内部方法）"""
+        # 绑定到小核心 (RK3588: 0-3 是小核心 A55)
+        self._set_thread_affinity([0, 1, 2, 3])
+
         while self._running and self.is_connected:
             try:
                 data = self.receive_all()

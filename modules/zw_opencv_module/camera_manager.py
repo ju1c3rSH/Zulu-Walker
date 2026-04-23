@@ -327,7 +327,17 @@ class CameraManager:
             self._process_thread.join(timeout=2.0)
             self._process_thread = None
 
+    def _set_thread_affinity(self, cores):
+        """设置当前线程的 CPU 亲和性（大核心）"""
+        try:
+            os.sched_setaffinity(0, cores)
+        except (AttributeError, OSError, PermissionError):
+            pass  # Windows 或权限不足时忽略
+
     def _process_loop(self):
+        # 绑定到大核心 (RK3588: 4-7 是大核心 A76)
+        self._set_thread_affinity([4, 5, 6, 7])
+
         if self.config and self.config.enable_streaming and self.ffmpeg_pusher:
             try:
                 self.ffmpeg_pusher.start_sync()

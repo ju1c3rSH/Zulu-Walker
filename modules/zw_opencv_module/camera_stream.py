@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 from queue import Queue
 from threading import Thread
 import numpy as np
@@ -11,7 +12,7 @@ class CameraStream:
     """
     摄像头初始化的时候，会先检测是否支持V4L2接口（Linux专用），如果支持则使用V4L2接口进行视频捕获，这通常会提供更好的性能和更低的延迟。如果不支持V4L2接口，则回退到默认的视频捕获方式。摄像头参数设置部分也进行了错误处理，以确保在某些参数无法设置时不会导致程序崩溃。帧的读取和更新通过一个独立的线程进行，使用队列来存储最新的帧，确保读取时不会阻塞。
     设置完捕获方式后，会开始设置相关摄像头参数，如分辨率、帧率、缓冲区大小和视频编码格式。最后，摄像头捕获线程会持续运行，直到调用`release`方法来停止线程并释放摄像头资源。
-    
+
     """
     def __init__(self, source=0, width=640, height=480):
         try:
@@ -43,7 +44,17 @@ class CameraStream:
         self.thread = Thread(target=self._update, daemon=True)
         self.thread.start()
 
+    def _set_thread_affinity(self, cores):
+        """设置当前线程的 CPU 亲和性（小核心）"""
+        try:
+            os.sched_setaffinity(0, cores)
+        except (AttributeError, OSError, PermissionError):
+            pass  # Windows 或权限不足时忽略
+
     def _update(self):
+        # 绑定到小核心 (RK3588: 0-3 是小核心 A55)
+        self._set_thread_affinity([0, 1, 2, 3])
+
         while self.running:
             ret, frame = self.cap.read()
             #print(f"CameraStream: Read frame - ret={ret}, frame_shape={frame.shape if ret else 'N/A'}")
