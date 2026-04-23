@@ -102,7 +102,7 @@ class CircleTargetDetector:
         self.debug_color = False  # 调试模式：打印检测到的 HSV 值
 
         # 目标四边形的长宽比（width / height），1.0 表示正方形
-        self.quad_aspect_ratio = 1.0  # 默认正方形，可配置为其他值如 1.5, 2.0 等
+        self.quad_aspect_ratio = 1.35  # 默认正方形，可配置为其他值如 1.5, 2.0 等
 
     def set_detect_method(self, method: DetectMethod):
         """设置检测方法"""
@@ -463,6 +463,39 @@ class CircleTargetDetector:
                 )
                 self.circle_target.add_target(target_item)
 
+    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.15) -> bool:
+        """
+        检查四边形的长宽比是否符合预期
+
+        使用最小外接矩形估算长宽比，考虑透视变形允许较大容差。
+
+        Args:
+            quad: 四边形顶点 (4, 1, 2) 或 (4, 2)
+            expected_ratio: 预期的长宽比 (宽/高)
+            tolerance: 容差比例，默认0.3表示允许30%偏差
+    
+        Returns:
+            是否符合预期长宽比
+        """
+        ordered = self._order_quad_points(quad)
+        points = ordered.reshape(4, 2).astype(np.float32)
+
+        # 使用最小外接矩形估算长宽比
+        rect = cv2.minAreaRect(points.reshape(1, -1, 2))
+        w, h = rect[1]
+
+        if h <= 0 or w <= 0:
+            return False
+
+        measured_ratio = max(w, h) / min(w, h)
+
+        # 如果期望比例是1.0（正方形），直接比较
+        if expected_ratio == 1.0:
+            return abs(measured_ratio - 1.0) <= tolerance
+
+        # 考虑透视变形，允许较大容差
+        return abs(measured_ratio - expected_ratio) / expected_ratio <= tolerance
+
     def _find_quadrilaterals_from_contours(self, contours, scale: float) -> list:
         """
         从轮廓中筛选四边形
@@ -472,7 +505,7 @@ class CircleTargetDetector:
             scale: 图像缩放比例
 
         Returns:
-            面积大于阈值的四边形列表
+            符合条件的四边形列表（面积和长宽比）
         """
         quadrilaterals = []
         min_area_scaled = self.min_area_threshold_quad * (scale * scale)
@@ -484,7 +517,9 @@ class CircleTargetDetector:
             if len(approx) == 4:
                 area = cv2.contourArea(approx)
                 if area > min_area_scaled:
-                    quadrilaterals.append(approx)
+                    # 检查长宽比
+                    if self._check_quad_aspect_ratio(approx, self.quad_aspect_ratio):
+                        quadrilaterals.append(approx)
 
         return quadrilaterals
 

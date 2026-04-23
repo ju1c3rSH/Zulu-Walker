@@ -112,10 +112,10 @@ class SerialController:
         return len(data)
 
     def _write_sync(self, data: bytes) -> int:
-        """实际写入串口（阻塞，由后台线程调用）"""
+        """实际写入串口（由后台线程调用）"""
         try:
             bytes_written = self.serial.write(data)
-            self.serial.flush()
+            # 不调用 flush()，让 OS 缓冲区处理，避免阻塞
             return bytes_written
         except Exception as e:
             print(f"发送失败: {e}")
