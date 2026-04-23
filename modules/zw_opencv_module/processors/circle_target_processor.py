@@ -291,9 +291,8 @@ class CircleTargetProcessor(Processor):
         """绘制状态信息"""
         data = result.result_data
 
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (5, 5), (280, 130), (0, 0, 0), -1)
-        frame[:] = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+        # 直接绘制半透明背景,不需要copy和addWeighted
+        cv2.rectangle(frame, (5, 5), (280, 130), (30, 30, 30), -1)
 
         lines = [
             (f"FPS: {self._fps:.1f}", (10, 25), (0, 255, 255)),
@@ -318,7 +317,7 @@ class CircleTargetProcessor(Processor):
             )
         else:
             lines.append(("Target lost", (10, 75), (0, 0, 255)))
-            
+
         for text, pos, color in lines:
             cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
 

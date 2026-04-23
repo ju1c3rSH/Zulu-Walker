@@ -118,7 +118,7 @@ class TaskManager:
             return None, {}
 
         context: Dict[str, VisionResult] = {'fps': fps}
-        processed_frame = frame.copy()
+        processed_frame = frame  # camera_manager 已保存干净副本
 
         for task in self.tasks.values():
             if task.enabled:

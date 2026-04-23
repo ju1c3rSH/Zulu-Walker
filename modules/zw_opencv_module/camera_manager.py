@@ -113,7 +113,7 @@ class Camera:
 
         frame = self.get_frame()
         if frame is not None:
-            self._last_frame = frame
+            self._last_frame = frame.copy()  # 保存干净副本，避免累积绘制问题
         elif self._last_frame is not None:
             frame = self._last_frame
         else:

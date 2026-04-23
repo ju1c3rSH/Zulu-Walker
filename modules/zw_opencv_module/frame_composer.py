@@ -106,8 +106,11 @@ class FrameComposer:
             row = i // cols
             col = i % cols
 
-            # 调整帧尺寸
-            resized = cv2.resize(frame, (cell_width, cell_height))
+            # 调整帧尺寸（如果尺寸相同则跳过 resize）
+            if frame.shape[0] == cell_height and frame.shape[1] == cell_width:
+                resized = frame
+            else:
+                resized = cv2.resize(frame, (cell_width, cell_height))
 
             # 放置到输出画面
             y1 = row * cell_height
