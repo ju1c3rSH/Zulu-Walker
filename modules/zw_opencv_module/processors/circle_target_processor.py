@@ -69,7 +69,7 @@ class CircleTargetProcessor(Processor):
             )
 
             target = self._find_target(targets)
-
+            
             if target is None:
                 error_msg = "Target not found"
                 if self.target_color:
@@ -86,7 +86,11 @@ class CircleTargetProcessor(Processor):
                     success=False,
                     error_message=error_msg,
                 )
+            uv_spot = self.detector.detect_uv_spot(frame)
 
+            if self.detector.is_uv_spot_detected:
+                print("[CircleTargetProcessor] UV spot detected, target may be occluded")
+                
             # 计算坐标偏差
             percent_error_x, percent_error_y = self._calculate_position_error(target)
 
