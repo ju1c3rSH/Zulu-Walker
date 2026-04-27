@@ -26,8 +26,8 @@ class ParamDef:
 METHOD_PARAMS: Dict[str, List[ParamDef]] = {
     "edge_contour_ellipse": [
         # EdgeDrawing 参数（替代 Canny）
-        ParamDef("ed_min_path_length", "ED MinPath", 50, 10, 200, 5),
-        ParamDef("ed_gradient_threshold", "ED Gradient", 20, 5, 100, 1),
+        ParamDef("ed_min_path_length", "ED MinPath", 155, 10, 200, 5),
+        ParamDef("ed_gradient_threshold", "ED Gradient", 80, 5, 100, 1),
         ParamDef("ed_nfa_validation", "ED NFA", 1, 0, 1, 1),  # 0=off, 1=on
         # 形态学操作参数
         ParamDef("morph_type", "Morph Type", 1, 0, 4, 1),
@@ -46,7 +46,7 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
     "edge_drawing_quads": [
         # EdgeDrawing 参数
         ParamDef("ed_min_path_length", "ED MinPath", 148, 10, 200, 5),
-        ParamDef("ed_gradient_threshold", "ED Gradient", 75, 5, 100, 1),
+        ParamDef("ed_gradient_threshold", "ED Gradient", 80, 5, 100, 1),
         ParamDef("ed_nfa_validation", "ED NFA", 1, 0, 1, 1),  # 0=off, 1=on
         # 形态学操作参数
         ParamDef("morph_type", "Morph Type", 1, 0, 4, 1),
