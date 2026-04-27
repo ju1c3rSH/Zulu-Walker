@@ -1,0 +1,13 @@
+current_method: edge_drawing_quads
+enabled: true
+methods:
+  edge_drawing_quads:
+    blur_kernel: 5
+    blur_sigma: 10
+    ed_gradient_threshold: 80
+    ed_min_path_length: 148
+    ed_nfa_validation: 1
+    min_area_threshold_quad: 1680
+    morph_iterations: 1
+    morph_kernel: 3
+    morph_type: 1

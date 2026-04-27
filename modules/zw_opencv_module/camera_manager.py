@@ -419,6 +419,8 @@ class CameraManager:
                     ctx.target_center = data.get("target", {}).center_coordinates if data.get("target") else None
                     ctx.percent_error_x = data.get("percent_error_x", 0)
                     ctx.percent_error_y = data.get("percent_error_y", 0)
+                    ctx.is_quad_detected = data.get("is_quad_detected", False)
+                    ctx.is_uv_spot_detected = data.get("is_uv_spot_detected", False)
                     ctx.confidence = 1.0 if ctx.target_found else 0.0
 
                     if ctx.target_found:
@@ -427,6 +429,12 @@ class CameraManager:
                     else:
                         ctx.consecutive_lost_frames += 1
                         ctx.consecutive_detected_frames = 0
+                        ctx.percent_error_x = 0
+                        ctx.percent_error_y = 0
+                    if not ctx.is_quad_detected :
+                        ctx.percent_error_x = 0
+                        ctx.percent_error_y = 0
+                        
 
                     self._send_error_frame(ctx)
 
@@ -435,6 +443,16 @@ class CameraManager:
                     elif self.state_machine.is_tracking() and ctx.consecutive_lost_frames >= 3:
                         self.state_machine.trigger(VisualStateMachine.Events.TARGET_LOST)
                 break
+            else:
+                ctx.target_found = False
+                ctx.target_center = None
+                ctx.percent_error_x = 0
+                ctx.percent_error_y = 0
+                ctx.is_quad_detected = False
+                ctx.is_uv_spot_detected = False
+                ctx.confidence = 0.0
+                ctx.consecutive_lost_frames += 1
+                self._send_error_frame(ctx)
 
     def _send_error_frame(self, ctx):
         """

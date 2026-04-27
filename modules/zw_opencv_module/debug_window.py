@@ -80,9 +80,9 @@ class DebugWindow:
 
     def _init_param_panel(self):
         """初始化参数面板"""
-        # 从配置文件加载当前method，默认使用 edge_contour_ellipse
-        self.current_method = "edge_contour_ellipse"
-
+        # 从配置文件加载当前method，默认使用 edge_drawing_quads
+        self.current_method = "edge_drawing_quads"
+        
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:

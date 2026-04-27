@@ -101,6 +101,8 @@ class CircleTargetProcessor(Processor):
                 result_data={
                     "targets": targets,
                     "target": target,
+                    "is_quad_detected": self.detector.is_detected_quad,
+                    "is_uv_spot_detected": self.detector.is_uv_spot_detected,
                     "target_color": self.target_color,
                     "percent_error_x": percent_error_x,
                     "percent_error_y": percent_error_y,
@@ -204,6 +206,20 @@ class CircleTargetProcessor(Processor):
 
         # 绘制屏幕中心十字线
         self._draw_center_cross(frame)
+
+        # 绘制 UV 点和连线（如果检测到）
+        if self.detector.is_uv_spot_detected and self.detector.uv_spot_center is not None:
+            uv_x, uv_y = self.detector.uv_spot_center
+            # 绘制 UV 点（紫色圆点）
+            cv2.circle(frame, (uv_x, uv_y), 8, (255, 0, 255), -1)  # 紫色 (BGR: 255,0,255)
+            # 绘制 UV 点坐标文字
+            cv2.putText(frame, f"UV({uv_x},{uv_y})", (uv_x + 10, uv_y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+
+            # 如果有目标，绘制从四边形中心到 UV 点的连线
+            if target is not None:
+                quad_x, quad_y = target.center_coordinates
+                cv2.line(frame, (quad_x, quad_y), (uv_x, uv_y), (255, 0, 255), 2)
 
         # 绘制状态信息
         self._draw_status_info(frame, result, target_found)
