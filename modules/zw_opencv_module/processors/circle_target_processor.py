@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from typing import Optional
+from typing import Optional, Tuple
 from ..circle_target_detector import CircleTargetDetector, DetectMethod
 from ..circle import CircleTargetItem, CircleTargets
 
@@ -86,13 +86,15 @@ class CircleTargetProcessor(Processor):
                     success=False,
                     error_message=error_msg,
                 )
-            uv_spot = self.detector.detect_uv_spot(frame)
 
             if self.detector.is_uv_spot_detected:
                 print("[CircleTargetProcessor] UV spot detected, target may be occluded")
-                
+                uv_center = self.detector.uv_spot_center
+            else:
+                uv_center = None
+
             # 计算坐标偏差
-            percent_error_x, percent_error_y = self._calculate_position_error(target)
+            percent_error_x, percent_error_y = self._calculate_position_error(target, uv_center)
 
             return VisionResult(
                 task_name=self.name,
@@ -141,22 +143,28 @@ class CircleTargetProcessor(Processor):
             return max(matching, key=lambda t: t.radius or 0)
         return None
 
-    def _calculate_position_error(self, target: CircleTargetItem) -> tuple:
+    def _calculate_position_error(self, target: CircleTargetItem, uv_center: Optional[Tuple[int, int]] = None) -> tuple:
         """
-        计算目标相对于屏幕中心的坐标偏差
+        计算目标相对于参考点的坐标偏差
 
         Args:
-            target: 目标对象
+            target: 目标对象（四边形中心）
+            uv_center: UV点坐标，如果提供则计算UV点与四边形中心的偏差
 
         Returns:
             (percent_error_x, percent_error_y): 归一化到 [-100, 100] 的坐标偏差
         """
-        # 屏幕中心
-        center_x = self._frame_width // 2
-        center_y = self._frame_height // 2
-
-        # 目标中心
+        # 目标中心（四边形中心）
         target_x, target_y = target.center_coordinates
+
+        if uv_center is not None:
+            # UV 点模式：计算四边形中心与 UV 点的偏差
+            # 误差 = 四边形中心 - UV点位置（用于将四边形中心移向UV点）
+            center_x, center_y = uv_center
+        else:
+            # 默认模式：计算目标与屏幕中心的偏差
+            center_x = self._frame_width // 2
+            center_y = self._frame_height // 2
 
         # 像素偏差
         pixel_error_x = target_x - center_x

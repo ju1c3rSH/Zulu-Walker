@@ -59,6 +59,12 @@ class CircleTargetDetector:
             "Green": [(np.array([40, 50, 50]), np.array([80, 255, 255]))],
             "Blue": [(np.array([100, 50, 50]), np.array([130, 255, 255]))],
             "Black": [(np.array([0, 0, 0]), np.array([180, 255, 50]))],
+            "UV": [
+                # 紫色高亮范围 (H: 130-150, S: 低-中, V: 高)
+                (np.array([130, 20, 200]), np.array([150, 255, 255])),
+                # 蓝紫高亮范围 (H: 100-130, S: 低, V: 高)
+                (np.array([100, 10, 220]), np.array([130, 100, 255])),
+            ],
         }
         self.circle_target = CircleTargets()
         self.min_area_threshold_quad = 150  # 四边形最小面积阈值
@@ -757,6 +763,10 @@ class CircleTargetDetector:
 
         仅检测四边形边框，不进行椭圆拟合。输出四边形轮廓和透视中心。
         """
+        # 重置 UV 检测状态
+        self.is_uv_spot_detected = False
+        self.uv_spot_center = None
+
         h, w = frame.shape[:2]
         target_w, target_h = 640, 480
         scale = min(target_h / h, target_w / w, 1.0)
@@ -817,7 +827,13 @@ class CircleTargetDetector:
             return
         
         self.is_detected_quad = True
-        
+
+        # 检测 UV 点（在四边形区域内）
+        uv_center = self._detect_uv_spot_with_search_contour(frame, best_quad)
+        if uv_center is not None:
+            self.is_uv_spot_detected = True
+            self.uv_spot_center = uv_center
+
         # 卡尔曼滤波平滑
         smoothed_center = self._kalman_update(best_quad_center)
         if smoothed_center is not None:
@@ -834,7 +850,7 @@ class CircleTargetDetector:
     
     def _detect_uv_spot_with_search_contour(self, frame: np.ndarray, search_contour: np.ndarray = None) -> Optional[Tuple[int, int]]:
         """
-        检测UV点（假设UV点在特定颜色范围内）
+        检测UV点（UV点在特定颜色范围内）
 
         Args:
             frame: BGR格式的输入图像
@@ -843,42 +859,55 @@ class CircleTargetDetector:
         Returns:
             UV点坐标 (x, y) 或 None
         """
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        uv_ranges = self.color_ranges.get('UV', [])
+        if not uv_ranges:
+            return None
 
-        if search_contour is not None:
-            region_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-            cv2.drawContours(region_mask, [search_contour], -1, 255, -1)  # -1 表示填充
-        else:
-            region_mask = None
+        if search_contour is None:
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            mask = None
+            for lower, upper in uv_ranges:
+                color_mask = cv2.inRange(hsv, lower, upper)
+                mask = color_mask if mask is None else cv2.bitwise_or(mask, color_mask)
+
+            if mask is None:
+                return None
+
+            contours, _ = cv2.findContours(
+                mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            if contours:
+                largest_contour = max(contours, key=cv2.contourArea)
+                M = cv2.moments(largest_contour)
+                if M['m00'] > 0:
+                    cx = int(M['m10'] / M['m00'])
+                    cy = int(M['m01'] / M['m00'])
+                    return (cx, cy)
+            return None
+
         x, y, w, h = cv2.boundingRect(search_contour)
+        if w <= 0 or h <= 0:
+            return None
+
         roi_frame = frame[y:y+h, x:x+w]
         roi_hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
+
         roi_mask = np.zeros((h, w), dtype=np.uint8)
         shifted_contour = search_contour - [x, y]
         cv2.drawContours(roi_mask, [shifted_contour], -1, 255, -1)
-        
-# The above code is creating a binary mask image `roi_mask` with the same dimensions as the input
-# image (height `h` and width `w`). It then draws a contour `shifted_contour` on this mask with a
-# white color (pixel value 255) and fills the contour area with white color. This is commonly used in
-# image processing tasks such as region of interest (ROI) selection or masking specific areas in an
-# image.
-        #roi_mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.drawContours(roi_mask, [shifted_contour], -1, 255, -1)
-        
-        
-        uv_ranges = self.color_ranges.get('UV', [])
+
+
         mask = None
         for lower, upper in uv_ranges:
-            color_mask = cv2.inRange(hsv, lower, upper)
+            color_mask = cv2.inRange(roi_hsv, lower, upper)
             mask = color_mask if mask is None else cv2.bitwise_or(mask, color_mask)
-        if mask is not None:
+
+        if mask is None:
             return None
-        
-        contour_mask = cv2.bitwise_and(mask,roi_mask)
-        
-        # if region_mask is not None and mask is not None:
-        #     mask = cv2.bitwise_and(mask,region_mask)
-            
+
+        contour_mask = cv2.bitwise_and(mask, roi_mask)
+
         contours, _ = cv2.findContours(
             contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
@@ -887,8 +916,9 @@ class CircleTargetDetector:
             largest_contour = max(contours, key=cv2.contourArea)
             M = cv2.moments(largest_contour)
             if M['m00'] > 0:
-                cx = int(M['m10'] / M['m00'])
-                cy = int(M['m01'] / M['m00'])
+                # 计算相对于原图的坐标（ROI 偏移）
+                cx = int(M['m10'] / M['m00']) + x
+                cy = int(M['m01'] / M['m00']) + y
                 return (cx, cy)
 
         return None
