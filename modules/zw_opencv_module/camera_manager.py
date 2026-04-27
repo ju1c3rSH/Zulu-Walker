@@ -34,6 +34,9 @@ class CameraConfig:
     source: Union[int, str]
     width: int = 640
     height: int = 480
+    focal_length_mm: Optional[float] = None
+    sensor_width_mm: Optional[float] = None
+    sensor_height_mm: Optional[float] = None
     enabled: bool = True
     tasks: List[dict] = field(default_factory=list)
     gaussian_blur_enabled: bool = False
@@ -43,8 +46,8 @@ class CameraConfig:
 
 @dataclass
 class CameraSystemConfig:
-    output_width: int = 1280
-    output_height: int = 720
+    output_width: int = 640
+    output_height: int = 480
     layout: str = "grid"
     enable_streaming: bool = False
     rtmp_url: str = ""
@@ -64,8 +67,11 @@ class Camera:
         self.gaussian_blur_enabled = config.gaussian_blur_enabled
         self.gaussian_blur_kernel_size = config.gaussian_blur_kernel_size
         self.gaussian_blur_sigma = config.gaussian_blur_sigma
+        # 焦距计算器
+        self.focal_calculator = None
         self._setup_stream(config)
         self._setup_tasks(config.tasks)
+        self._init_focal_calculator(config)
 
     def _setup_stream(self, config: CameraConfig):
         try:
@@ -88,6 +94,55 @@ class Camera:
     def _create_processor(self, task_type: str, name: str):
         if task_type == "CircleTargetProcessor":
             return CircleTargetProcessor(name)
+        return None
+
+    def _init_focal_calculator(self, config: CameraConfig):
+        """初始化焦距距离计算器"""
+        if (config.focal_length_mm and config.sensor_width_mm
+            and config.sensor_height_mm):
+            from .utils.focal_distance_util import CameraIntrinsics, FocalDistanceCalculator
+            intrinsics = CameraIntrinsics(
+                focal_length_mm=config.focal_length_mm,
+                sensor_width_mm=config.sensor_width_mm,
+                sensor_height_mm=config.sensor_height_mm,
+                image_width=config.width,
+                image_height=config.height,
+            )
+            self.focal_calculator = FocalDistanceCalculator(intrinsics=intrinsics)
+        else:
+            self.focal_calculator = None
+
+    def get_distance_to_target(self, real_size_mm: float, pixel_size: float):
+        """
+        计算到目标的距离
+
+        Args:
+            real_size_mm: 目标实际尺寸 (mm)
+            pixel_size: 目标在图像中的像素尺寸
+
+        Returns:
+            目标到相机的距离 (mm)，未配置焦距参数时返回 None
+        """
+        if self.focal_calculator:
+            return self.focal_calculator.calculate_distance(real_size_mm, pixel_size)
+        return None
+
+    def get_camera_coords(self, pixel_x: float, pixel_y: float, distance_mm: float):
+        """
+        获取像素点在相机坐标系下的坐标
+
+        Args:
+            pixel_x: 像素x坐标
+            pixel_y: 像素y坐标
+            distance_mm: 目标距离 (mm)
+
+        Returns:
+            (X, Y, Z) 相机坐标系下的坐标 (mm)，未配置焦距参数时返回 None
+        """
+        if self.focal_calculator:
+            return self.focal_calculator.pixel_to_camera_coords(
+                pixel_x, pixel_y, distance_mm
+            )
         return None
 
     def enable(self):
@@ -132,7 +187,11 @@ class Camera:
 
         # 计时：处理阶段
         profiler.start("processing")
-        result = self.task_manager.run_tasks_serial(frame, fps=fps)
+        context = {
+            "fps": fps,
+            "focal_calculator": self.focal_calculator,
+        }
+        result = self.task_manager.run_tasks_serial(frame, context=context)
         profiler.stop("processing")
 
         return result
@@ -226,6 +285,9 @@ class CameraManager:
             gaussian_blur = preprocess.get("gaussian_blur", {})
             cam_config = CameraConfig(
                 source=cam_data.get("source", 0),
+                focal_length_mm=cam_data.get("focal_length_mm", None),
+                sensor_width_mm=cam_data.get("sensor_width_mm", None),
+                sensor_height_mm=cam_data.get("sensor_height_mm", None),
                 width=cam_data.get("width", 640),
                 height=cam_data.get("height", 480),
                 enabled=cam_data.get("enabled", True),
@@ -420,6 +482,7 @@ class CameraManager:
                     ctx.percent_error_x = data.get("percent_error_x", 0)
                     ctx.percent_error_y = data.get("percent_error_y", 0)
                     ctx.is_quad_detected = data.get("is_quad_detected", False)
+                    ctx.target_distance_mm = data.get("target_distance_mm", None)
                     ctx.is_uv_spot_detected = data.get("is_uv_spot_detected", False)
                     ctx.confidence = 1.0 if ctx.target_found else 0.0
 

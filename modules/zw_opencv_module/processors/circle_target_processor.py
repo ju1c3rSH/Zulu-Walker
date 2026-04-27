@@ -3,6 +3,7 @@ import numpy as np
 from typing import Optional, Tuple
 from ..circle_target_detector import CircleTargetDetector, DetectMethod
 from ..circle import CircleTargetItem, CircleTargets
+from ..utils.focal_distance_util import reference_size_dict
 
 from .base import Processor, VisionResult
 
@@ -45,7 +46,7 @@ class CircleTargetProcessor(Processor):
 
         Args:
             frame: 输入图像帧
-            context: 上下文，可包含 'fps' 键
+            context: 上下文，可包含 'fps'、'focal_calculator'
 
         Returns:
             VisionResult: 包含检测结果和坐标偏差
@@ -53,6 +54,9 @@ class CircleTargetProcessor(Processor):
 
         if context and "fps" in context:
             self._fps = context["fps"]
+
+        # 从 context 获取 focal_calculator
+        focal_calculator = context.get("focal_calculator") if context else None
 
         if frame is None:
             return VisionResult(
@@ -68,8 +72,18 @@ class CircleTargetProcessor(Processor):
                 frame, target_color=self.target_color
             )
 
-            target = self._find_target(targets)
             
+
+            target = self._find_target(targets)
+            ordered_quad = self._order_quad_points(target.quad_points)
+            src_points = ordered_quad.reshape(4, 2).astype(np.float32)
+            edges = [
+                np.linalg.norm(src_points[i] - src_points[(i+1) % 4]) 
+                for i in range(4)
+            ]
+
+            long_edge = max(edges)
+            short_edge = min(edges)
             if target is None:
                 error_msg = "Target not found"
                 if self.target_color:
@@ -81,6 +95,7 @@ class CircleTargetProcessor(Processor):
                         "target_color": self.target_color,
                         "percent_error_x": 0,
                         "percent_error_y": 0,
+                        "target_distance_mm": None,
                         "target_found": False,
                     },
                     success=False,
@@ -96,6 +111,15 @@ class CircleTargetProcessor(Processor):
             # 计算坐标偏差
             percent_error_x, percent_error_y = self._calculate_position_error(target, uv_center)
 
+            # 计算目标距离
+            target_distance_mm = None
+            if focal_calculator and target is not None:
+                quad_real_width = reference_size_dict["quad"][0]  # 目标实际宽度 (mm)
+                target_distance_mm = focal_calculator.calculate_distance(
+                    real_size_mm=quad_real_width,
+                    pixel_size=long_edge
+                )
+
             return VisionResult(
                 task_name=self.name,
                 result_data={
@@ -107,6 +131,7 @@ class CircleTargetProcessor(Processor):
                     "percent_error_x": percent_error_x,
                     "percent_error_y": percent_error_y,
                     "target_found": True,
+                    "target_distance_mm": target_distance_mm,
                 },
                 success=True,
             )
@@ -320,7 +345,7 @@ class CircleTargetProcessor(Processor):
         data = result.result_data
 
         # 直接绘制半透明背景,不需要copy和addWeighted
-        cv2.rectangle(frame, (5, 5), (280, 130), (30, 30, 30), -1)
+        cv2.rectangle(frame, (5, 5), (280, 155), (30, 30, 30), -1)
 
         lines = [
             (f"FPS: {self._fps:.1f}", (10, 25), (0, 255, 255)),
@@ -329,6 +354,12 @@ class CircleTargetProcessor(Processor):
         ]
 
         if target_found:
+            # 显示距离信息
+            distance_mm = data.get('target_distance_mm')
+            if distance_mm is not None:
+                distance_m = distance_mm / 1000.0
+                lines.append((f"Dist: {distance_m:.2f}m", (150, 50), (0, 255, 255)))
+
             lines.extend(
                 [
                     (

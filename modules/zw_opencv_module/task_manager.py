@@ -100,7 +100,7 @@ class TaskManager:
             self.result_callbacks.remove(callback)
 
     def run_tasks_serial(
-        self, frame: np.ndarray, fps: float = 0.0
+        self, frame: np.ndarray, context: dict = None
     ) -> Tuple[np.ndarray, Dict[str, VisionResult]]:
         """
         串行执行所有启用的Task
@@ -109,7 +109,7 @@ class TaskManager:
 
         Args:
             frame: 输入图像帧
-            fps: 当前帧率（用于显示）
+            context: 上下文，可包含 'fps'、'focal_calculator' 等
 
         Returns:
             Tuple[np.ndarray, Dict[str, VisionResult]]: 处理后的帧和所有结果
@@ -117,7 +117,9 @@ class TaskManager:
         if frame is None:
             return None, {}
 
-        context: Dict[str, VisionResult] = {'fps': fps}
+        if context is None:
+            context = {}
+
         processed_frame = frame  # camera_manager 已保存干净副本
 
         for task in self.tasks.values():

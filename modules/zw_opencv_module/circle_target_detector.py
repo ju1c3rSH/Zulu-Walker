@@ -838,6 +838,7 @@ class CircleTargetDetector:
         
         self.is_detected_quad = True
 
+
         # 检测 UV 点（在四边形区域内）
         uv_center = self._detect_uv_spot_with_search_contour(small, best_quad)
         if uv_center is not None:
