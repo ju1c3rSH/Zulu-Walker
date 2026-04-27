@@ -112,6 +112,16 @@ class CircleTargetDetector:
         self.is_detected_quad = False  # 当前是否检测到四边形
         self.is_uv_spot_detected = False  # 是否检测到UV点
         self.uv_spot_center = None  # UV点中心坐标
+
+        
+
+        
+        # UV 点卡尔曼滤波器
+        self.uv_kalman = cv2.KalmanFilter(4, 2)  # 4状态(x,y,vx,vy), 2测量(x,y)
+        self.uv_kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
+        self.uv_kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
+        self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
+        self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.1
     def set_detect_method(self, method: DetectMethod):
         """设置检测方法"""
         self.detect_method = method
@@ -831,8 +841,20 @@ class CircleTargetDetector:
         # 检测 UV 点（在四边形区域内）
         uv_center = self._detect_uv_spot_with_search_contour(small, best_quad)
         if uv_center is not None:
+            # 将缩放后的坐标转换回原始尺寸
+            uv_center_orig = (int(uv_center[0] / scale), int(uv_center[1] / scale))
+            # 使用卡尔曼滤波平滑
+            self.uv_spot_center = self._uv_kalman_update(uv_center_orig)
             self.is_uv_spot_detected = True
-            self.uv_spot_center = uv_center
+        else:
+            # 尝试使用卡尔曼预测
+            predicted = self._uv_kalman_update(None)
+            if predicted is not None:
+                self.uv_spot_center = predicted
+                self.is_uv_spot_detected = True
+            else:
+                self.is_uv_spot_detected = False
+                self.uv_spot_center = None
 
         # 卡尔曼滤波平滑
         smoothed_center = self._kalman_update(best_quad_center)
@@ -851,6 +873,7 @@ class CircleTargetDetector:
     def _detect_uv_spot_with_search_contour(self, frame: np.ndarray, search_contour: np.ndarray = None) -> Optional[Tuple[int, int]]:
         """
         检测UV点（UV点在特定颜色范围内）
+        使用亮度加权质心提高精度
 
         Args:
             frame: BGR格式的输入图像
@@ -879,10 +902,15 @@ class CircleTargetDetector:
 
             if contours:
                 largest_contour = max(contours, key=cv2.contourArea)
-                M = cv2.moments(largest_contour)
+                if cv2.contourArea(largest_contour) < 5:  # 最小面积过滤
+                    return None
+                # 使用亮度加权质心
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                masked_gray = cv2.bitwise_and(gray, gray, mask=mask)
+                M = cv2.moments(masked_gray, binaryImage=False)
                 if M['m00'] > 0:
-                    cx = int(M['m10'] / M['m00'])
-                    cy = int(M['m01'] / M['m00'])
+                    cx = int(M['m10'] / M['m00'] + 0.5)
+                    cy = int(M['m01'] / M['m00'] + 0.5)
                     return (cx, cy)
             return None
 
@@ -896,7 +924,6 @@ class CircleTargetDetector:
         roi_mask = np.zeros((h, w), dtype=np.uint8)
         shifted_contour = search_contour - [x, y]
         cv2.drawContours(roi_mask, [shifted_contour], -1, 255, -1)
-
 
         mask = None
         for lower, upper in uv_ranges:
@@ -914,14 +941,36 @@ class CircleTargetDetector:
 
         if contours:
             largest_contour = max(contours, key=cv2.contourArea)
-            M = cv2.moments(largest_contour)
+            if cv2.contourArea(largest_contour) < 5:  # 最小面积过滤
+                return None
+            # 使用亮度加权质心
+            gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+            masked_gray = cv2.bitwise_and(gray_roi, gray_roi, mask=contour_mask)
+            M = cv2.moments(masked_gray, binaryImage=False)
             if M['m00'] > 0:
                 # 计算相对于原图的坐标（ROI 偏移）
-                cx = int(M['m10'] / M['m00']) + x
-                cy = int(M['m01'] / M['m00']) + y
+                cx = int(M['m10'] / M['m00'] + 0.5) + x
+                cy = int(M['m01'] / M['m00'] + 0.5) + y
                 return (cx, cy)
 
         return None
+
+    def _uv_kalman_update(self, uv_center: Optional[Tuple[float, float]]) -> Optional[Tuple[int, int]]:
+        """
+        UV 点卡尔曼滤波平滑
+
+        Args:
+            uv_center: 检测到的 UV 点坐标，None 表示丢失
+
+        Returns:
+            平滑后的 UV 点坐标
+        """
+        if uv_center is not None:
+            measurement = np.array([[np.float32(uv_center[0])], [np.float32(uv_center[1])]])
+            self.uv_kalman.correct(measurement)
+
+        prediction = self.uv_kalman.predict()
+        return (int(prediction[0]), int(prediction[1]))
 
     def _create_quad_target_item(
         self, center: Tuple[float, float], quad: np.ndarray,
