@@ -99,7 +99,7 @@ class TaskManager:
             self.result_callbacks.remove(callback)
 
     def run_tasks_serial(
-        self, frame: np.ndarray
+        self, frame: np.ndarray, context: dict = None
     ) -> Tuple[np.ndarray, Dict[str, VisionResult]]:
         """
         串行执行所有启用的Task
@@ -108,6 +108,7 @@ class TaskManager:
 
         Args:
             frame: 输入图像帧
+            context: 外部传入的上下文（可包含 fps、focal_calculator 等）
 
         Returns:
             Tuple[np.ndarray, Dict[str, VisionResult]]: 处理后的帧和所有结果
@@ -115,13 +116,17 @@ class TaskManager:
         if frame is None:
             return None, {}
 
-        context: Dict[str, VisionResult] = {}
+        # 合并外部上下文和任务结果上下文
+        task_context: Dict[str, VisionResult] = {}
+        if context:
+            task_context.update(context)
+
         processed_frame = frame.copy()
 
         for task in self.tasks.values():
             if task.enabled:
-                result = task.execute(processed_frame, context)
-                context[task.name] = result
+                result = task.execute(processed_frame, task_context)
+                task_context[task.name] = result
 
                 # 在帧上绘制结果
                 if result is not None:
@@ -134,7 +139,7 @@ class TaskManager:
                     except Exception as e:
                         print(f"Error in result callback: {e}")
 
-        return processed_frame, context
+        return processed_frame, task_context
 
     def get_all_results(self) -> Dict[str, Optional[VisionResult]]:
         """获取所有任务的最后结果"""

@@ -5,16 +5,21 @@ import sys
 import time
 import importlib
 from typing import Dict, Any
-sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
+
+# 添加项目根目录到 sys.path，确保模块只被加载一次
+# 使用绝对导入路径，避免相对导入与绝对导入混用导致枚举类重复定义
+sys.path.insert(0, os.path.dirname(__file__))
 
 class ModuleManager:
     def __init__(self):
         self.modules = {}
         self.running = True
-    
-    def load_module(self,module_name):
+
+    def load_module(self, module_name):
         try:
-            module = __import__(module_name)
+            # 使用 modules.{name} 路径加载，与绝对导入一致
+            full_name = f'modules.{module_name}'
+            module = __import__(full_name, fromlist=[module_name])
             self.modules[module_name] = module
             if hasattr(module, 'init'):
                 module.init()
@@ -24,6 +29,7 @@ class ModuleManager:
         except Exception as e:
             print(f"Failed to load module '{module_name}': {e}")
             return False
+
     def start_all(self):
         """启动所有模块"""
         for module_name in SystemConfig.AUTO_START_MODULES:
@@ -34,7 +40,8 @@ class ModuleManager:
                     try:
                         module.start()
                     except Exception as e:
-                        print(f"Failed to start {module_name}: {e}")           
+                        print(f"Failed to start {module_name}: {e}")
+
     def stop_all(self):
         """停止所有模块"""
         self.running = False
@@ -44,6 +51,7 @@ class ModuleManager:
                     module.stop()
                 except Exception as e:
                     print(f"Failed to stop {module_name}: {e}")
+
     def run_main_loop(self):
         """主循环，定期调用模块的loop方法"""
 
@@ -57,7 +65,8 @@ class ModuleManager:
                                     module.loop()
                                 except Exception as e:
                                     print(f"Error in {module_name} loop: {e}")
-                    gc.collect()
+                    #gc.collect()
+                    #这里先移除了gc，排查是不是gc引起的性能问题，后续再优化
                     time.sleep(SystemConfig.MAIN_LOOP_DELAY)
                 except KeyboardInterrupt:
                     print("Program interrupted")
@@ -65,14 +74,14 @@ class ModuleManager:
                 except Exception as e:
                     print(f"Error in main loop: {e}")
         finally:
-            self.stop_all()    
-        
-        
+            self.stop_all()
+
+
 class SystemConfig:
     DEBUG = True
-    
+
     WATCHDOG_TIMEOUT = 60
-    
+
     MAIN_LOOP_DELAY = 0.1
     AUTO_START_MODULES = [
         #'uart_test',
@@ -81,15 +90,15 @@ class SystemConfig:
     ]
 
 
-            
+
 def main():
     """主入口"""
     print("0xfb709394")
     manager = ModuleManager()
     manager.start_all()
     manager.run_main_loop()
-    
-    
+
+
 if __name__ == "__main__":
     try:
         main()
