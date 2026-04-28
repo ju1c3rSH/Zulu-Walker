@@ -11,10 +11,9 @@
 from dataclasses import dataclass
 from typing import Tuple
 
-scale = 1.0  # 可调整的缩放因子，适用于不同分辨率的相机
-INCH = 0.39 * 25.4 * scale  # 英寸转毫米的换算因子
+# 目标实际尺寸 (mm)
 reference_size_dict = {
-    "quad": (290.0 * INCH, 200.2 * INCH),  # mm (宽, 高)
+    "quad": (290.0, 200.0),  # mm (宽, 高) - 29cm × 20cm
 }
 
 @dataclass

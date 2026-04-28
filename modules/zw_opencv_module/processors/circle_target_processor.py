@@ -72,18 +72,8 @@ class CircleTargetProcessor(Processor):
                 frame, target_color=self.target_color
             )
 
-            
-
             target = self._find_target(targets)
-            ordered_quad = self._order_quad_points(target.quad_points)
-            src_points = ordered_quad.reshape(4, 2).astype(np.float32)
-            edges = [
-                np.linalg.norm(src_points[i] - src_points[(i+1) % 4]) 
-                for i in range(4)
-            ]
 
-            long_edge = max(edges)
-            short_edge = min(edges)
             if target is None:
                 error_msg = "Target not found"
                 if self.target_color:
@@ -101,6 +91,16 @@ class CircleTargetProcessor(Processor):
                     success=False,
                     error_message=error_msg,
                 )
+
+            ordered_quad = self._order_quad_points(target.quad_points)
+            src_points = ordered_quad.reshape(4, 2).astype(np.float32)
+            edges = [
+                np.linalg.norm(src_points[i] - src_points[(i+1) % 4])
+                for i in range(4)
+            ]
+
+            long_edge = max(edges)
+            short_edge = min(edges)
 
             if self.detector.is_uv_spot_detected:
                 print("[CircleTargetProcessor] UV spot detected, target may be occluded")
