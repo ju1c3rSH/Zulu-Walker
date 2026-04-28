@@ -114,10 +114,11 @@ class CircleTargetProcessor(Processor):
             # 计算目标距离
             target_distance_mm = None
             if focal_calculator and target is not None:
-                quad_real_width = reference_size_dict["quad"][0]  # 目标实际宽度 (mm)
+                quad_real_avg = reference_size_dict["quad"][2]  # 目标平均尺寸 (mm)
+                avg_edge = (long_edge + short_edge) / 2  # 平均边长像素
                 target_distance_mm = focal_calculator.calculate_distance(
-                    real_size_mm=quad_real_width,
-                    pixel_size=long_edge
+                    real_size_mm=quad_real_avg,
+                    pixel_size=avg_edge
                 )
 
             return VisionResult(
