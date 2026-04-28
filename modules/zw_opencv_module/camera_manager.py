@@ -507,10 +507,11 @@ class CameraManager:
         """
         Send error frame to STM32 using orange_send protocol.
 
-        Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + EE
+        Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + distance(float32) + EE
         - state: 根据当前状态机状态映射到枚举值
         - deta_x: percent_error_x
         - deta_y: percent_error_y
+        - distance: target_distance_mm (mm)
         """
         # 状态映射
         if self.state_machine.is_idle():
@@ -524,7 +525,10 @@ class CameraManager:
         else:  # FAIL
             state = ORANGE_STATE_FAIL
 
-        send_orange_frame(state, ctx.percent_error_x, ctx.percent_error_y)
+        # 获取距离，如果未检测到则为 0.0
+        distance_mm = ctx.target_distance_mm if ctx.target_distance_mm is not None else 0.0
+
+        send_orange_frame(state, ctx.percent_error_x, ctx.percent_error_y, distance_mm)
 
     def process_all(self) -> Tuple[Optional[np.ndarray], Dict[str, Dict[str, VisionResult]]]:
         frames = []

@@ -46,7 +46,7 @@ ORANGE_STATE_FAIL = 4       # 失败
 ORANGE_SEND_HEADER_1 = 0xAA
 ORANGE_SEND_HEADER_2 = 0xBB
 ORANGE_SEND_TAIL = 0xEE
-ORANGE_SEND_FRAME_SIZE = 15  # 2(header) + 4(state) + 4(deta_x) + 4(deta_y) + 1(tail)
+ORANGE_SEND_FRAME_SIZE = 19  # 2(header) + 4(state) + 4(deta_x) + 4(deta_y) + 4(distance) + 1(tail)
 
 # Frame size limits
 MIN_FRAME_SIZE = 4          # SOF + Length + Type + Checksum (no payload)
@@ -191,26 +191,29 @@ def parse_error_payload(payload: bytes) -> Optional[tuple]:
     return (error_type, error_value)
 
 
-def build_orange_send_frame(state: int, deta_x: int, deta_y: int) -> bytes:
+def build_orange_send_frame(state: int, deta_x: int, deta_y: int, distance_mm: float = 0.0) -> bytes:
     """
     Build a frame matching STM32 orange_send protocol.
 
-    Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + EE
-    Total: 15 bytes
+    Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + distance(float32) + EE
+    Total: 19 bytes
 
     Args:
         state: 状态值 (0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL)
         deta_x: X 方向误差 (int32)
         deta_y: Y 方向误差 (int32)
+        distance_mm: 目标距离 (float32, mm)
 
     Returns:
         Complete frame bytes ready to send
     """
+    import struct
     frame = bytearray()
     frame.append(ORANGE_SEND_HEADER_1)  # Header 1: 0xAA
     frame.append(ORANGE_SEND_HEADER_2)  # Header 2: 0xBB
     frame.extend(state.to_bytes(4, byteorder='little', signed=True))
     frame.extend(deta_x.to_bytes(4, byteorder='little', signed=True))
     frame.extend(deta_y.to_bytes(4, byteorder='little', signed=True))
+    frame.extend(struct.pack('<f', distance_mm))  # float32 little-endian
     frame.append(ORANGE_SEND_TAIL)  # Tail: 0xEE
     return bytes(frame)

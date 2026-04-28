@@ -137,10 +137,10 @@ def send_error(error_type: int, error_value: int) -> bool:
     return False
 
 
-def send_orange_frame(state: int, deta_x: int, deta_y: int) -> bool:
+def send_orange_frame(state: int, deta_x: int, deta_y: int, distance_mm: float = 0.0) -> bool:
     """Send orange frame to STM32 (convenience function)."""
     if _uart_interface:
-        return _uart_interface.send_orange_frame(state, deta_x, deta_y)
+        return _uart_interface.send_orange_frame(state, deta_x, deta_y, distance_mm)
     return False
 
 

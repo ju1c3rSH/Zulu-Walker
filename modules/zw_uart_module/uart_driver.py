@@ -387,23 +387,24 @@ class STM32UartInterface:
             self._logger.error(f"Failed to send error frame: {e}")
             return False
 
-    def send_orange_frame(self, state: int, deta_x: int, deta_y: int) -> bool:
+    def send_orange_frame(self, state: int, deta_x: int, deta_y: int, distance_mm: float = 0.0) -> bool:
         """
         Send orange frame to STM32 (matching orange_send.h protocol).
 
-        Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + EE
-        Total: 15 bytes
+        Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + distance(float32) + EE
+        Total: 19 bytes
 
         Args:
             state: State value (0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL)
             deta_x: X direction error (int32)
             deta_y: Y direction error (int32)
+            distance_mm: Target distance in mm (float32)
 
         Returns:
             True if sent successfully, False otherwise
         """
         try:
-            frame = build_orange_send_frame(state, deta_x, deta_y)
+            frame = build_orange_send_frame(state, deta_x, deta_y, distance_mm)
 
             with self._write_lock:
                 if not self._serial.is_connected:
@@ -416,7 +417,7 @@ class STM32UartInterface:
                     if self._debug_hex:
                         self._logger.debug(f"Sent: {frame.hex()}")
                     self._logger.info(
-                        f"Sent orange frame: state={state}, deta_x={deta_x}, deta_y={deta_y}"
+                        f"Sent orange frame: state={state}, deta_x={deta_x}, deta_y={deta_y}, distance={distance_mm:.1f}mm"
                     )
                     return True
                 else:
