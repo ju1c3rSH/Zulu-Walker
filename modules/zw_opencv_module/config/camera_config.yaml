@@ -17,7 +17,7 @@ cameras:
     width: 640
     height: 480
     # 相机内参
-    focal_length_mm: 4.0          # 焦距 (mm)
+    focal_length_mm: 2.885          # 焦距 (mm)
     sensor_width_mm: 3.6          # 传感器宽度 (mm)
     sensor_height_mm: 2.7         # 传感器高度 (mm)
     #   1/4": 3.2mm x 2.4mm (网络摄像头)

@@ -100,7 +100,7 @@ class Camera:
         """初始化焦距距离计算器"""
         if (config.focal_length_mm and config.sensor_width_mm
             and config.sensor_height_mm):
-            from .utils.focal_distance_util import CameraIntrinsics, FocalDistanceCalculator
+            from utils.focal_distance_util import CameraIntrinsics, FocalDistanceCalculator
             intrinsics = CameraIntrinsics(
                 focal_length_mm=config.focal_length_mm,
                 sensor_width_mm=config.sensor_width_mm,
