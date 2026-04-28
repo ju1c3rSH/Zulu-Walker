@@ -8,6 +8,7 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+import cv2
 import yaml
 from dataclasses import dataclass, field
 from typing import Dict, List, Union, Optional, Callable, Tuple
@@ -22,8 +23,11 @@ from .ffmpeg_pusher import FFmpegPusher
 from .processors.base import VisionResult
 from .processors.qr_processor import QRProcessor
 from .processors.cargo_processor import CargoProcessor
+from .performance import profiler
 from utils.state import EventType, RobotState, get_state_machine
 from modules.zw_uart_module.protocol import ERROR_TYPE_X, ERROR_TYPE_Y
+
+
 @dataclass
 class CameraConfig:
     """相机配置"""
@@ -31,8 +35,14 @@ class CameraConfig:
     source: Union[int, str]
     width: int = 640
     height: int = 480
+    focal_length_mm: Optional[float] = None
+    sensor_width_mm: Optional[float] = None
+    sensor_height_mm: Optional[float] = None
     enabled: bool = True
     tasks: List[dict] = field(default_factory=list)
+    gaussian_blur_enabled: bool = False
+    gaussian_blur_kernel_size: int = 5
+    gaussian_blur_sigma: float = 1.5
 
 
 @dataclass
@@ -44,6 +54,7 @@ class CameraSystemConfig:
     layout: str = "grid"
     enable_streaming: bool = False  # 是否启用RTMP推流
     rtmp_url: str = ""
+    enable_local_display: bool = False  # 本地显示窗口
     cameras: List[CameraConfig] = field(default_factory=list)
 
 
@@ -57,8 +68,15 @@ class Camera:
         self.stream: Optional[CameraStream] = None
         self.task_manager = TaskManager()
         self._last_frame: Optional[np.ndarray] = None  # 缓存最后一帧
+        # 高斯模糊参数
+        self.gaussian_blur_enabled = config.gaussian_blur_enabled
+        self.gaussian_blur_kernel_size = config.gaussian_blur_kernel_size
+        self.gaussian_blur_sigma = config.gaussian_blur_sigma
+        # 焦距计算器
+        self.focal_calculator = None
         self._setup_stream(config)
         self._setup_tasks(config.tasks)
+        self._init_focal_calculator(config)
 
     def _setup_stream(self, config: CameraConfig):
         """设置相机流"""
@@ -87,6 +105,55 @@ class Camera:
             return CargoProcessor(name)
         return None
 
+    def _init_focal_calculator(self, config: CameraConfig):
+        """初始化焦距距离计算器"""
+        if (config.focal_length_mm and config.sensor_width_mm
+            and config.sensor_height_mm):
+            from .utils.focal_distance_util import CameraIntrinsics, FocalDistanceCalculator
+            intrinsics = CameraIntrinsics(
+                focal_length_mm=config.focal_length_mm,
+                sensor_width_mm=config.sensor_width_mm,
+                sensor_height_mm=config.sensor_height_mm,
+                image_width=config.width,
+                image_height=config.height,
+            )
+            self.focal_calculator = FocalDistanceCalculator(intrinsics=intrinsics)
+        else:
+            self.focal_calculator = None
+
+    def get_distance_to_target(self, real_size_mm: float, pixel_size: float):
+        """
+        计算到目标的距离
+
+        Args:
+            real_size_mm: 目标实际尺寸 (mm)
+            pixel_size: 目标在图像中的像素尺寸
+
+        Returns:
+            目标到相机的距离 (mm)，未配置焦距参数时返回 None
+        """
+        if self.focal_calculator:
+            return self.focal_calculator.calculate_distance(real_size_mm, pixel_size)
+        return None
+
+    def get_camera_coords(self, pixel_x: float, pixel_y: float, distance_mm: float):
+        """
+        获取像素点在相机坐标系下的坐标
+
+        Args:
+            pixel_x: 像素x坐标
+            pixel_y: 像素y坐标
+            distance_mm: 目标距离 (mm)
+
+        Returns:
+            (X, Y, Z) 相机坐标系下的坐标 (mm)，未配置焦距参数时返回 None
+        """
+        if self.focal_calculator:
+            return self.focal_calculator.pixel_to_camera_coords(
+                pixel_x, pixel_y, distance_mm
+            )
+        return None
+
     def enable(self):
         """启用相机"""
         self.enabled = True
@@ -113,23 +180,37 @@ class Camera:
             return None
         return self.stream.read_frame()
 
-    def process_frame(self) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
+    def process_frame(self, fps: float = 0.0) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
         """获取帧并执行所有任务，无新帧时返回缓存帧"""
         if not self.enabled:
             return None, {}
 
         frame = self.get_frame()
         if frame is not None:
-            # 有新帧，更新缓存
-            self._last_frame = frame
+            self._last_frame = frame.copy()  # 保存干净副本，避免累积绘制问题
         elif self._last_frame is not None:
-            # 无新帧，使用缓存帧
             frame = self._last_frame
         else:
-            # 无缓存帧（首次读取失败）
             return None, {}
 
-        return self.task_manager.run_tasks_serial(frame)
+        # 应用高斯模糊降噪
+        if self.gaussian_blur_enabled:
+            frame = cv2.GaussianBlur(
+                frame,
+                (self.gaussian_blur_kernel_size, self.gaussian_blur_kernel_size),
+                self.gaussian_blur_sigma
+            )
+
+        # 计时：处理阶段
+        profiler.start("processing")
+        context = {
+            "fps": fps,
+            "focal_calculator": self.focal_calculator,
+        }
+        result = self.task_manager.run_tasks_serial(frame, context=context)
+        profiler.stop("processing")
+
+        return result
 
     def release(self):
         """释放资源"""
@@ -164,6 +245,11 @@ class CameraManager:
         self._process_thread: Optional[Thread] = None
         self._result_callbacks: List[Callable[[Dict], None]] = []
 
+        # FPS 计算
+        self._fps_frame_count = 0
+        self._fps_start_time = time.time()
+        self._fps = 0.0
+
     @classmethod
     def from_config(cls, config_path: str) -> "CameraManager":
         """从配置文件创建CameraManager"""
@@ -184,6 +270,7 @@ class CameraManager:
             layout=system.get("layout", "grid"),
             enable_streaming=system.get("enable_streaming", False),
             rtmp_url=system.get("rtmp_url", ""),
+            enable_local_display=system.get("enable_local_display", False),
         )
 
         self.frame_composer = FrameComposer(
@@ -197,12 +284,20 @@ class CameraManager:
             if not cam_id:
                 continue
 
+            preprocess = cam_data.get("preprocess", {})
+            gaussian_blur = preprocess.get("gaussian_blur", {})
             cam_config = CameraConfig(
                 source=cam_data.get("source", 0),
+                focal_length_mm=cam_data.get("focal_length_mm", None),
+                sensor_width_mm=cam_data.get("sensor_width_mm", None),
+                sensor_height_mm=cam_data.get("sensor_height_mm", None),
                 width=cam_data.get("width", 640),
                 height=cam_data.get("height", 480),
                 enabled=cam_data.get("enabled", True),
                 tasks=cam_data.get("tasks", []),
+                gaussian_blur_enabled=gaussian_blur.get("enabled", False),
+                gaussian_blur_kernel_size=gaussian_blur.get("kernel_size", 5),
+                gaussian_blur_sigma=gaussian_blur.get("sigma", 1.5),
             )
             self.add_camera(cam_id, cam_config)
 
@@ -261,6 +356,12 @@ class CameraManager:
             return cam.disable_task(task_name)
         return False
 
+    def _set_thread_affinity(self, cores):
+        """设置当前线程的 CPU 亲和性（大核心）"""
+        try:
+            os.sched_setaffinity(0, cores)
+        except (AttributeError, OSError, PermissionError):
+            pass  # Windows 或权限不足时忽略
 
     def start(self):
         """启动处理循环（持续执行直到调用stop）"""
@@ -297,6 +398,9 @@ class CameraManager:
 
     def _process_loop(self):
         """内部处理循环，持续执行"""
+        # 绑定到大核心 (RK3588: 4-7 是大核心 A76)
+        self._set_thread_affinity([4, 5, 6, 7])
+
         # 如果启用推流，先启动FFmpegPusher
         if self.config and self.config.enable_streaming and self.ffmpeg_pusher:
             try:
@@ -304,18 +408,25 @@ class CameraManager:
             except Exception as e:
                 print(f"[CameraManager] Failed to start FFmpegPusher: {e}")
 
-        target_fps = 30
-        frame_interval = 1.0 / target_fps
-
         while self._running:
-            start_time = time.time()
+            profiler.start("total")
+
+            # FPS 计算
+            self._fps_frame_count += 1
+            elapsed_fps = time.time() - self._fps_start_time
+            if elapsed_fps >= 1.0:
+                self._fps = self._fps_frame_count / elapsed_fps
+                self._fps_frame_count = 0
+                self._fps_start_time = time.time()
 
             sm = get_state_machine()
             current_state = sm.state
 
             self._update_tasks_by_state(current_state)
 
+            profiler.start("process_all")
             composed_frame, all_results = self.process_all()
+            profiler.stop("process_all")
 
             # 状态相关的特殊处理
             if current_state == RobotState.READ_QR:
@@ -326,20 +437,36 @@ class CameraManager:
 
             if self.config and self.config.enable_streaming:
                 if self.ffmpeg_pusher and composed_frame is not None:
+                    profiler.start("ffmpeg_push")
                     self.ffmpeg_pusher.push_frame_sync(composed_frame)
+                    profiler.stop("ffmpeg_push")
+
+            # 本地显示窗口（降采样到 640x480 以提高性能）
+            if self.config and self.config.enable_local_display and composed_frame is not None:
+                profiler.start("local_display")
+                display_frame = cv2.resize(composed_frame, (640, 480))
+                cv2.imshow("Zulu-Walker Camera Preview", display_frame)
+                key = cv2.waitKey(1) & 0xFF
+                profiler.stop("local_display")
+                if key == ord('q') or key == 27:  # q 或 ESC 退出
+                    self._running = False
+                    break
+
+            # 定期日志输出
+            if self._fps_frame_count == 0 and self._fps > 0:
+                print(f"[CameraManager] FPS: {self._fps:.1f} | State: {current_state.value}")
 
             # 触发全局回调
+            profiler.start("callbacks")
             for cb in self._result_callbacks:
                 try:
                     cb(all_results)
                 except Exception as e:
                     print(f"Error in result callback: {e}")
+            profiler.stop("callbacks")
 
-            # 帧率控制
-            elapsed = time.time() - start_time
-            sleep_time = frame_interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            profiler.stop("total")
+            profiler.end_frame()
 
     def _update_tasks_by_state(self, state: RobotState):
         """根据状态更新任务开关"""
@@ -479,7 +606,7 @@ class CameraManager:
                 all_results[cam.camera_id] = {}
                 continue
 
-            frame, results = cam.process_frame()
+            frame, results = cam.process_frame(fps=self._fps)
             # 即使 frame 为 None，也保持相机位置和顺序
             if frame is None:
                 # 创建黑屏帧占位，保持布局稳定
