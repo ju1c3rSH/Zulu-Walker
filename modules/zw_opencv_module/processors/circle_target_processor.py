@@ -92,7 +92,7 @@ class CircleTargetProcessor(Processor):
                     error_message=error_msg,
                 )
 
-            ordered_quad = self._order_quad_points(target.quad_points)
+            ordered_quad = self.detector._order_quad_points(target.quad_points)
             src_points = ordered_quad.reshape(4, 2).astype(np.float32)
             edges = [
                 np.linalg.norm(src_points[i] - src_points[(i+1) % 4])
@@ -103,7 +103,7 @@ class CircleTargetProcessor(Processor):
             short_edge = min(edges)
 
             if self.detector.is_uv_spot_detected:
-                print("[CircleTargetProcessor] UV spot detected, target may be occluded")
+                #print("[CircleTargetProcessor] UV spot detected, target may be occluded")
                 uv_center = self.detector.uv_spot_center
             else:
                 uv_center = None

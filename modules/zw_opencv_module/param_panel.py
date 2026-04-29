@@ -45,17 +45,23 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
     ],
     "edge_drawing_quads": [
         # EdgeDrawing 参数
-        ParamDef("ed_min_path_length", "ED MinPath", 148, 10, 200, 5),
-        ParamDef("ed_gradient_threshold", "ED Gradient", 80, 5, 100, 1),
+        ParamDef("ed_min_path_length", "ED MinPath", 164, 10, 200, 5),
+        ParamDef("ed_gradient_threshold", "ED Gradient", 90, 5, 100, 1),
         ParamDef("ed_nfa_validation", "ED NFA", 1, 0, 1, 1),  # 0=off, 1=on
         # 形态学操作参数
         ParamDef("morph_type", "Morph Type", 1, 0, 4, 1),
         ParamDef("morph_kernel", "Morph Kernel", 3, 1, 15, 2, is_odd=True),
         ParamDef("morph_iterations", "Morph Iter", 1, 1, 10, 1),
         ParamDef("blur_kernel", "Blur Kernel", 5, 1, 15, 2, is_odd=True),
-        ParamDef("blur_sigma", "Blur Sigma", 10, 1, 50, 1, scale=0.1),
+        ParamDef("blur_sigma", "Blur Sigma", 38, 1, 50, 1, scale=0.1),
         # 四边形面积阈值
         ParamDef("min_area_threshold_quad", "Min Quad Area", 1680, 10, 2000, 10),
+        # 四边形长宽比参数
+        ParamDef("quad_aspect_ratio", "Quad Aspect", 135, 50, 200, 5, scale=0.01),  # 0.5-2.0
+        # UV 最小面积阈值
+        ParamDef("uv_min_area", "UV Min Area", 5, 1, 100, 1),
+        # 颜色过滤开关
+        ParamDef("enable_color_filter", "Color Filter", 0, 0, 1, 1),  # 0=off, 1=on
     ],
     "test_line_quad": [
         # 高斯模糊参数

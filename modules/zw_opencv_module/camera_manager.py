@@ -21,7 +21,7 @@ from .ffmpeg_pusher import FFmpegPusher
 from .processors.base import VisionResult
 from .processors.circle_target_processor import CircleTargetProcessor
 from .performance import profiler
-from .param_utils import load_detect_params, apply_params_to_detector, get_config_path
+from .param_utils import load_detect_params, apply_params_to_detector, get_config_path, load_uv_params, apply_uv_params_to_detector
 from utils.state_machine import VisualStateMachine
 from modules.zw_uart_module import send_orange_frame
 from modules.zw_uart_module.protocol import (
@@ -263,8 +263,8 @@ class CameraManager:
 
         system = config_data.get("system", {})
         self.config = CameraSystemConfig(
-            output_width=system.get("output_width", 1280),
-            output_height=system.get("output_height", 720),
+            output_width=system.get("output_width", 640),
+            output_height=system.get("output_height", 480),
             layout=system.get("layout", "grid"),
             enable_streaming=system.get("enable_streaming", False),
             rtmp_url=system.get("rtmp_url", ""),
@@ -379,10 +379,22 @@ class CameraManager:
         current_method, methods_params = load_detect_params(config_path)
         params = methods_params.get(current_method.value, {})
 
+        # 加载 UV 参数
+        uv_params = load_uv_params()
+
+        print(f"[CameraManager] Loading detect params from: {config_path}")
+        print(f"[CameraManager] Current method: {current_method.value}")
+        print(f"[CameraManager] Params: {params}")
+        print(f"[CameraManager] UV params: {uv_params}")
+
         for camera in self.cameras.values():
             task = camera.get_task("circle_detect")
             if task and hasattr(task.processor, 'detector'):
                 apply_params_to_detector(task.processor.detector, current_method, params)
+                apply_uv_params_to_detector(task.processor.detector, uv_params)
+                detector = task.processor.detector
+                print(f"[CameraManager] After apply - quad_aspect_ratio: {detector.quad_aspect_ratio}, "
+                      f"uv_min_area: {detector.uv_min_area}, enable_color_filter: {detector.enable_color_filter}")
 
         print(f"[CameraManager] Loaded detect params: method={current_method.value}")
 
@@ -556,7 +568,7 @@ class CameraManager:
         if self.frame_composer is None:
             self.frame_composer = FrameComposer(
                 layout="grid",
-                output_size=(1280, 720),
+                output_size=(640, 480),
             )
 
         composed = self.frame_composer.compose(frames, camera_ids)

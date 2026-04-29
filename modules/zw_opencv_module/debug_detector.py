@@ -34,6 +34,7 @@ from modules.zw_opencv_module.debug_window import DebugWindow
 from modules.zw_opencv_module.param_utils import load_detect_params, save_detect_params, get_config_path, get_default_params
 from modules.zw_opencv_module.camera_stream import CameraStream
 from modules.zw_opencv_module.processors.circle_target_processor import CircleTargetProcessor
+from modules.zw_opencv_module.uv_debug_window import UVDebugWindow
 
 class DebugDetector:
     """
@@ -47,7 +48,8 @@ class DebugDetector:
         camera_source: int = 0,
         width: int = 640,
         height: int = 480,
-        config_path: str = None
+        config_path: str = None,
+        debug_uv: bool = False
     ):
         """
         初始化调试器
@@ -57,11 +59,13 @@ class DebugDetector:
             width: 画面宽度
             height: 画面高度
             config_path: 配置文件路径
+            debug_uv: 是否启用 UV 调试面板
         """
         self.config_path = config_path or get_config_path()
         self.camera_source = camera_source
         self.width = width
         self.height = height
+        self.debug_uv = debug_uv
 
         # 摄像头流
         self.stream: CameraStream = None
@@ -71,6 +75,9 @@ class DebugDetector:
 
         # 调试窗口
         self.debug_window: DebugWindow = None
+
+        # UV 调试窗口
+        self.uv_debug_window: UVDebugWindow = None
 
         # 运行状态
         self._running = False
@@ -95,6 +102,13 @@ class DebugDetector:
         except ValueError:
             pass
 
+    def _on_uv_params_change(self, uv_ranges: list, uv_min_area: int):
+        """UV 参数变化回调"""
+        # 更新检测器的 UV 颜色范围
+        self.detector.color_ranges["UV"] = uv_ranges
+        # 更新 uv_min_area 参数
+        self.detector.uv_min_area = uv_min_area
+
     def start(self):
         """启动调试器"""
         # 初始化摄像头
@@ -107,6 +121,14 @@ class DebugDetector:
             on_params_change=self._on_params_change
         )
         self.debug_window.setup_window()
+
+        # 初始化 UV 调试窗口（如果启用）
+        if self.debug_uv:
+            self.uv_debug_window = UVDebugWindow(
+                on_params_change=self._on_uv_params_change
+            )
+            self.uv_debug_window.setup_window()
+            print("[DebugDetector] UV debug window enabled.")
 
         self._running = True
         print("[DebugDetector] Started. Press 'q' or ESC to quit.")
@@ -175,6 +197,11 @@ class DebugDetector:
             self.debug_window.update_frame(frame, canny_preview, result_frame)
             self.debug_window.update_gui()
 
+            # 更新 UV 调试窗口（如果启用）
+            if self.uv_debug_window:
+                self.uv_debug_window.update_frame(frame)
+                self.uv_debug_window.update_gui()
+
             # 显示结果窗口
             cv2.imshow("Detection Result", result_frame)
 
@@ -191,6 +218,8 @@ class DebugDetector:
         print("[DebugDetector] Cleaning up...")
         if self.debug_window:
             self.debug_window.destroy_window()
+        if self.uv_debug_window:
+            self.uv_debug_window.destroy_window()
         if self.stream:
             self.stream.release()
         cv2.destroyAllWindows()

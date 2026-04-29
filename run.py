@@ -7,6 +7,7 @@ Zulu-Walker 启动器
     python run.py debug             # 运行调试器
     python run.py debug -c 1        # 调试器使用摄像头1
     python run.py debug -W 1280 -H 720  # 指定分辨率
+    python run.py debug --debug-uv  # 启用 UV 调试面板
 """
 import argparse
 import sys
@@ -29,7 +30,8 @@ def run_debug(args):
         camera_source=args.camera,
         width=args.width,
         height=args.height,
-        config_path=args.config
+        config_path=args.config,
+        debug_uv=args.debug_uv
     )
     try:
         detector.start()
@@ -53,6 +55,7 @@ def main():
     debug_parser.add_argument("-W", "--width", type=int, default=640, help="画面宽度 (默认: 640)")
     debug_parser.add_argument("-H", "--height", type=int, default=480, help="画面高度 (默认: 480)")
     debug_parser.add_argument("-f", "--config", type=str, default=None, help="配置文件路径")
+    debug_parser.add_argument("--debug-uv", action="store_true", help="启用 UV 调试面板")
 
     args = parser.parse_args()
 

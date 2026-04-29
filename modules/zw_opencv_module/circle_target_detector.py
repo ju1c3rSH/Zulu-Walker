@@ -60,10 +60,10 @@ class CircleTargetDetector:
             "Blue": [(np.array([100, 50, 50]), np.array([130, 255, 255]))],
             "Black": [(np.array([0, 0, 0]), np.array([180, 255, 50]))],
             "UV": [
-                # 紫色高亮范围 (H: 130-150, S: 低-中, V: 高)
-                (np.array([130, 20, 200]), np.array([150, 255, 255])),
-                # 蓝紫高亮范围 (H: 100-130, S: 低, V: 高)
-                (np.array([100, 10, 220]), np.array([130, 100, 255])),
+                # 更宽容的紫色范围
+                (np.array([120, 10, 80]), np.array([160, 255, 255])),
+                # 更宽容的蓝紫范围
+                (np.array([90, 5, 90]), np.array([130, 220, 255])),
             ],
         }
         self.circle_target = CircleTargets()
@@ -113,15 +113,18 @@ class CircleTargetDetector:
         self.is_uv_spot_detected = False  # 是否检测到UV点
         self.uv_spot_center = None  # UV点中心坐标
 
-        
+        # UV 点最小面积阈值
+        self.uv_min_area = 2
 
-        
+        # 颜色过滤开关（可选功能）
+        self.enable_color_filter = False
+
         # UV 点卡尔曼滤波器
         self.uv_kalman = cv2.KalmanFilter(4, 2)  # 4状态(x,y,vx,vy), 2测量(x,y)
         self.uv_kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
         self.uv_kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
-        self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
-        self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.1
+        self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.01
+        self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.5
     def set_detect_method(self, method: DetectMethod):
         """设置检测方法"""
         self.detect_method = method
@@ -240,6 +243,13 @@ class CircleTargetDetector:
                 self.blur_kernel = params["blur_kernel"]
             if "blur_sigma" in params:
                 self.blur_sigma = params["blur_sigma"]
+            # 新增参数
+            if "quad_aspect_ratio" in params:
+                self.quad_aspect_ratio = params["quad_aspect_ratio"]
+            if "uv_min_area" in params:
+                self.uv_min_area = int(params["uv_min_area"])
+            if "enable_color_filter" in params:
+                self.enable_color_filter = bool(params["enable_color_filter"])
             # 更新 EdgeDrawing 参数
             self._update_ed_params()
 
@@ -282,6 +292,13 @@ class CircleTargetDetector:
             self.max_aspect_ratio = params["max_aspect_ratio"]
         if "min_circularity" in params:
             self.min_circularity = params["min_circularity"]
+        # 新增参数
+        if "quad_aspect_ratio" in params:
+            self.quad_aspect_ratio = params["quad_aspect_ratio"]
+        if "uv_min_area" in params:
+            self.uv_min_area = int(params["uv_min_area"])
+        if "enable_color_filter" in params:
+            self.enable_color_filter = bool(params["enable_color_filter"])
         # 更新 EdgeDrawing 参数
         self._update_ed_params()
 
@@ -481,46 +498,57 @@ class CircleTargetDetector:
                 )
                 self.circle_target.add_target(target_item)
 
-    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.15) -> bool:
+    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.48) -> bool:
         """
-        检查四边形的长宽比是否符合预期
-
-        使用最小外接矩形估算长宽比，考虑透视变形允许较大容差。
-
+        检查透视变换后的四边形是否符合预期的原始矩形宽高比
+        
+        使用对边平均长度来估算原始矩形的宽高比，
+        这种方法对透视变形有较好的鲁棒性。
+        
         Args:
             quad: 四边形顶点 (4, 1, 2) 或 (4, 2)
-            expected_ratio: 预期的长宽比 (宽/高)
-            tolerance: 容差比例，默认0.3表示允许30%偏差
-    
+                points order: [top-left, top-right, bottom-right, bottom-left]
+            expected_ratio: 预期的原始矩形长宽比 (宽/高)
+            tolerance: 相对容差，0.48表示允许48%偏差
+        
         Returns:
             是否符合预期长宽比
         """
         ordered = self._order_quad_points(quad)
         points = ordered.reshape(4, 2).astype(np.float32)
-
-        # 使用最小外接矩形估算长宽比
-        rect = cv2.minAreaRect(points.reshape(1, -1, 2))
-        w, h = rect[1]
-
-        if h <= 0 or w <= 0:
+        
+        # 提取四个顶点（假设顺序：tl, tr, br, bl）
+        tl, tr, br, bl = points
+        
+        # 计算对边长度来估算原始矩形的宽和高
+        # 宽度：上下两边的平均长度（透视变形下更准确）
+        top_width = np.linalg.norm(tr - tl)
+        bottom_width = np.linalg.norm(br - bl)
+        estimated_width = (top_width + bottom_width) / 2
+        
+        # 高度：左右两边的平均长度
+        left_height = np.linalg.norm(bl - tl)
+        right_height = np.linalg.norm(br - tr)
+        estimated_height = (left_height + right_height) / 2
+        
+        if estimated_height <= 0 or estimated_width <= 0:
             return False
-
-        measured_ratio = max(w, h) / min(w, h)
-
-        # 如果期望比例是1.0（正方形），直接比较
+        
+        measured_ratio = estimated_width / estimated_height
+        
         if expected_ratio == 1.0:
             return abs(measured_ratio - 1.0) <= tolerance
-
-        # 考虑透视变形，允许较大容差
+        
+        # 检查相对容差
         return abs(measured_ratio - expected_ratio) / expected_ratio <= tolerance
-
-    def _find_quadrilaterals_from_contours(self, contours, scale: float) -> list:
+    def _find_quadrilaterals_from_contours(self, contours, scale: float, hsv: np.ndarray = None) -> list:
         """
         从轮廓中筛选四边形
 
         Args:
             contours: 轮廓列表
             scale: 图像缩放比例
+            hsv: HSV 格式图像（用于颜色过滤）
 
         Returns:
             符合条件的四边形列表，以轮廓形式返回
@@ -535,6 +563,16 @@ class CircleTargetDetector:
             if len(approx) == 4:
                 area = cv2.contourArea(approx)
                 if area > min_area_scaled:
+                    # 凸包检测：确保四边形是凸形状
+                    if not cv2.isContourConvex(approx):
+                        continue
+
+                    # 颜色过滤（可选）：检测轮廓内部颜色
+                    if self.enable_color_filter and hsv is not None:
+                        color = self._detect_contour_color(hsv, approx, hsv.shape)
+                        if color != "Black":
+                            continue
+
                     # 检查长宽比
                     if self._check_quad_aspect_ratio(approx, self.quad_aspect_ratio):
                         quadrilaterals.append(approx)
@@ -684,6 +722,7 @@ class CircleTargetDetector:
 
         t1 = time.time()
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         kernel_size = self.blur_kernel
         if kernel_size % 2 == 0:
             kernel_size += 1
@@ -695,7 +734,7 @@ class CircleTargetDetector:
         detected_quad = None
         detected_quad_center = None
 
-        fallback_result = self._fallback_ellipse_detection(small, gray, scale)
+        fallback_result = self._fallback_ellipse_detection(small, gray, scale, hsv)
         t3 = time.time()
 
         if fallback_result is not None:
@@ -786,6 +825,7 @@ class CircleTargetDetector:
             small = frame
 
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         kernel_size = self.blur_kernel
         if kernel_size % 2 == 0:
             kernel_size += 1
@@ -812,7 +852,7 @@ class CircleTargetDetector:
         )
 
         # 查找四边形
-        quadrilaterals = self._find_quadrilaterals_from_contours(contours, scale)
+        quadrilaterals = self._find_quadrilaterals_from_contours(contours, scale, hsv)
         if not quadrilaterals:
             return
 
@@ -838,7 +878,6 @@ class CircleTargetDetector:
         
         self.is_detected_quad = True
 
-
         # 检测 UV 点（在四边形区域内）
         uv_center = self._detect_uv_spot_with_search_contour(small, best_quad)
         if uv_center is not None:
@@ -848,14 +887,14 @@ class CircleTargetDetector:
             self.uv_spot_center = self._uv_kalman_update(uv_center_orig)
             self.is_uv_spot_detected = True
         else:
-            # 尝试使用卡尔曼预测
-            predicted = self._uv_kalman_update(None)
-            if predicted is not None:
-                self.uv_spot_center = predicted
-                self.is_uv_spot_detected = True
-            else:
-                self.is_uv_spot_detected = False
-                self.uv_spot_center = None
+            # # 尝试使用卡尔曼预测
+            # predicted = self._uv_kalman_update(None)
+            # if predicted is not None:
+            #     self.uv_spot_center = predicted
+            #     self.is_uv_spot_detected = True
+            # else:
+            self.is_uv_spot_detected = False
+            self.uv_spot_center = None
 
         # 卡尔曼滤波平滑
         smoothed_center = self._kalman_update(best_quad_center)
@@ -903,7 +942,7 @@ class CircleTargetDetector:
 
             if contours:
                 largest_contour = max(contours, key=cv2.contourArea)
-                if cv2.contourArea(largest_contour) < 5:  # 最小面积过滤
+                if cv2.contourArea(largest_contour) < self.uv_min_area:  # 最小面积过滤
                     return None
                 # 使用亮度加权质心
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -942,7 +981,7 @@ class CircleTargetDetector:
 
         if contours:
             largest_contour = max(contours, key=cv2.contourArea)
-            if cv2.contourArea(largest_contour) < 5:  # 最小面积过滤
+            if cv2.contourArea(largest_contour) < self.uv_min_area:  # 最小面积过滤
                 return None
             # 使用亮度加权质心
             gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
@@ -1034,6 +1073,7 @@ class CircleTargetDetector:
             small = frame
 
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         kernel_size = self.blur_kernel
         if kernel_size % 2 == 0:
             kernel_size += 1
@@ -1071,7 +1111,7 @@ class CircleTargetDetector:
             # 回退到快速方法
             if result is None:
                 t4 = time.time()
-                fallback_result = self._fallback_ellipse_detection(small, gray, scale)
+                fallback_result = self._fallback_ellipse_detection(small, gray, scale, hsv)
                 print(f"[TEST] fallback: {time.time()-t4:.3f}s")
                 if fallback_result is not None:
                     ellipse, contour, quad = fallback_result
@@ -1085,7 +1125,7 @@ class CircleTargetDetector:
             traceback.print_exc()
             # 回退到快速方法
             try:
-                fallback_result = self._fallback_ellipse_detection(small, gray, scale)
+                fallback_result = self._fallback_ellipse_detection(small, gray, scale, hsv)
                 if fallback_result is not None:
                     ellipse, contour, quad = fallback_result
                     center = ellipse[0]
@@ -1709,7 +1749,7 @@ class CircleTargetDetector:
         return None
 
     def _fallback_ellipse_detection(self, small: np.ndarray, gray: np.ndarray,
-                                     scale: float) -> Optional[Tuple]:
+                                     scale: float, hsv: np.ndarray = None) -> Optional[Tuple]:
         """
         回退方法：使用 EdgeDrawing 进行边缘检测 + 轮廓椭圆拟合
 
@@ -1717,6 +1757,7 @@ class CircleTargetDetector:
             small: 缩放后的BGR图像
             gray: 灰度图像
             scale: 缩放比例
+            hsv: HSV 格式图像（用于颜色过滤）
 
         Returns:
             (ellipse, contour, quad, morphed_edges) 或 None
@@ -1747,7 +1788,7 @@ class CircleTargetDetector:
         )
 
         # 查找四边形
-        quadrilaterals = self._find_quadrilaterals_from_contours(contours, scale)
+        quadrilaterals = self._find_quadrilaterals_from_contours(contours, scale, hsv)
         if not quadrilaterals:
             return None
 
