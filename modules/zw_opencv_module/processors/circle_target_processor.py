@@ -346,7 +346,7 @@ class CircleTargetProcessor(Processor):
         data = result.result_data
 
         # 直接绘制半透明背景,不需要copy和addWeighted
-        cv2.rectangle(frame, (5, 5), (280, 155), (30, 30, 30), -1)
+        #cv2.rectangle(frame, (5, 5), (280, 155), (30, 30, 30), -1)
 
         lines = [
             (f"FPS: {self._fps:.1f}", (10, 25), (0, 255, 255)),

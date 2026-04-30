@@ -49,7 +49,7 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
         ParamDef("ed_gradient_threshold", "ED Gradient", 90, 5, 100, 1),
         ParamDef("ed_nfa_validation", "ED NFA", 1, 0, 1, 1),  # 0=off, 1=on
         # 形态学操作参数
-        ParamDef("morph_type", "Morph Type", 1, 0, 4, 1),
+        ParamDef("morph_type", "Morph Type", 4, 0, 4, 1),
         ParamDef("morph_kernel", "Morph Kernel", 3, 1, 15, 2, is_odd=True),
         ParamDef("morph_iterations", "Morph Iter", 1, 1, 10, 1),
         ParamDef("blur_kernel", "Blur Kernel", 5, 1, 15, 2, is_odd=True),
@@ -61,7 +61,7 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
         # UV 最小面积阈值
         ParamDef("uv_min_area", "UV Min Area", 5, 1, 100, 1),
         # 颜色过滤开关
-        ParamDef("enable_color_filter", "Color Filter", 0, 0, 1, 1),  # 0=off, 1=on
+        ParamDef("enable_color_filter", "Color Filter", 1, 0, 1, 1),  # 0=off, 1=on
     ],
     "test_line_quad": [
         # 高斯模糊参数

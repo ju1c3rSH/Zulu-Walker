@@ -67,7 +67,7 @@ class CircleTargetDetector:
             ],
         }
         self.circle_target = CircleTargets()
-        self.min_area_threshold_quad = 150  # 四边形最小面积阈值
+        self.min_area_threshold_quad = 1680  # 四边形最小面积阈值
         self.min_area_threshold_ellipse = 100  # 椭圆最小面积阈值
         self.min_contour_points = 15  # 椭圆拟合最少需要20个点
 
@@ -77,23 +77,23 @@ class CircleTargetDetector:
 
         self.detect_method = DetectMethod.EDGE_DRAWING_QUADS
 
-        
+
         self.quad_participation = False
-        
+
         # EdgeDrawing 参数（替代 Canny）
-        self.ed_min_path_length = 50
-        self.ed_gradient_threshold = 20
+        self.ed_min_path_length = 164
+        self.ed_gradient_threshold = 90
         self.ed_nfa_validation = True
 
         # 形态学操作参数
-        self.morph_type = 1  # 0=none, 1=dilate, 2=erode, 3=open, 4=close
+        self.morph_type = 4  # 0=none, 1=dilate, 2=erode, 3=open, 4=close
         self.morph_kernel = 3
         self.morph_iterations = 1
         self._morph_kernel_cache = None  # 缓存形态学核
 
         # 高斯模糊参数
         self.blur_kernel = 5
-        self.blur_sigma = 1.0
+        self.blur_sigma = 38.0
 
         # 缓存边缘预览图像
         self._last_canny_preview: Optional[np.ndarray] = None
@@ -114,10 +114,10 @@ class CircleTargetDetector:
         self.uv_spot_center = None  # UV点中心坐标
 
         # UV 点最小面积阈值
-        self.uv_min_area = 2
+        self.uv_min_area = 5
 
         # 颜色过滤开关（可选功能）
-        self.enable_color_filter = False
+        self.enable_color_filter = True
 
         # UV 点卡尔曼滤波器
         self.uv_kalman = cv2.KalmanFilter(4, 2)  # 4状态(x,y,vx,vy), 2测量(x,y)
@@ -498,7 +498,7 @@ class CircleTargetDetector:
                 )
                 self.circle_target.add_target(target_item)
 
-    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.9) -> bool:
+    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.28) -> bool:
         """
         检查透视变换后的四边形是否符合预期的原始矩形宽高比
         
@@ -573,19 +573,72 @@ class CircleTargetDetector:
                     # 凸包检测：确保四边形是凸形状
                     if not cv2.isContourConvex(approx):
                         continue
-
+                
                     # 颜色过滤（可选）：检测轮廓内部颜色
                     if self.enable_color_filter and hsv is not None:
                         color = self._detect_contour_color(hsv, approx, hsv.shape)
                         if color != "Black":
                             continue
-
+                    
+                    
+                    # 角度约束：排除正对摄像头拍摄的非矩形四边形
+                    if not self._check_angle_constraint(approx):
+                        print("A 4 Way not pass angle constraint, excluded.")
+                        continue
+                    
                     # 检查长宽比
                     if self._check_quad_aspect_ratio(approx, self.quad_aspect_ratio):
                         quadrilaterals.append(approx)
 
         return quadrilaterals
+    def _check_angle_constraint(self, approx, angle_threshold=15.0, right_angle_tolerance=10.0):
+        """
+        检查四边形的角度约束：
+        如果检测到的四边形有两个角约等于90°，而另外有一个角大于90°+阈值，则排除
+        这可以过滤掉正对摄像头拍摄的非矩形四边形
 
+        Args:
+            approx: 四边形的四个顶点
+            angle_threshold: 大于90°的容差阈值（度），超过此值且有两个接近90°角时排除
+            right_angle_tolerance: 判定为直角的容差（度），角度在[90-tol, 90+tol]内视为直角
+
+        Returns:
+            True: 通过角度检查
+            False: 不通过，应排除
+        """
+        # 计算四个内角
+        angles = []
+        pts = approx.reshape(4, 2)
+        
+        for i in range(4):
+            # 取三个连续顶点计算角度
+            p1 = pts[i]
+            p2 = pts[(i + 1) % 4]
+            p3 = pts[(i + 2) % 4]
+            
+            # 向量 p2->p1 和 p2->p3
+            v1 = p1 - p2
+            v2 = p3 - p2
+            
+            # 计算角度
+            cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
+            cos_angle = np.clip(cos_angle, -1.0, 1.0)
+            angle = np.degrees(np.arccos(cos_angle))
+            angles.append(angle)
+        
+        # 统计接近90°的角
+        right_angle_count = sum(1 for a in angles 
+                            if abs(a - 90) <= right_angle_tolerance)
+        
+        # 统计明显大于90°的角（超过90°+threshold）
+        obtuse_count = sum(1 for a in angles 
+                        if a > 90 + angle_threshold)
+        
+        # 如果有两个角接近90°，且至少有一个角明显大于90°，则排除
+        if right_angle_count >= 2 and obtuse_count >= 1:
+            return False
+        
+        return True
     def _fit_ellipse_in_quad(self, edges: np.ndarray, quad, img_shape: tuple):
         """
         在四边形内部寻找最佳椭圆
