@@ -103,12 +103,12 @@ class CircleTargetDetector:
             "Green": (40, 80, 0, 0),  # 绿色：(40-80）
             "Blue": (100, 130, 0, 0),  # 蓝色：(100-130)
         }
-        self.color_s_min = 40  # 饱和度最小值
+        self.color_s_min = 60  # 饱和度最小值
         self.color_v_min = 50  # 明度最小值
         self.debug_color = False  # 调试模式：打印检测到的 HSV 值
 
         # 目标四边形的长宽比（width / height），1.0 表示正方形
-        self.quad_aspect_ratio = 1.35  # 默认正方形，可配置为其他值如 1.5, 2.0 等
+        self.quad_aspect_ratio = 1.45  # 默认正方形，可配置为其他值如 1.5, 2.0 等
         self.is_detected_quad = False  # 当前是否检测到四边形
         self.is_uv_spot_detected = False  # 是否检测到UV点
         self.uv_spot_center = None  # UV点中心坐标
@@ -498,7 +498,7 @@ class CircleTargetDetector:
                 )
                 self.circle_target.add_target(target_item)
 
-    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.48) -> bool:
+    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.9) -> bool:
         """
         检查透视变换后的四边形是否符合预期的原始矩形宽高比
         
@@ -538,9 +538,16 @@ class CircleTargetDetector:
         
         if expected_ratio == 1.0:
             return abs(measured_ratio - 1.0) <= tolerance
-        
-        # 检查相对容差
-        return abs(measured_ratio - expected_ratio) / expected_ratio <= tolerance
+
+        # 检查正常方向
+        diff_normal = abs(measured_ratio - expected_ratio) / expected_ratio
+        if diff_normal <= tolerance:
+            return True
+
+        # 检查90°旋转的情况
+        inv_expected_ratio = 1.0 / expected_ratio
+        diff_rotated = abs(measured_ratio - inv_expected_ratio) / inv_expected_ratio
+        return diff_rotated <= tolerance
     def _find_quadrilaterals_from_contours(self, contours, scale: float, hsv: np.ndarray = None) -> list:
         """
         从轮廓中筛选四边形
@@ -1195,13 +1202,13 @@ class CircleTargetDetector:
         if self.debug_color:
             print(f"[ColorDebug] HSV: H={h:.1f}, S={s:.1f}, V={v:.1f}")
 
-        # 低明度：黑色
-        if v < self.color_v_min:
+        # 低饱和度：黑色
+        if s < self.color_s_min:
             return "Black"
 
-        # 低饱和度：灰色/白色，无法判断颜色
-        if s < self.color_s_min:
-            return None
+        # # 低饱和度：灰色/白色，无法判断颜色
+        # if s < self.color_s_min:
+        #     return None
 
         # 红色判断（跨越 0 度）
         h_low, h_high, h_low2, h_high2 = self.color_h_ranges["Red"]
