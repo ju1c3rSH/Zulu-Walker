@@ -29,7 +29,8 @@ import cv2
 import numpy as np
 
 # 使用绝对导入（支持直接运行和模块运行）
-from modules.zw_opencv_module.circle_target_detector import CircleTargetDetector, DetectMethod
+from modules.zw_opencv_module.circle_target_detector import CircleTargetDetector
+from modules.zw_opencv_module.detection.detect_method import DetectMethod
 from modules.zw_opencv_module.debug_window import DebugWindow
 from modules.zw_opencv_module.param_utils import load_detect_params, save_detect_params, get_config_path, get_default_params
 from modules.zw_opencv_module.camera_stream import CameraStream
@@ -105,9 +106,10 @@ class DebugDetector:
     def _on_uv_params_change(self, uv_ranges: list, uv_min_area: int):
         """UV 参数变化回调"""
         # 更新检测器的 UV 颜色范围
-        self.detector.color_ranges["UV"] = uv_ranges
+        self.detector.color_detector.color_ranges["UV"] = uv_ranges
         # 更新 uv_min_area 参数
-        self.detector.uv_min_area = uv_min_area
+        self.detector.uv_detector.min_area = uv_min_area
+        self.detector.params.uv_min_area = uv_min_area
 
     def start(self):
         """启动调试器"""
@@ -161,9 +163,9 @@ class DebugDetector:
                         cv2.circle(result_frame, tuple(pt.ravel()), 3, (255, 100, 0), -1)
                     # 计算并绘制四边形透视中心（黄色）
                     # 使用透视变换计算真实中心
-                    ordered = self.processor._order_quad_points(target.quad_points) if hasattr(self.processor, '_order_quad_points') else None
+                    ordered = self.detector._order_quad_points(target.quad_points)
                     if ordered is not None:
-                        quad_center = self.processor._get_quad_center_perspective(target.quad_points) if hasattr(self.processor, '_get_quad_center_perspective') else None
+                        quad_center = self.detector.quad_detector.get_quad_center_perspective(target.quad_points)
                         if quad_center is not None:
                             cv2.circle(result_frame, (int(quad_center[0]), int(quad_center[1])), 8, (0, 255, 255), 2)
                             cv2.putText(
@@ -178,10 +180,9 @@ class DebugDetector:
                 # 绘制椭圆
                 if target.contour_points is not None:
                     cv2.drawContours(result_frame, [target.contour_points], -1, (0, 255, 0), 2)
-                    self.processor._draw_target(result_frame, target)  # 使用处理器的绘制方法
-                # 绘制中心点（红色）
-                cx, cy = target.center_coordinates
-                cv2.circle(result_frame, (cx, cy), 5, (0, 0, 255), -1)
+                    # 绘制目标信息
+                    cx, cy = target.center_coordinates
+                    cv2.circle(result_frame, (cx, cy), 5, (0, 0, 255), -1)
                 # 绘制信息
                 cv2.putText(
                     result_frame,

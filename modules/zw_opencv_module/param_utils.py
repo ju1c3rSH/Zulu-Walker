@@ -14,7 +14,8 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from .circle_target_detector import DetectMethod, CircleTargetDetector
+from .circle_target_detector import CircleTargetDetector
+from .detection.detect_method import DetectMethod
 
 
 def get_default_params() -> Dict[str, Dict[str, Any]]:
@@ -234,8 +235,9 @@ def apply_uv_params_to_detector(detector: CircleTargetDetector, uv_params: Dict[
         (np.array([uv_params["uv_h_min2"], uv_params["uv_s_min2"], uv_params["uv_v_min2"]]),
          np.array([uv_params["uv_h_max2"], uv_params["uv_s_max2"], uv_params["uv_v_max2"]])),
     ]
-    detector.color_ranges["UV"] = uv_ranges
+    detector.color_detector.color_ranges["UV"] = uv_ranges
 
     # 更新 UV 最小面积
     if "uv_min_area" in uv_params:
-        detector.uv_min_area = int(uv_params["uv_min_area"])
+        detector.uv_detector.min_area = int(uv_params["uv_min_area"])
+        detector.params.uv_min_area = int(uv_params["uv_min_area"])

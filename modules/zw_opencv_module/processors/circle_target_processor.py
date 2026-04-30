@@ -1,7 +1,8 @@
 import cv2
 import numpy as np
 from typing import Optional, Tuple
-from ..circle_target_detector import CircleTargetDetector, DetectMethod
+from ..circle_target_detector import CircleTargetDetector
+from ..detection.detect_method import DetectMethod
 from ..circle import CircleTargetItem, CircleTargets
 from utils.focal_distance_util import reference_size_dict
 
