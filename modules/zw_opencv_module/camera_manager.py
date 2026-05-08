@@ -263,8 +263,8 @@ class CameraManager:
 
         system = config_data.get("system", {})
         self.config = CameraSystemConfig(
-            output_width=system.get("output_width", 640),
-            output_height=system.get("output_height", 480),
+            output_width=system.get("output_width", 320),
+            output_height=system.get("output_height", 240),
             layout=system.get("layout", "grid"),
             enable_streaming=system.get("enable_streaming", False),
             rtmp_url=system.get("rtmp_url", ""),
@@ -450,10 +450,10 @@ class CameraManager:
                     self.ffmpeg_pusher.push_frame_sync(composed_frame)
                     profiler.stop("ffmpeg_push")
 
-            # 本地显示窗口（降采样到 640x480 以提高性能）
+            # 本地显示窗口（降采样到 320x240 以提高性能）
             if self.config and self.config.enable_local_display and composed_frame is not None:
                 profiler.start("local_display")
-                display_frame = cv2.resize(composed_frame, (640, 480))
+                display_frame = cv2.resize(composed_frame, (320, 240))
                 cv2.imshow("Zulu-Walker Camera Preview", display_frame)
                 key = cv2.waitKey(1) & 0xFF
                 profiler.stop("local_display")
