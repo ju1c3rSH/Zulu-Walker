@@ -108,8 +108,10 @@ class CircleTargetDetector:
         self.debug_color = False  # 调试模式：打印检测到的 HSV 值
 
         # 目标四边形的长宽比（width / height），1.0 表示正方形
-        self.quad_aspect_ratio = 1.45  # 默认正方形，可配置为其他值如 1.5, 2.0 等
+        self.quad_aspect_ratio = 1.51  # 默认正方形，可配置为其他值如 1.5, 2.0 等
         self.is_detected_quad = False  # 当前是否检测到四边形
+        self.last_best_quad_center = None
+        self.last_best_quad = None
         self.is_uv_spot_detected = False  # 是否检测到UV点
         self.uv_spot_center = None  # UV点中心坐标
 
@@ -498,7 +500,7 @@ class CircleTargetDetector:
                 )
                 self.circle_target.add_target(target_item)
 
-    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.28) -> bool:
+    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.62) -> bool:
         """
         检查透视变换后的四边形是否符合预期的原始矩形宽高比
         
@@ -581,10 +583,10 @@ class CircleTargetDetector:
                             continue
                     
                     
-                    # 角度约束：排除正对摄像头拍摄的非矩形四边形
-                    if not self._check_angle_constraint(approx):
-                        print("A 4 Way not pass angle constraint, excluded.")
-                        continue
+                    # # 角度约束：排除正对摄像头拍摄的非矩形四边形
+                    # if not self._check_angle_constraint(approx):
+                    #     print("A 4 Way not pass angle constraint, excluded.")
+                    #     continue
                     
                     # 检查长宽比
                     if self._check_quad_aspect_ratio(approx, self.quad_aspect_ratio):
@@ -786,7 +788,7 @@ class CircleTargetDetector:
         kernel_size = self.blur_kernel
         if kernel_size % 2 == 0:
             kernel_size += 1
-        blurred = cv2.GaussianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
+        blurred = cv2.medianBlur(gray, (kernel_size, kernel_size), self.blur_sigma)
         t2 = time.time()
 
         result = None
@@ -875,7 +877,6 @@ class CircleTargetDetector:
         # 重置 UV 检测状态
         self.is_uv_spot_detected = False
         self.uv_spot_center = None
-
         h, w = frame.shape[:2]
         target_w, target_h = 640, 480
         scale = min(target_h / h, target_w / w, 1.0)
@@ -917,24 +918,58 @@ class CircleTargetDetector:
             return
 
         # 按面积排序，取最大的四边形
-        largest_quads = sorted(quadrilaterals, key=cv2.contourArea, reverse=True)[:3]
+        sorted_quads = sorted(quadrilaterals, key=cv2.contourArea, reverse=True)[:3]
 
+        
         best_quad = None
         best_quad_center = None
         best_area = 0
+        has_last_center = self.last_best_quad_center is not None
 
-        for quad in largest_quads:
+        for quad in sorted_quads:
             quad_center = self._get_quad_center_perspective(quad)
-            if quad_center is not None:
-                area = cv2.contourArea(quad)
+            if quad_center is None:
+                continue
+
+            area = cv2.contourArea(quad)
+
+            if has_last_center:
+                dist = np.linalg.norm(np.array(quad_center) - np.array(self.last_best_quad_center))
+
+                if dist > 150:
+                    continue
+
+                if dist < 30:
+                    best_quad = quad
+                    best_quad_center = quad_center
+                    best_area = area
+                    break
+
+                score = area * (1.0 - dist / 200.0)
+                if score > best_area:
+                    best_area = score
+                    best_quad = quad
+                    best_quad_center = quad_center
+            else:
                 if area > best_area:
                     best_area = area
                     best_quad = quad
                     best_quad_center = quad_center
 
+        if best_quad is not None:
+            self.last_best_quad_center = best_quad_center
+            self.last_best_quad = best_quad
+
         if best_quad is None or best_quad_center is None:
             self.is_detected_quad = False
+            self.lost_frames += 1
+            if self.lost_frames > self.max_lost_frames:
+                self.last_best_quad_center = None
+                self.last_best_quad = None
+                self.tracking_initialized = False
             return
+        else:
+            self.lost_frames = 0
         
         self.is_detected_quad = True
 

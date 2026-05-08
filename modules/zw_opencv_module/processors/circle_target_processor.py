@@ -54,7 +54,7 @@ class CircleTargetProcessor(Processor):
 
         if context and "fps" in context:
             self._fps = context["fps"]
-
+        
         # 从 context 获取 focal_calculator
         focal_calculator = context.get("focal_calculator") if context else None
 

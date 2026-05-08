@@ -31,7 +31,8 @@ def run_debug(args):
         width=args.width,
         height=args.height,
         config_path=args.config,
-        debug_uv=args.debug_uv
+        debug_uv=args.debug_uv,
+        debug_cam=args.debug_cam
     )
     try:
         detector.start()
@@ -56,6 +57,7 @@ def main():
     debug_parser.add_argument("-H", "--height", type=int, default=480, help="画面高度 (默认: 480)")
     debug_parser.add_argument("-f", "--config", type=str, default=None, help="配置文件路径")
     debug_parser.add_argument("--debug-uv", action="store_true", help="启用 UV 调试面板")
+    debug_parser.add_argument("--debug-cam", action="store_true", help="启用摄像头参数调试面板")
 
     args = parser.parse_args()
 
