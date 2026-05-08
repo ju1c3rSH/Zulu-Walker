@@ -125,8 +125,11 @@ class CircleTargetDetector:
         self.uv_kalman = cv2.KalmanFilter(4, 2)  # 4状态(x,y,vx,vy), 2测量(x,y)
         self.uv_kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
         self.uv_kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
-        self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.01
-        self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.5
+        self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 1.0
+        self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.1
+        self.uv_tracking_initialized = False
+        self.uv_lost_frames = 0
+        self.uv_max_lost_frames = 10
     def set_detect_method(self, method: DetectMethod):
         """设置检测方法"""
         self.detect_method = method
@@ -976,18 +979,13 @@ class CircleTargetDetector:
         # 检测 UV 点（在四边形区域内）
         uv_center = self._detect_uv_spot_with_search_contour(small, best_quad)
         if uv_center is not None:
-            # 将缩放后的坐标转换回原始尺寸
             uv_center_orig = (int(uv_center[0] / scale), int(uv_center[1] / scale))
-            # 使用卡尔曼滤波平滑
-            self.uv_spot_center = self._uv_kalman_update(uv_center_orig)
-            self.is_uv_spot_detected = True
+            smoothed = self._uv_kalman_update(uv_center_orig)
+            if smoothed is not None:
+                self.uv_spot_center = smoothed
+                self.is_uv_spot_detected = True
         else:
-            # # 尝试使用卡尔曼预测
-            # predicted = self._uv_kalman_update(None)
-            # if predicted is not None:
-            #     self.uv_spot_center = predicted
-            #     self.is_uv_spot_detected = True
-            # else:
+            self._uv_kalman_update(None)
             self.is_uv_spot_detected = False
             self.uv_spot_center = None
 
@@ -1098,14 +1096,34 @@ class CircleTargetDetector:
             uv_center: 检测到的 UV 点坐标，None 表示丢失
 
         Returns:
-            平滑后的 UV 点坐标
+            平滑后的 UV 点坐标，未初始化时返回 None
         """
         if uv_center is not None:
-            measurement = np.array([[np.float32(uv_center[0])], [np.float32(uv_center[1])]])
-            self.uv_kalman.correct(measurement)
+            x, y = uv_center
+            measurement = np.array([[np.float32(x)], [np.float32(y)]])
 
-        prediction = self.uv_kalman.predict()
-        return (int(prediction[0]), int(prediction[1]))
+            if not self.uv_tracking_initialized:
+                # 首次检测：直接用测量值初始化状态
+                self.uv_kalman.statePost = np.array([[x], [y], [0], [0]], dtype=np.float32)
+                self.uv_kalman.errorCovPost = np.eye(4, dtype=np.float32)
+                self.uv_tracking_initialized = True
+                self.uv_lost_frames = 0
+            else:
+                self.uv_kalman.correct(measurement)
+                self.uv_lost_frames = 0
+        else:
+            if self.uv_tracking_initialized:
+                self.uv_lost_frames += 1
+                if self.uv_lost_frames > self.uv_max_lost_frames:
+                    self.uv_tracking_initialized = False
+                    self.uv_lost_frames = 0
+                    return None
+
+        if self.uv_tracking_initialized:
+            prediction = self.uv_kalman.predict()
+            return (int(prediction[0]), int(prediction[1]))
+
+        return None
 
     def _create_quad_target_item(
         self, center: Tuple[float, float], quad: np.ndarray,
