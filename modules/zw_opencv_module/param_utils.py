@@ -42,7 +42,7 @@ def get_default_params() -> Dict[str, Dict[str, Any]]:
             "blur_kernel": 5,
             "blur_sigma": 38.0,
             "min_area_threshold_quad": 1680,
-            "quad_aspect_ratio": 1.35,
+            "quad_aspect_ratio": 1.51,
             "uv_min_area": 5,
             "enable_color_filter": True,
         },
@@ -97,7 +97,7 @@ def load_detect_params(config_path: str) -> Tuple[DetectMethod, Dict[str, Dict[s
 
         # 强制使用代码中写死的 quad_aspect_ratio，忽略配置文件中的值
         if "edge_drawing_quads" in methods_params:
-            methods_params["edge_drawing_quads"]["quad_aspect_ratio"] = 1.35
+            methods_params["edge_drawing_quads"]["quad_aspect_ratio"] = 1.51
 
         return current_method, methods_params
 

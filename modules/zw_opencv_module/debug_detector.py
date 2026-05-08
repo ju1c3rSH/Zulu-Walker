@@ -35,6 +35,7 @@ from modules.zw_opencv_module.param_utils import load_detect_params, save_detect
 from modules.zw_opencv_module.camera_stream import CameraStream
 from modules.zw_opencv_module.processors.circle_target_processor import CircleTargetProcessor
 from modules.zw_opencv_module.uv_debug_window import UVDebugWindow
+from modules.zw_opencv_module.camera_debug_window import CameraDebugWindow
 
 class DebugDetector:
     """
@@ -49,7 +50,8 @@ class DebugDetector:
         width: int = 640,
         height: int = 480,
         config_path: str = None,
-        debug_uv: bool = False
+        debug_uv: bool = False,
+        debug_cam: bool = False
     ):
         """
         初始化调试器
@@ -60,12 +62,14 @@ class DebugDetector:
             height: 画面高度
             config_path: 配置文件路径
             debug_uv: 是否启用 UV 调试面板
+            debug_cam: 是否启用摄像头参数调试面板
         """
         self.config_path = config_path or get_config_path()
         self.camera_source = camera_source
         self.width = width
         self.height = height
         self.debug_uv = debug_uv
+        self.debug_cam = debug_cam
 
         # 摄像头流
         self.stream: CameraStream = None
@@ -78,6 +82,9 @@ class DebugDetector:
 
         # UV 调试窗口
         self.uv_debug_window: UVDebugWindow = None
+
+        # 摄像头参数调试窗口
+        self.cam_debug_window: CameraDebugWindow = None
 
         # 运行状态
         self._running = False
@@ -109,6 +116,10 @@ class DebugDetector:
         # 更新 uv_min_area 参数
         self.detector.uv_min_area = uv_min_area
 
+    def _on_cam_params_change(self, params: dict):
+        """摄像头参数变化回调（参数已由 CameraDebugWindow 直接应用到 cap）"""
+        pass
+
     def start(self):
         """启动调试器"""
         # 初始化摄像头
@@ -129,6 +140,15 @@ class DebugDetector:
             )
             self.uv_debug_window.setup_window()
             print("[DebugDetector] UV debug window enabled.")
+
+        # 初始化摄像头参数调试窗口（如果启用）
+        if self.debug_cam:
+            self.cam_debug_window = CameraDebugWindow(
+                cap=self.stream.cap,
+                on_params_change=self._on_cam_params_change
+            )
+            self.cam_debug_window.setup_window()
+            print("[DebugDetector] Camera params debug window enabled.")
 
         self._running = True
         print("[DebugDetector] Started. Press 'q' or ESC to quit.")
@@ -202,6 +222,10 @@ class DebugDetector:
                 self.uv_debug_window.update_frame(frame)
                 self.uv_debug_window.update_gui()
 
+            # 更新摄像头参数调试窗口（如果启用）
+            if self.cam_debug_window:
+                self.cam_debug_window.update_gui()
+
             # 显示结果窗口
             cv2.imshow("Detection Result", result_frame)
 
@@ -220,6 +244,8 @@ class DebugDetector:
             self.debug_window.destroy_window()
         if self.uv_debug_window:
             self.uv_debug_window.destroy_window()
+        if self.cam_debug_window:
+            self.cam_debug_window.destroy_window()
         if self.stream:
             self.stream.release()
         cv2.destroyAllWindows()
