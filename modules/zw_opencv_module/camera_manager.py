@@ -424,11 +424,11 @@ class CameraManager:
 
     def _apply_camera_params(self):
         """从 YAML 加载摄像头硬件参数并应用到所有摄像头"""
-        camera_params = load_camera_params()
+        camera_params, user_keys = load_camera_params()
         print(f"[CameraManager] Camera HW params: {camera_params}")
         for camera in self.cameras.values():
             if camera.stream and camera.stream.cap:
-                apply_camera_params_to_capture(camera.stream.cap, camera_params)
+                apply_camera_params_to_capture(camera.stream.cap, camera_params, user_keys)
 
     def stop(self):
         self._running = False

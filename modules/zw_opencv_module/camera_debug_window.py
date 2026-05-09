@@ -62,7 +62,7 @@ class CameraDebugWindow:
 
     def _load_config(self):
         """从 YAML 加载配置"""
-        loaded = load_camera_params(self.config_path)
+        loaded, _ = load_camera_params(self.config_path)
         self.params.update(loaded)
 
     def _save_config(self):
