@@ -27,6 +27,7 @@ from .param_utils import (
     load_camera_params, apply_camera_params_to_capture
 )
 from utils.state_machine import VisualStateMachine
+from utils.camera_misc_util import CameraMiscUtil
 from modules.zw_uart_module import send_orange_frame
 from modules.zw_uart_module.protocol import (
     ORANGE_STATE_IDLE, ORANGE_STATE_SEARCH, ORANGE_STATE_TRACKING,
@@ -81,7 +82,22 @@ class Camera:
         try:
             self.stream = CameraStream(config.source, config.width, config.height)
         except Exception as e:
-            print(f"Failed to setup camera stream for {self.camera_id}: {e}")
+            if isinstance(config.source, int):
+                print(f"[Camera {self.camera_id}] Source {config.source} failed: {e}, searching fallback...")
+                cameras = CameraMiscUtil.find_working_cameras()
+                if cameras:
+                    fallback_idx = cameras[0].index
+                    try:
+                        self.stream = CameraStream(fallback_idx, config.width, config.height)
+                        print(f"[Camera {self.camera_id}] Fallback to camera index {fallback_idx} succeeded")
+                        self.config.source = fallback_idx
+                        return
+                    except Exception as e2:
+                        print(f"[Camera {self.camera_id}] Fallback index {fallback_idx} also failed: {e2}")
+                else:
+                    print(f"[Camera {self.camera_id}] No working cameras found")
+            else:
+                print(f"[Camera {self.camera_id}] String source failed: {e}")
             self.enabled = False
 
     def _setup_tasks(self, task_configs: List[dict]):
@@ -190,13 +206,13 @@ class Camera:
             )
 
         # 计时：处理阶段
-        profiler.start("processing")
+        profiler.start(self.get_task.__name__ + "_processing")
         context = {
             "fps": fps,
             "focal_calculator": self.focal_calculator,
         }
         result = self.task_manager.run_tasks_serial(frame, context=context)
-        profiler.stop("processing")
+        profiler.stop(self.get_task.__name__ + "_processing")
 
         return result
 
@@ -240,8 +256,6 @@ class CameraManager:
     def _setup_state_callbacks(self):
         def on_search(context, from_state):
             print("[CameraManager] Enter SEARCH state")
-            for camera in self.cameras.values():
-                camera.enable_task("circle_detect")
 
         def on_tracking(context, from_state):
             print("[CameraManager] Enter TRACKING state")
@@ -478,15 +492,6 @@ class CameraManager:
                     self._running = False
                     break
 
-            # 定期日志输出
-            if self._fps_frame_count == 0 and self._fps > 0:
-                ctx = self.state_machine.context
-                status = "TRACKING" if ctx.target_found else "SEARCHING"
-                target_info = ""
-                if ctx.target_found and ctx.target_center:
-                    target_info = f" | Target: {ctx.target_center} | Error: X={ctx.percent_error_x:+d}, Y={ctx.percent_error_y:+d}"
-                print(f"[CameraManager] FPS: {self._fps:.1f} | State: {status}{target_info}")
-
             profiler.start("callbacks")
             for cb in self._result_callbacks:
                 try:
@@ -503,34 +508,37 @@ class CameraManager:
 
         for camera_id, results in all_results.items():
             circle_result = results.get("circle_detect")
-            if circle_result and circle_result.success:
-                data = circle_result.result_data
-                if data:
-                    ctx.target_found = data.get("target_found", False)
-                    ctx.target_center = data.get("target", {}).center_coordinates if data.get("target") else None
-                    ctx.percent_error_x = data.get("percent_error_x", 0)
-                    ctx.percent_error_y = data.get("percent_error_y", 0)
-                    ctx.is_quad_detected = data.get("is_quad_detected", False)
-                    ctx.target_distance_mm = data.get("target_distance_mm", None)
-                    ctx.is_uv_spot_detected = data.get("is_uv_spot_detected", False)
-                    ctx.confidence = 1.0 if ctx.target_found else 0.0
+            if circle_result is None:
+                continue
 
-                    if ctx.target_found:
-                        ctx.consecutive_detected_frames += 1
-                        ctx.consecutive_lost_frames = 0
-                    else:
-                        ctx.consecutive_lost_frames += 1
-                        ctx.consecutive_detected_frames = 0
-                        #ctx.percent_error_x = 0
-                        #ctx.percent_error_y = 0
+            data = circle_result.result_data
+            if data:
+                ctx.target_found = data.get("target_found", False)
+                ctx.target_center = data.get("target", {}).center_coordinates if data.get("target") else None
+                ctx.percent_error_x = data.get("percent_error_x", 0)
+                ctx.percent_error_y = data.get("percent_error_y", 0)
+                ctx.is_quad_detected = data.get("is_quad_detected", False)
+                ctx.target_distance_mm = data.get("target_distance_mm", None)
+                ctx.is_uv_spot_detected = data.get("is_uv_spot_detected", False)
+                ctx.confidence = 1.0 if ctx.target_found else 0.0
+            else:
+                ctx.target_found = False
+                ctx.confidence = 0.0
 
-                    self._send_error_frame(ctx)
+            if ctx.target_found:
+                ctx.consecutive_detected_frames += 1
+                ctx.consecutive_lost_frames = 0
+            else:
+                ctx.consecutive_lost_frames += 1
+                ctx.consecutive_detected_frames = 0
 
-                    if self.state_machine.is_searching() and ctx.target_found:
-                        self.state_machine.trigger(VisualStateMachine.Events.TARGET_FOUND)
-                    elif self.state_machine.is_tracking() and ctx.consecutive_lost_frames >= 3:
-                        self.state_machine.trigger(VisualStateMachine.Events.TARGET_LOST)
-                break
+            self._send_error_frame(ctx)
+
+            if self.state_machine.is_searching() and ctx.target_found:
+                self.state_machine.trigger(VisualStateMachine.Events.TARGET_FOUND)
+            elif self.state_machine.is_tracking() and ctx.consecutive_lost_frames >= 3:
+                self.state_machine.trigger(VisualStateMachine.Events.TARGET_LOST)
+            break
 
     def _send_error_frame(self, ctx):
         """

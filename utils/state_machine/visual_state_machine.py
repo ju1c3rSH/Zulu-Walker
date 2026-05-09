@@ -263,9 +263,9 @@ class VisualStateMachine(BaseStateMachine):
             event=self.Events.SEARCH_TIMEOUT
         )
 
-        # TRACKING -> RECOVERY
+        # TRACKING -> SEARCH
         self.register_transition(
-            self.States.TRACKING, self.States.RECOVERY,
+            self.States.TRACKING, self.States.SEARCH,
             event=self.Events.TARGET_LOST
         )
 

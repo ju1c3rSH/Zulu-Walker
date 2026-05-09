@@ -20,6 +20,9 @@ class CircleTargetProcessor(Processor):
         self._frame_width: int = 640
         self._frame_height: int = 480
         self._fps: float = 0.0  # 从外部获取的FPS
+        self._log_interval = 30  # 每30帧输出一次日志
+        self._frame_count = 0
+        self._last_logged_target_found: Optional[bool] = None
         cv2.ocl.setUseOpenCL(True)
 
     def set_target_color(self, color: Optional[str]):
@@ -78,6 +81,7 @@ class CircleTargetProcessor(Processor):
                 error_msg = "Target not found"
                 if self.target_color:
                     error_msg = f"{self.target_color} color target not found"
+                self._log_status(False, None, 0, 0)
                 return VisionResult(
                     task_name=self.name,
                     result_data={
@@ -121,6 +125,7 @@ class CircleTargetProcessor(Processor):
                     pixel_size=avg_edge
                 )
 
+            self._log_status(True, target, percent_error_x, percent_error_y)
             return VisionResult(
                 task_name=self.name,
                 result_data={
@@ -203,6 +208,17 @@ class CircleTargetProcessor(Processor):
         percent_error_y = int((pixel_error_y * 200) / self._frame_height)
 
         return percent_error_x, percent_error_y
+
+    def _log_status(self, target_found: bool, target, percent_error_x: int, percent_error_y: int):
+        self._frame_count += 1
+        state_changed = self._last_logged_target_found != target_found
+        if state_changed or self._frame_count % self._log_interval == 0:
+            status = "TRACKING" if target_found else "SEARCHING"
+            target_info = ""
+            if target_found and target:
+                target_info = f" | Target: {target.center_coordinates} | Error: X={percent_error_x:+d}, Y={percent_error_y:+d}"
+            print(f"[CircleTargetProcessor] FPS: {self._fps:.1f} | State: {status}{target_info}")
+            self._last_logged_target_found = target_found
 
     def draw_result(self, frame: np.ndarray, result: VisionResult) -> np.ndarray:
         """
