@@ -33,7 +33,7 @@ def init():
 
     print("[zw_opencv_module] Initialized successfully")
 
-
+# hi
 def start():
     """Module start (called by ModuleManager)"""
     global _camera_manager, _running
