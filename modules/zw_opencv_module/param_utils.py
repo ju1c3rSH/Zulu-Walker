@@ -8,6 +8,7 @@ import os
 import sys
 from typing import Dict, Any, Tuple, Optional
 import yaml
+import cv2
 
 # 支持直接运行和模块运行
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -104,37 +105,6 @@ def load_detect_params(config_path: str) -> Tuple[DetectMethod, Dict[str, Dict[s
     except Exception as e:
         print(f"[param_utils] Failed to load config: {e}")
         return DetectMethod.EDGE_DRAWING_QUADS, default_params
-
-
-def save_detect_params(
-    config_path: str,
-    current_method: DetectMethod,
-    methods_params: Dict[str, Dict[str, Any]],
-    enabled: bool = True
-):
-    """
-    保存检测参数到 YAML
-
-    Args:
-        config_path: 配置文件路径
-        current_method: 当前检测方法
-        methods_params: 各方法的参数
-        enabled: 是否启用
-    """
-    try:
-        os.makedirs(os.path.dirname(config_path), exist_ok=True)
-
-        data = {
-            "current_method": current_method.value,
-            "enabled": enabled,
-            "methods": methods_params,
-        }
-
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
-
-    except Exception as e:
-        print(f"[param_utils] Failed to save config: {e}")
 
 
 def apply_params_to_detector(
@@ -239,3 +209,71 @@ def apply_uv_params_to_detector(detector: CircleTargetDetector, uv_params: Dict[
     # 更新 UV 最小面积
     if "uv_min_area" in uv_params:
         detector.uv_min_area = int(uv_params["uv_min_area"])
+
+
+# ── 摄像头硬件参数 ──────────────────────────────────────────────
+
+# (显示名, key, CAP_PROP, min, max, default)
+CAMERA_PARAM_DEFS = [
+    ("Brightness",  "brightness",  cv2.CAP_PROP_BRIGHTNESS,        0,   255,  128),
+    ("Contrast",    "contrast",    cv2.CAP_PROP_CONTRAST,          0,   255,  128),
+    ("Saturation",  "saturation",  cv2.CAP_PROP_SATURATION,        0,   255,  128),
+    ("Sharpness",   "sharpness",   cv2.CAP_PROP_SHARPNESS,         0,   255,  128),
+    ("Gain",        "gain",        cv2.CAP_PROP_GAIN,              0,   255,    0),
+    ("Exposure",    "exposure",    cv2.CAP_PROP_EXPOSURE,         -13,    -1,   -5),
+    ("AutoExp",     "auto_exp",    cv2.CAP_PROP_AUTO_EXPOSURE,     0,     3,    1),
+    ("WbAuto",      "wb_auto",     cv2.CAP_PROP_AUTO_WB,           0,     1,    1),
+    ("WbTemp",      "wb_temp",     cv2.CAP_PROP_WB_TEMPERATURE, 2000, 10000, 4600),
+    ("Gamma",       "gamma",       cv2.CAP_PROP_GAMMA,             0,   500,  100),
+    ("Backlight",   "backlight",   cv2.CAP_PROP_BACKLIGHT,         0,     2,    1),
+]
+
+
+def get_camera_config_path() -> str:
+    """获取摄像头硬件参数配置文件路径"""
+    return os.path.join(os.path.dirname(__file__), "config", "camera_params.yaml")
+
+
+def load_camera_params(config_path: str = None) -> Dict[str, Any]:
+    """
+    从 YAML 加载摄像头硬件参数
+
+    Args:
+        config_path: 配置文件路径，默认使用 camera_params.yaml
+
+    Returns:
+        摄像头参数字典
+    """
+    if config_path is None:
+        config_path = get_camera_config_path()
+
+    defaults = {key: default for _, key, _, _, _, default in CAMERA_PARAM_DEFS}
+
+    if not os.path.exists(config_path):
+        return defaults
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+            if data and "camera_params" in data:
+                defaults.update(data["camera_params"])
+        return defaults
+    except Exception as e:
+        print(f"[param_utils] Failed to load camera config: {e}")
+        return defaults
+
+
+def apply_camera_params_to_capture(cap, params: Dict[str, Any]):
+    """
+    将摄像头硬件参数应用到 VideoCapture
+
+    Args:
+        cap: cv2.VideoCapture 实例
+        params: 参数字典
+    """
+    for _, key, cap_prop, _, _, _ in CAMERA_PARAM_DEFS:
+        if key in params:
+            try:
+                cap.set(cap_prop, int(params[key]))
+            except Exception:
+                pass

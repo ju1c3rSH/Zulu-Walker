@@ -31,7 +31,7 @@ import numpy as np
 # 使用绝对导入（支持直接运行和模块运行）
 from modules.zw_opencv_module.circle_target_detector import CircleTargetDetector, DetectMethod
 from modules.zw_opencv_module.debug_window import DebugWindow
-from modules.zw_opencv_module.param_utils import load_detect_params, save_detect_params, get_config_path, get_default_params
+from modules.zw_opencv_module.param_utils import load_detect_params, get_config_path, get_default_params
 from modules.zw_opencv_module.camera_stream import CameraStream
 from modules.zw_opencv_module.processors.circle_target_processor import CircleTargetProcessor
 from modules.zw_opencv_module.uv_debug_window import UVDebugWindow

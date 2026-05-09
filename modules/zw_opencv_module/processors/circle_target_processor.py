@@ -206,7 +206,7 @@ class CircleTargetProcessor(Processor):
 
     def draw_result(self, frame: np.ndarray, result: VisionResult) -> np.ndarray:
         """
-        在帧上绘制检测结果：拟合椭圆和圆心
+        在帧上绘制检测结果：圆心和坐标
 
         Args:
             frame: 输入图像帧
@@ -256,53 +256,22 @@ class CircleTargetProcessor(Processor):
         self, frame: np.ndarray, target: CircleTargetItem, is_target: bool = False
     ):
         """
-        绘制单个目标：拟合椭圆和圆心
+        绘制单个目标：圆心和坐标
 
         Args:
             frame: 输入图像帧
             target: 目标对象
             is_target: 是否为主要目标
         """
-        if target.color == "Red":
-            color = (0, 0, 255)
-        elif target.color == "Green":
-            color = (0, 255, 0)
-        elif target.color == "Blue":
-            color = (255, 0, 0)
-        else:
-            color = (128, 128, 128)
-
-        thickness = 2 if is_target else 1
-
-        # 绘制拟合椭圆
-        if target.contour_points is not None and len(target.contour_points) >= 5:
-            try:
-                ellipse = cv2.fitEllipse(target.contour_points)
-                cv2.ellipse(frame, ellipse, color, thickness)
-            except cv2.error:
-                # 如果拟合失败，绘制简单圆形
-                cv2.circle(
-                    frame,
-                    target.center_coordinates,
-                    int(target.radius),
-                    color,
-                    thickness,
-                )
-        else:
-            # 轮廓点不足，绘制简单圆形
-            cv2.circle(
-                frame, target.center_coordinates, int(target.radius), color, thickness
-            )
+        cx, cy = target.center_coordinates
 
         # 绘制圆心（红色实心圆）
-        cx, cy = target.center_coordinates
         cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
 
         # 绘制圆心坐标文字
-        coord_text = f"({cx},{cy})"
         cv2.putText(
             frame,
-            coord_text,
+            f"({cx},{cy})",
             (cx + 10, cy - 10),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,

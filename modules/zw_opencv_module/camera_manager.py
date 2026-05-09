@@ -21,7 +21,11 @@ from .ffmpeg_pusher import FFmpegPusher
 from .processors.base import VisionResult
 from .processors.circle_target_processor import CircleTargetProcessor
 from .performance import profiler
-from .param_utils import load_detect_params, apply_params_to_detector, get_config_path, load_uv_params, apply_uv_params_to_detector
+from .param_utils import (
+    load_detect_params, apply_params_to_detector, get_config_path,
+    load_uv_params, apply_uv_params_to_detector,
+    load_camera_params, apply_camera_params_to_capture
+)
 from utils.state_machine import VisualStateMachine
 from modules.zw_uart_module import send_orange_frame
 from modules.zw_uart_module.protocol import (
@@ -298,6 +302,11 @@ class CameraManager:
             )
             self.add_camera(cam_id, cam_config)
 
+        # 绘制仅在需要显示或推流时启用
+        draw_enabled = self.config.enable_local_display or self.config.enable_streaming
+        for cam in self.cameras.values():
+            cam.task_manager.draw_enabled = draw_enabled
+
     def add_camera(self, camera_id: str, config: CameraConfig):
         if camera_id in self.cameras:
             print(f"Camera {camera_id} already exists, replacing...")
@@ -366,6 +375,7 @@ class CameraManager:
 
         # 从 YAML 加载检测参数并应用到所有检测器
         self._apply_detect_params()
+        self._apply_camera_params()
 
         self.state_machine.start()
 
@@ -397,6 +407,14 @@ class CameraManager:
                       f"uv_min_area: {detector.uv_min_area}, enable_color_filter: {detector.enable_color_filter}")
 
         print(f"[CameraManager] Loaded detect params: method={current_method.value}")
+
+    def _apply_camera_params(self):
+        """从 YAML 加载摄像头硬件参数并应用到所有摄像头"""
+        camera_params = load_camera_params()
+        print(f"[CameraManager] Camera HW params: {camera_params}")
+        for camera in self.cameras.values():
+            if camera.stream and camera.stream.cap:
+                apply_camera_params_to_capture(camera.stream.cap, camera_params)
 
     def stop(self):
         self._running = False
@@ -450,11 +468,10 @@ class CameraManager:
                     self.ffmpeg_pusher.push_frame_sync(composed_frame)
                     profiler.stop("ffmpeg_push")
 
-            # 本地显示窗口（降采样到 320x240 以提高性能）
+            # 本地显示窗口
             if self.config and self.config.enable_local_display and composed_frame is not None:
                 profiler.start("local_display")
-                display_frame = cv2.resize(composed_frame, (320, 240))
-                cv2.imshow("Zulu-Walker Camera Preview", display_frame)
+                cv2.imshow("Zulu-Walker Camera Preview", composed_frame)
                 key = cv2.waitKey(1) & 0xFF
                 profiler.stop("local_display")
                 if key == ord('q') or key == 27:  # q 或 ESC 退出

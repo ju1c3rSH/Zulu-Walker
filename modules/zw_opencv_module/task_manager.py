@@ -61,6 +61,7 @@ class TaskManager:
     def __init__(self):
         self.tasks: OrderedDict[str, Task] = OrderedDict()
         self.result_callbacks: List[Callable[[str, VisionResult], None]] = []
+        self.draw_enabled: bool = True
 
     def register_task(self, task: Task):
         """注册任务"""
@@ -133,7 +134,7 @@ class TaskManager:
                 context[task.name] = result
 
                 # 在帧上绘制结果
-                if result is not None:
+                if result is not None and self.draw_enabled:
                     draw_timer_name = f"task_{task.name}_draw"
                     profiler.start(draw_timer_name)
                     processed_frame = task.processor.draw_result(processed_frame, result)

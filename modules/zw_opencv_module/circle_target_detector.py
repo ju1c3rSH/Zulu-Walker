@@ -84,6 +84,7 @@ class CircleTargetDetector:
         self.ed_min_path_length = 164
         self.ed_gradient_threshold = 90
         self.ed_nfa_validation = True
+        self._update_ed_params()
 
         # 形态学操作参数
         self.morph_type = 4  # 0=none, 1=dilate, 2=erode, 3=open, 4=close
@@ -889,7 +890,7 @@ class CircleTargetDetector:
             small = frame
 
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV) if self.enable_color_filter else None
         kernel_size = self.blur_kernel
         if kernel_size % 2 == 0:
             kernel_size += 1
@@ -899,7 +900,7 @@ class CircleTargetDetector:
         try:
             self.ed.detectEdges(blurred)
             edges = self.ed.getEdgeImage()
-            if edges is None or np.count_nonzero(edges) < 100:
+            if edges is None or cv2.countNonZero(edges) < 100:
                 self._last_canny_preview = np.zeros((small.shape[0], small.shape[1]), dtype=np.uint8)
                 return
         except cv2.error:
@@ -977,7 +978,7 @@ class CircleTargetDetector:
         self.is_detected_quad = True
 
         # 检测 UV 点（在四边形区域内）
-        uv_center = self._detect_uv_spot_with_search_contour(small, best_quad)
+        uv_center = self._detect_uv_spot_with_search_contour(small, best_quad, hsv, gray)
         if uv_center is not None:
             uv_center_orig = (int(uv_center[0] / scale), int(uv_center[1] / scale))
             smoothed = self._uv_kalman_update(uv_center_orig)
@@ -1003,7 +1004,7 @@ class CircleTargetDetector:
         )
         self.circle_target.add_target(target_item)
     
-    def _detect_uv_spot_with_search_contour(self, frame: np.ndarray, search_contour: np.ndarray = None) -> Optional[Tuple[int, int]]:
+    def _detect_uv_spot_with_search_contour(self, frame: np.ndarray, search_contour: np.ndarray = None, hsv: np.ndarray = None, gray: np.ndarray = None) -> Optional[Tuple[int, int]]:
         """
         检测UV点（UV点在特定颜色范围内）
         使用亮度加权质心提高精度
@@ -1011,6 +1012,8 @@ class CircleTargetDetector:
         Args:
             frame: BGR格式的输入图像
             search_contour: 搜索轮廓，只在此轮廓内检测UV点
+            hsv: 计算后的HSV图像
+            gray: 计算后的灰度图像
 
         Returns:
             UV点坐标 (x, y) 或 None
@@ -1052,7 +1055,7 @@ class CircleTargetDetector:
             return None
 
         roi_frame = frame[y:y+h, x:x+w]
-        roi_hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
+        roi_hsv = hsv[y:y+h, x:x+w] if hsv is not None else cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
 
         roi_mask = np.zeros((h, w), dtype=np.uint8)
         shifted_contour = search_contour - [x, y]
@@ -1077,7 +1080,7 @@ class CircleTargetDetector:
             if cv2.contourArea(largest_contour) < self.uv_min_area:  # 最小面积过滤
                 return None
             # 使用亮度加权质心
-            gray_roi = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
+            gray_roi = gray[y:y+h, x:x+w] if gray is not None else cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
             masked_gray = cv2.bitwise_and(gray_roi, gray_roi, mask=contour_mask)
             M = cv2.moments(masked_gray, binaryImage=False)
             if M['m00'] > 0:
@@ -1389,7 +1392,7 @@ class CircleTargetDetector:
             self.ed.detectEdges(gray)
             edges = self.ed.getEdgeImage()
 
-            if edges is None or np.count_nonzero(edges) < 100:
+            if edges is None or cv2.countNonZero(edges) < 100:
                 return np.array([])
 
             # LSD 检测线段
@@ -1885,7 +1888,7 @@ class CircleTargetDetector:
         try:
             self.ed.detectEdges(blurred)
             edges = self.ed.getEdgeImage()
-            if edges is None or np.count_nonzero(edges) < 100:
+            if edges is None or cv2.countNonZero(edges) < 100:
                 return None
         except cv2.error:
             return None

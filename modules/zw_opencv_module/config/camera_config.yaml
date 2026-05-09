@@ -4,8 +4,8 @@
 #   edge_contour_ellipse: 边缘检测 + 椭圆拟合（无需颜色二值化，使用Canny+膨胀）
 # 检测参数由 debug_params.yaml 控制，使用 debug_detector.py 进行参数整定
 system:
-  output_width: 640
-  output_height: 480
+  output_width: 320
+  output_height: 240
   layout: "grid"  # grid, horizontal, vertical
   enable_streaming: False  # 是否启用RTMP推流
   rtmp_url: "rtmp://192.168.31.158/live/livestream"

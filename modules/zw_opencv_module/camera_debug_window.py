@@ -15,21 +15,7 @@ import cv2
 import numpy as np
 import yaml
 
-
-# 参数定义：(显示名, 内部key, CAP_PROP, 范围min, 范围max, 默认值)
-CAMERA_PARAM_DEFS = [
-    ("Brightness",  "brightness",  cv2.CAP_PROP_BRIGHTNESS,        0,   255,  128),
-    ("Contrast",    "contrast",    cv2.CAP_PROP_CONTRAST,          0,   255,  128),
-    ("Saturation",  "saturation",  cv2.CAP_PROP_SATURATION,        0,   255,  128),
-    ("Sharpness",   "sharpness",   cv2.CAP_PROP_SHARPNESS,         0,   255,  128),
-    ("Gain",        "gain",        cv2.CAP_PROP_GAIN,              0,   255,    0),
-    ("Exposure",    "exposure",    cv2.CAP_PROP_EXPOSURE,         -13,    -1,   -5),
-    ("AutoExp",     "auto_exp",    cv2.CAP_PROP_AUTO_EXPOSURE,     0,     3,    1),
-    ("WbAuto",      "wb_auto",     cv2.CAP_PROP_AUTO_WB,           0,     1,    1),
-    ("WbTemp",      "wb_temp",     cv2.CAP_PROP_WB_TEMPERATURE, 2000, 10000, 4600),
-    ("Gamma",       "gamma",       cv2.CAP_PROP_GAMMA,             0,   500,  100),
-    ("Backlight",   "backlight",   cv2.CAP_PROP_BACKLIGHT,         0,     2,    1),
-]
+from .param_utils import CAMERA_PARAM_DEFS, load_camera_params
 
 
 class CameraDebugWindow:
@@ -76,17 +62,8 @@ class CameraDebugWindow:
 
     def _load_config(self):
         """从 YAML 加载配置"""
-        if not os.path.exists(self.config_path):
-            return
-        try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-                if data and "camera_params" in data:
-                    for name, value in data["camera_params"].items():
-                        if name in self.params:
-                            self.params[name] = int(value)
-        except Exception as e:
-            print(f"[CameraDebugWindow] Failed to load config: {e}")
+        loaded = load_camera_params(self.config_path)
+        self.params.update(loaded)
 
     def _save_config(self):
         """保存配置（节流）"""
