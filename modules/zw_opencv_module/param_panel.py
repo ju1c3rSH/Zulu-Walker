@@ -56,8 +56,6 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
         ParamDef("blur_sigma", "Blur Sigma", 38, 1, 50, 1, scale=0.1),
         # 四边形面积阈值
         ParamDef("min_area_threshold_quad", "Min Quad Area", 1680, 10, 2000, 10),
-        # 四边形长宽比参数
-        ParamDef("quad_aspect_ratio", "Quad Aspect", 135, 50, 200, 5, scale=0.01),  # 0.5-2.0
         # UV 最小面积阈值
         ParamDef("uv_min_area", "UV Min Area", 5, 1, 100, 1),
         # 颜色过滤开关

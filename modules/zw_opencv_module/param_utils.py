@@ -96,10 +96,6 @@ def load_detect_params(config_path: str) -> Tuple[DetectMethod, Dict[str, Dict[s
                 if method_name in methods_params and params:
                     methods_params[method_name].update(params)
 
-        # 强制使用代码中写死的 quad_aspect_ratio，忽略配置文件中的值
-        if "edge_drawing_quads" in methods_params:
-            methods_params["edge_drawing_quads"]["quad_aspect_ratio"] = 1.51
-
         return current_method, methods_params
 
     except Exception as e:
