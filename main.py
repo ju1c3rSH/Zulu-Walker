@@ -12,7 +12,7 @@ class ModuleManager:
     def __init__(self):
         self.modules = {}
         self.running = True
-    
+        self._loop_methods = {}
     def load_module(self,module_name):
         try:
             # 使用 modules.{name} 路径加载，与绝对导入一致
@@ -28,18 +28,24 @@ class ModuleManager:
             print(f"Failed to load module '{module_name}': {e}")
             return False
     def start_all(self):
-        """启动所有模块"""
+        """启动所有模块
+        检查模块是否有Loop和Start方法，分别调用，并将Loop方法注册到主循环调用列表
+        """
         for module_name in SystemConfig.AUTO_START_MODULES:
             if self.load_module(module_name):
-                # 如果模块有start方法
                 module = self.modules.get(module_name)
+                
                 if module and hasattr(module, 'start'):
                     try:
                         module.start()
                     except Exception as e:
-                        print(f"Failed to start {module_name}: {e}")           
+                        print(f"Failed to start {module_name}: {e}")
+                
+                if module and hasattr(module, 'loop'):
+                    self._loop_methods[module_name] = module.loop
+                    
     def stop_all(self):
-        """停止所有模块"""
+        """停止所有模块，并且清除所有的loop方法"""
         self.running = False
         for module_name, module in self.modules.items():
             if hasattr(module, 'stop'):
@@ -47,6 +53,8 @@ class ModuleManager:
                     module.stop()
                 except Exception as e:
                     print(f"Failed to stop {module_name}: {e}")
+        self._loop_methods.clear()
+
     def run_main_loop(self):
         """主循环，定期调用模块的loop方法"""
 
@@ -54,14 +62,14 @@ class ModuleManager:
         try:
             while self.running:
                 try:
-                    for module_name, module in self.modules.items():
-                            if hasattr(module, 'loop'):
-                                try:
-                                    module.loop()
-                                except Exception as e:
-                                    print(f"Error in {module_name} loop: {e}")
                     #gc.collect()
                     #这里先移除了gc，排查是不是gc引起的性能问题，后续再优化
+                    for module_name, loop_method in self._loop_methods.items():
+                        try:
+                            loop_method()
+                        except Exception as e:
+                            print(f"Error in {module_name} loop: {e}")
+                            
                     time.sleep(SystemConfig.MAIN_LOOP_DELAY)
                 except KeyboardInterrupt:
                     print("Program interrupted")
