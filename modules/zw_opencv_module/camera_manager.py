@@ -251,6 +251,10 @@ class CameraManager:
         self._fps_start_time = time.time()
         self._fps = 0.0
 
+        # 跳帧显示
+        self._last_display_time = 0.0
+        self._display_interval = 1.0 / 15  # 15fps display refresh
+
         self._setup_state_callbacks()
 
     def _setup_state_callbacks(self):
@@ -489,13 +493,16 @@ class CameraManager:
 
             # 本地显示窗口
             if self.config and self.config.enable_local_display and composed_frame is not None:
-                profiler.start("local_display")
-                cv2.imshow("Zulu-Walker Camera Preview", composed_frame)
-                key = cv2.waitKey(1) & 0xFF
-                profiler.stop("local_display")
-                if key == ord('q') or key == 27:  # q 或 ESC 退出
-                    self._running = False
-                    break
+                now = time.monotonic()
+                if now - self._last_display_time >= self._display_interval:
+                    self._last_display_time = now
+                    profiler.start("local_display")
+                    cv2.imshow("Zulu-Walker Camera Preview", composed_frame)
+                    key = cv2.waitKey(1) & 0xFF
+                    profiler.stop("local_display")
+                    if key == ord('q') or key == 27:  # q 或 ESC 退出
+                        self._running = False
+                        break
 
             profiler.start("callbacks")
             for cb in self._result_callbacks:
