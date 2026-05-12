@@ -20,7 +20,7 @@ class CircleTargetProcessor(Processor):
         self._frame_width: int = 640
         self._frame_height: int = 480
         self._fps: float = 0.0  # 从外部获取的FPS
-        self._log_interval = 30  # 每30帧输出一次日志
+        self._log_interval = 240
         self._frame_count = 0
         self._last_logged_target_found: Optional[bool] = None
         cv2.ocl.setUseOpenCL(True)
