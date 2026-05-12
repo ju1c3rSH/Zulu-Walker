@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 import yaml
 
-from .param_utils import CAMERA_PARAM_DEFS, load_camera_params
+from .param_utils import CAMERA_PARAM_DEFS, load_camera_params, read_camera_params_from_capture
 
 
 class CameraDebugWindow:
@@ -54,17 +54,14 @@ class CameraDebugWindow:
         # 曝光偏移（trackbar 不支持负数，用 offset 转换）
         self._exposure_offset = 13  # -13 → 0, -1 → 12
 
-        for display_name, key, cap_prop, min_val, max_val, default in CAMERA_PARAM_DEFS:
+        for display_name, key, cap_prop, min_val, max_val in CAMERA_PARAM_DEFS:
             self._prop_map[key] = cap_prop
-            self.params[key] = default
 
-        self._load_config()
-
-    def _load_config(self):
-        """从 YAML 加载配置"""
+        # 读取硬件实际值（不支持的参数会被跳过）
+        self.params = read_camera_params_from_capture(self.cap)
+        # 加载 YAML 用户配置（如有）覆盖硬件值
         loaded, _ = load_camera_params(self.config_path)
         self.params.update(loaded)
-
     def _save_config(self):
         """保存配置（节流）"""
         self._save_pending = True
@@ -88,7 +85,9 @@ class CameraDebugWindow:
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self.window_name, 400, 500)
 
-        for display_name, key, cap_prop, min_val, max_val, default in CAMERA_PARAM_DEFS:
+        for display_name, key, cap_prop, min_val, max_val in CAMERA_PARAM_DEFS:
+            if key not in self.params:
+                continue
             # 曝光参数需要偏移转换（负数 → 非负数）
             if key == "exposure":
                 tb_min = 0
@@ -151,7 +150,9 @@ class CameraDebugWindow:
         # 显示当前参数信息面板
         info = np.zeros((300, 400, 3), dtype=np.uint8)
         y = 25
-        for display_name, key, cap_prop, min_val, max_val, default in CAMERA_PARAM_DEFS:
+        for display_name, key, cap_prop, min_val, max_val in CAMERA_PARAM_DEFS:
+            if key not in self.params:
+                continue
             text = f"{display_name}: {self.params[key]}"
             cv2.putText(info, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
             y += 25

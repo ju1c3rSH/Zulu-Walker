@@ -209,19 +209,19 @@ def apply_uv_params_to_detector(detector: CircleTargetDetector, uv_params: Dict[
 
 # ── 摄像头硬件参数 ──────────────────────────────────────────────
 
-# (显示名, key, CAP_PROP, min, max, default)
+# (显示名, key, CAP_PROP, min, max)
 CAMERA_PARAM_DEFS = [
-    ("Brightness",  "brightness",  cv2.CAP_PROP_BRIGHTNESS,        0,   255,  128),
-    ("Contrast",    "contrast",    cv2.CAP_PROP_CONTRAST,          0,   255,  128),
-    ("Saturation",  "saturation",  cv2.CAP_PROP_SATURATION,        0,   255,  128),
-    ("Sharpness",   "sharpness",   cv2.CAP_PROP_SHARPNESS,         0,   255,  128),
-    ("Gain",        "gain",        cv2.CAP_PROP_GAIN,              0,   255,    0),
-    ("Exposure",    "exposure",    cv2.CAP_PROP_EXPOSURE,         -13,    -1,   -3),
-    ("AutoExp",     "auto_exp",    cv2.CAP_PROP_AUTO_EXPOSURE,     0,     3,    3),
-    ("WbAuto",      "wb_auto",     cv2.CAP_PROP_AUTO_WB,           0,     1,    1),
-    ("WbTemp",      "wb_temp",     cv2.CAP_PROP_WB_TEMPERATURE, 2000, 10000, 4600),
-    ("Gamma",       "gamma",       cv2.CAP_PROP_GAMMA,             0,   500,  100),
-    ("Backlight",   "backlight",   cv2.CAP_PROP_BACKLIGHT,         0,     2,    1),
+    ("Brightness",  "brightness",  cv2.CAP_PROP_BRIGHTNESS,        0,   255),
+    ("Contrast",    "contrast",    cv2.CAP_PROP_CONTRAST,          0,   255),
+    ("Saturation",  "saturation",  cv2.CAP_PROP_SATURATION,        0,   255),
+    ("Sharpness",   "sharpness",   cv2.CAP_PROP_SHARPNESS,         0,   255),
+    ("Gain",        "gain",        cv2.CAP_PROP_GAIN,              0,   255),
+    ("Exposure",    "exposure",    cv2.CAP_PROP_EXPOSURE,         -13,    -1),
+    ("AutoExp",     "auto_exp",    cv2.CAP_PROP_AUTO_EXPOSURE,     0,     3),
+    ("WbAuto",      "wb_auto",     cv2.CAP_PROP_AUTO_WB,           0,     1),
+    ("WbTemp",      "wb_temp",     cv2.CAP_PROP_WB_TEMPERATURE, 2000, 10000),
+    ("Gamma",       "gamma",       cv2.CAP_PROP_GAMMA,             0,   500),
+    ("Backlight",   "backlight",   cv2.CAP_PROP_BACKLIGHT,         0,     2),
 ]
 
 
@@ -232,33 +232,73 @@ def get_camera_config_path() -> str:
 
 def load_camera_params(config_path: str = None) -> Tuple[Dict[str, Any], set]:
     """
-    从 YAML 加载摄像头硬件参数
+    从 YAML 加载用户配置的摄像头硬件参数
 
     Args:
         config_path: 配置文件路径，默认使用 camera_params.yaml
 
     Returns:
         (摄像头参数字典, 用户在 YAML 中显式指定的 key 集合)
+        无 YAML 时返回空字典 + 空集合，不使用硬编码默认值
     """
     if config_path is None:
         config_path = get_camera_config_path()
 
-    defaults = {key: default for _, key, _, _, _, default in CAMERA_PARAM_DEFS}
-    user_keys = set()
-
     if not os.path.exists(config_path):
-        return defaults, user_keys
+        return {}, set()
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
             if data and "camera_params" in data:
-                user_keys = set(data["camera_params"].keys())
-                defaults.update(data["camera_params"])
-        return defaults, user_keys
+                params = data["camera_params"]
+                return params, set(params.keys())
+        return {}, set()
     except Exception as e:
         print(f"[param_utils] Failed to load camera config: {e}")
-        return defaults, user_keys
+        return {}, set()
+
+
+def read_camera_params_from_capture(cap) -> Dict[str, Any]:
+    """从摄像头硬件读取当前参数值，不支持的参数会被跳过"""
+    result = {}
+
+    # 先读 auto_exp（曝光模式），因为它影响 exposure 的行为
+    auto_exp_def = next((d for d in CAMERA_PARAM_DEFS if d[1] == "auto_exp"), None)
+    if auto_exp_def:
+        _, key, cap_prop, min_val, max_val = auto_exp_def
+        try:
+            raw = cap.get(cap_prop)
+            if raw is not None:
+                result[key] = max(min_val, min(max_val, int(round(raw))))
+        except Exception:
+            pass
+
+    for display_name, key, cap_prop, min_val, max_val in CAMERA_PARAM_DEFS:
+        if key == "auto_exp":
+            continue
+        try:
+            raw = cap.get(cap_prop)
+            if raw is not None:
+                result[key] = max(min_val, min(max_val, int(round(raw))))
+        except Exception:
+            pass
+
+    print(f"[param_utils] Read camera HW params: {result}")
+    return result
+
+
+def save_camera_params(params: Dict[str, Any], config_path: str = None):
+    """保存摄像头参数到 YAML"""
+    if config_path is None:
+        config_path = get_camera_config_path()
+    try:
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        data = {"camera_params": params}
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False)
+    except Exception as e:
+        print(f"[param_utils] Failed to save camera config: {e}")
 
 
 def apply_camera_params_to_capture(cap, params: Dict[str, Any], user_keys: set = None):
@@ -292,7 +332,7 @@ def apply_camera_params_to_capture(cap, params: Dict[str, Any], user_keys: set =
         except Exception:
             pass
 
-    for _, key, cap_prop, _, _, _ in CAMERA_PARAM_DEFS:
+    for _, key, cap_prop, _, _ in CAMERA_PARAM_DEFS:
         if key not in params or key == "auto_exp":
             continue
         try:
