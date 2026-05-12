@@ -504,7 +504,7 @@ class CircleTargetDetector:
                 )
                 self.circle_target.add_target(target_item)
 
-    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.62) -> bool:
+    def _check_quad_aspect_ratio(self, quad: np.ndarray, expected_ratio: float, tolerance: float = 0.7, is_ordered: bool = False) -> bool:
         """
         检查透视变换后的四边形是否符合预期的原始矩形宽高比
         
@@ -520,7 +520,10 @@ class CircleTargetDetector:
         Returns:
             是否符合预期长宽比
         """
-        ordered = self._order_quad_points(quad)
+        if not is_ordered:
+            ordered = self._order_quad_points(quad)
+        else:
+            ordered = quad
         points = ordered.reshape(4, 2).astype(np.float32)
         
         # 提取四个顶点（假设顺序：tl, tr, br, bl）
@@ -570,6 +573,8 @@ class CircleTargetDetector:
         min_area_scaled = self.min_area_threshold_quad * (scale * scale)
 
         for contour in contours:
+            if cv2.contourArea(contour) < min_area_scaled:  continue
+            
             epsilon = cv2.arcLength(contour, True) * 0.02
             approx = cv2.approxPolyDP(contour, epsilon, True)
 
@@ -594,7 +599,8 @@ class CircleTargetDetector:
                     
                     # 检查长宽比
                     if self._check_quad_aspect_ratio(approx, self.quad_aspect_ratio):
-                        quadrilaterals.append(approx)
+                        ordered_approx = self._order_quad_points(approx).astype(np.int32)
+                        quadrilaterals.append((area, ordered_approx))
 
         return quadrilaterals
     def _check_angle_constraint(self, approx, angle_threshold=15.0, right_angle_tolerance=10.0):
@@ -922,20 +928,18 @@ class CircleTargetDetector:
             return
 
         # 按面积排序，取最大的四边形
-        sorted_quads = sorted(quadrilaterals, key=cv2.contourArea, reverse=True)[:3]
+        sorted_quads = sorted(quadrilaterals, key=lambda x: x[0], reverse=True)[:3]
 
-        
+
         best_quad = None
         best_quad_center = None
         best_area = 0
         has_last_center = self.last_best_quad_center is not None
 
-        for quad in sorted_quads:
-            quad_center = self._get_quad_center_perspective(quad)
+        for area, quad in sorted_quads:
+            quad_center = self._get_quad_center_perspective(quad, is_ordered=True)
             if quad_center is None:
                 continue
-
-            area = cv2.contourArea(quad)
 
             if has_last_center:
                 dist = np.linalg.norm(np.array(quad_center) - np.array(self.last_best_quad_center))
@@ -1301,18 +1305,24 @@ class CircleTargetDetector:
             颜色名称或 None
         """
         # 创建轮廓掩码
-        mask = np.zeros(img_shape[:2], dtype=np.uint8)
-        cv2.drawContours(mask, [contour], -1, 255, -1)
+        x, y, w, h = cv2.boundingRect(contour)
+        x = max(0, x); y = max(0, y)
+        w = min(w, img_shape[1] - x); h = min(h, img_shape[0] - y)
+        if w <= 0 or h <= 0:
+            return None
 
-        # 计算轮廓内部的平均 HSV 值
-        mean_val = cv2.mean(hsv, mask=mask)[:3]
-        h, s, v = mean_val
+        mask = np.zeros((h, w), dtype=np.uint8)
+        shifted_contour = contour - [x, y]
+        cv2.drawContours(mask, [shifted_contour], -1, 255, -1)
+
+        roi_hsv = hsv[y:y+h, x:x+w]
+        mean_val = cv2.mean(roi_hsv, mask=mask)[:3]
 
         if self.debug_color:
-            print(f"[ColorDebug] HSV: H={h:.1f}, S={s:.1f}, V={v:.1f}")
+            print(f"[ColorDebug] HSV: H={mean_val[0]:.1f}, S={mean_val[1]:.1f}, V={mean_val[2]:.1f}")
 
         # 低饱和度：黑色
-        if s < self.color_s_min:
+        if mean_val[1] < self.color_s_min:
             return "Black"
 
         # # 低饱和度：灰色/白色，无法判断颜色
@@ -1321,17 +1331,17 @@ class CircleTargetDetector:
 
         # 红色判断（跨越 0 度）
         h_low, h_high, h_low2, h_high2 = self.color_h_ranges["Red"]
-        if (h_low <= h < h_high) or (h_low2 <= h <= h_high2):
+        if (h_low <= mean_val[0] < h_high) or (h_low2 <= mean_val[0] <= h_high2):
             return "Red"
 
         # 绿色判断
         h_low, h_high, _, _ = self.color_h_ranges["Green"]
-        if h_low <= h < h_high:
+        if h_low <= mean_val[0] < h_high:
             return "Green"
 
         # 蓝色判断
         h_low, h_high, _, _ = self.color_h_ranges["Blue"]
-        if h_low <= h < h_high:
+        if h_low <= mean_val[0] < h_high:
             return "Blue"
 
         return None
@@ -1649,7 +1659,7 @@ class CircleTargetDetector:
         ordered = self._order_quad_points(corners)
 
         return ordered
-    def _get_quad_center_perspective(self, quad: np.ndarray) -> Optional[Tuple[float, float]]:
+    def _get_quad_center_perspective(self, quad: np.ndarray, is_ordered: bool = False) -> Optional[Tuple[float, float]]:
         """
         使用透视变换计算四边形的真实几何中心
 
@@ -1658,7 +1668,7 @@ class CircleTargetDetector:
 
         Args:
             quad: 四边形顶点，形状为 (4, 1, 2) 或 (4, 2)
-            来自 _find_quadrilaterals_from_contours 的 approx
+            is_ordered: 是否已按 TL,TR,BR,BL 顺序排列
 
         Returns:
             校正后的中心坐标 (x, y)，或 None（输入无效时）
@@ -1667,9 +1677,12 @@ class CircleTargetDetector:
         if quad is None or len(quad) != 4:
             return None
 
-        # 2. 排序四边形顶点（左上、右上、右下、左下）
-        ordered_quad = self._order_quad_points(quad)
-        src_points = ordered_quad.reshape(4, 2).astype(np.float32)
+        # 2. 排序四边形顶点
+        if is_ordered:
+            src_points = quad.reshape(4, 2).astype(np.float32)
+        else:
+            ordered_quad = self._order_quad_points(quad)
+            src_points = ordered_quad.reshape(4, 2).astype(np.float32)
 
         # 3. 计算四边形的平均边长作为基准尺寸
         edges = []
@@ -1702,7 +1715,7 @@ class CircleTargetDetector:
         ], dtype=np.float32)
 
         # 6. 计算透视变换矩阵
-        M = cv2.getPerspectiveTransform(src_points, dst_points)
+        # M = cv2.getPerspectiveTransform(src_points, dst_points)
         M_inv = cv2.getPerspectiveTransform(dst_points, src_points)
 
         # 7. 计算矩形中心（透视校正后的中心）
@@ -1909,13 +1922,13 @@ class CircleTargetDetector:
             return None
 
         # 按面积排序
-        largest_quads = sorted(quadrilaterals, key=cv2.contourArea, reverse=True)[:5]
+        largest_quads = sorted(quadrilaterals, key=lambda x: x[0], reverse=True)[:5]
 
         best_quad = None
         best_quad_center = None
 
-        for quad in largest_quads:
-            quad_center = self._get_quad_center_perspective(quad)
+        for area, quad in largest_quads:
+            quad_center = self._get_quad_center_perspective(quad, is_ordered=True)
             if quad_center is not None and best_quad is None:
                 best_quad = quad
                 best_quad_center = quad_center

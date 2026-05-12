@@ -204,6 +204,7 @@ class CircleTargetProcessor(Processor):
         pixel_error_y = target_y - center_y
 
         # 归一化到 [-100, 100]
+        #TODO 有空尝试把int改成float，看看能不能提高精度
         percent_error_x = int((pixel_error_x * 200) / self._frame_width)
         percent_error_y = int((pixel_error_y * 200) / self._frame_height)
 

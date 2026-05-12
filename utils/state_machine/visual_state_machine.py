@@ -33,10 +33,21 @@ class VisualContext:
     # === 自定义数据 ===
     custom: Dict[str, Any] = field(default_factory=dict)
 
+    percent_error_x: int = 0
+    percent_error_y: int = 0
+    target_distance_mm: float = 0.0
+    is_quad_detected: bool = False
+    is_uv_spot_detected: bool = False
+
     def reset_stats(self):
         """重置统计"""
         self.consecutive_detected_frames = 0
         self.consecutive_lost_frames = 0
+        self.percent_error_x = 0
+        self.percent_error_y = 0
+        self.target_distance_mm = 0.0
+        self.is_quad_detected = False
+        self.is_uv_spot_detected = False
 
 
 # === 状态实现 ===
@@ -134,7 +145,7 @@ class VisualStateMachine(BaseStateMachine):
     - IDLE → SEARCH: START 事件
     - SEARCH → TRACKING: TARGET_FOUND 事件
     - SEARCH → FAIL: SEARCH_TIMEOUT 事件
-    - TRACKING → RECOVERY: TARGET_LOST 事件
+    - TRACKING → SEARCH: TARGET_LOST 事件
     - RECOVERY → TRACKING: TARGET_RECOVERED 事件
     - RECOVERY → SEARCH: RECOVERY_FAILED 事件
     - 任意活动状态 → IDLE: STOP 事件
