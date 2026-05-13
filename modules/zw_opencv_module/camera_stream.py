@@ -30,10 +30,10 @@ class CameraStream:
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         except: pass
         try:
-            self.cap.set(cv2.CAP_PROP_FPS, 60)
+            self.cap.set(cv2.CAP_PROP_FPS, 120)
         except: pass
         try:
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
         except: pass
         try:
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))

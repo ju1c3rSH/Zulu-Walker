@@ -68,6 +68,7 @@ class Camera:
         self.stream: Optional[CameraStream] = None
         self.task_manager = TaskManager()
         self._last_frame: Optional[np.ndarray] = None
+        self._last_results: Dict[str, VisionResult] = {}
         # 高斯模糊参数
         self.gaussian_blur_enabled = config.gaussian_blur_enabled
         self.gaussian_blur_kernel_size = config.gaussian_blur_kernel_size
@@ -193,7 +194,8 @@ class Camera:
         if frame is not None:
             self._last_frame = frame.copy()  # 保存干净副本，避免累积绘制问题
         elif self._last_frame is not None:
-            frame = self._last_frame
+            # 无新帧，跳过检测，复用上一次结果
+            return self._last_frame, self._last_results
         else:
             return None, {}
 
@@ -214,6 +216,8 @@ class Camera:
         result = self.task_manager.run_tasks_serial(frame, context=context)
         profiler.stop(self.get_task.__name__ + "_processing")
 
+        self._last_frame = result[0]  # 缓存带绘制的帧
+        self._last_results = result[1]
         return result
 
     def release(self):
