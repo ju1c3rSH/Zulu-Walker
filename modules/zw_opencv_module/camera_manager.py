@@ -48,7 +48,7 @@ class CameraConfig:
     gaussian_blur_enabled: bool = False
     gaussian_blur_kernel_size: int = 5
     gaussian_blur_sigma: float = 1.5
-    queue_size: int = 2
+    camera_stream_queue_size: int = 2
 
 
 @dataclass
@@ -90,7 +90,7 @@ class Camera:
     def _setup_stream(self, config: CameraConfig):
         try:
             self.stream = CameraStream(config.source, config.width, config.height,
-                                       queue_size=config.queue_size)
+                                       queue_size=config.camera_stream_queue_size)
         except Exception as e:
             if isinstance(config.source, int):
                 print(f"[Camera {self.camera_id}] Source {config.source} failed: {e}, searching fallback...")
@@ -99,7 +99,7 @@ class Camera:
                     fallback_idx = cameras[0].index
                     try:
                         self.stream = CameraStream(fallback_idx, config.width, config.height,
-                                                   queue_size=config.queue_size)
+                                                   queue_size=config.camera_stream_queue_size)
                         print(f"[Camera {self.camera_id}] Fallback to camera index {fallback_idx} succeeded")
                         self.config.source = fallback_idx
                         return
@@ -350,7 +350,7 @@ class CameraManager:
                 gaussian_blur_enabled=gaussian_blur.get("enabled", False),
                 gaussian_blur_kernel_size=gaussian_blur.get("kernel_size", 5),
                 gaussian_blur_sigma=gaussian_blur.get("sigma", 1.5),
-                queue_size=cam_data.get("queue_size", 2),
+                camera_stream_queue_size=cam_data.get("camera_stream_queue_size", 2),
             )
             self.add_camera(cam_id, cam_config)
 
