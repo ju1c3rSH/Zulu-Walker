@@ -68,10 +68,9 @@ def start():
 
 
 def loop():
-    """Module main loop (called by ModuleManager)"""
-    # CameraManager has its own processing thread, so we don't need to do much here
-    # This can be used for periodic status checks or other tasks
-    pass
+    """Module main loop (called by ModuleManager on main thread)"""
+    if _camera_manager:
+        _camera_manager.display_frame()
 
 
 def stop():

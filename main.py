@@ -85,7 +85,7 @@ class SystemConfig:
     
     WATCHDOG_TIMEOUT = 60
     
-    MAIN_LOOP_DELAY = 0.1
+    MAIN_LOOP_DELAY = 0.01
     AUTO_START_MODULES = [
         #'uart_test',
         'zw_opencv_module',

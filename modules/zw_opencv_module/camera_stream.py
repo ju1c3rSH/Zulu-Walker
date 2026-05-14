@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import time
 from queue import Queue
 from threading import Thread
 import numpy as np
@@ -14,7 +15,7 @@ class CameraStream:
     设置完捕获方式后，会开始设置相关摄像头参数，如分辨率、帧率、缓冲区大小和视频编码格式。最后，摄像头捕获线程会持续运行，直到调用`release`方法来停止线程并释放摄像头资源。
 
     """
-    def __init__(self, source=0, width=640, height=480):
+    def __init__(self, source=0, width=640, height=480, queue_size=2):
         try:
             self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
         except AttributeError:
@@ -39,8 +40,15 @@ class CameraStream:
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         except: pass
 
-        self.queue = Queue(maxsize=2)
+        self.queue = Queue(maxsize=queue_size)
         self.running = True
+
+        # 诊断计数器
+        self._cap_fps_count = 0
+        self._cap_fps_start = time.time()
+        self._cap_fps_actual = 0.0
+        self._frames_dropped = 0
+        self._frames_produced = 0
         self.thread = Thread(target=self._update, daemon=True)
         self.thread.start()
 
@@ -57,11 +65,21 @@ class CameraStream:
 
         while self.running:
             ret, frame = self.cap.read()
-            #print(f"CameraStream: Read frame - ret={ret}, frame_shape={frame.shape if ret else 'N/A'}")
             if not ret:
                 print("Can't receive frame (stream end?). Exiting ...")
                 self.running = False
                 break
+
+            # 实际摄像头 FPS 诊断
+            self._cap_fps_count += 1
+            self._frames_produced += 1
+            elapsed = time.time() - self._cap_fps_start
+            if elapsed >= 2.0:
+                self._cap_fps_actual = self._cap_fps_count / elapsed
+                self._cap_fps_count = 0
+                self._cap_fps_start = time.time()
+                print(f"[CameraStream] FPS: {self._cap_fps_actual:.1f}, "
+                      f"queue: {self.queue.qsize()}, dropped: {self._frames_dropped}")
 
             """
             这里使用非阻塞式队列来更新每一帧的数据
@@ -70,6 +88,7 @@ class CameraStream:
             if self.queue.full():
                 try:
                     self.queue.get_nowait()
+                    self._frames_dropped += 1
                 except:
                     pass
 

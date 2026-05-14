@@ -101,16 +101,16 @@ class TaskManager:
             self.result_callbacks.remove(callback)
 
     def run_tasks_serial(
-        self, frame: np.ndarray, context: dict = None
+        self, frame: np.ndarray, all_results: dict = None
     ) -> Tuple[np.ndarray, Dict[str, VisionResult]]:
         """
         串行执行所有启用的Task
 
-        前一任务的结果会传入context供后续任务使用
+        前一任务的结果可以传入一个可被包装的all_results变量供后续任务使用，虽然不传也没什么影响
 
         Args:
             frame: 输入图像帧
-            context: 上下文，可包含 'fps'、'focal_calculator' 等
+            all_results: 所有任务的结果，可包含 'fps'、'focal_calculator' 等
 
         Returns:
             Tuple[np.ndarray, Dict[str, VisionResult]]: 处理后的帧和所有结果
@@ -118,8 +118,8 @@ class TaskManager:
         if frame is None:
             return None, {}
 
-        if context is None:
-            context = {}
+        if all_results is None:
+            all_results = {}
 
         processed_frame = frame  # camera_manager 已保存干净副本
 
@@ -128,10 +128,10 @@ class TaskManager:
                 # 计时：任务处理
                 timer_name = f"task_{task.name}_process"
                 profiler.start(timer_name)
-                result = task.execute(processed_frame, context)
+                result = task.execute(processed_frame, all_results)
                 profiler.stop(timer_name)
 
-                context[task.name] = result
+                all_results[task.name] = result
 
                 # 在帧上绘制结果
                 if result is not None and self.draw_enabled:
@@ -139,7 +139,7 @@ class TaskManager:
                     profiler.start(draw_timer_name)
                     processed_frame = task.processor.draw_result(processed_frame, result)
                     profiler.stop(draw_timer_name)
-
+                #TODO 这种写法可能不适合串行任务
                 # 触发回调
                 for callback in self.result_callbacks:
                     try:
@@ -147,7 +147,7 @@ class TaskManager:
                     except Exception as e:
                         print(f"Error in result callback: {e}")
 
-        return processed_frame, context
+        return processed_frame, all_results
 
     def get_all_results(self) -> Dict[str, Optional[VisionResult]]:
         """获取所有任务的最后结果"""

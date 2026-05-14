@@ -89,7 +89,8 @@ class TrackingState(State):
 
     def on_enter(self, context: VisualContext, from_state: str) -> None:
         print("[VisualStateMachine] Enter TRACKING")
-        context.reset_stats()
+        context.consecutive_detected_frames = 0
+        # 不重置 consecutive_lost_frames，避免因残留计数立即退出 TRACKING
 
     def on_execute(self, context: VisualContext) -> Optional[str]:
         return None  # 等待外部事件
