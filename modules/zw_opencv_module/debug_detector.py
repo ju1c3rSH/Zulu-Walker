@@ -109,12 +109,21 @@ class DebugDetector:
         except ValueError:
             pass
 
-    def _on_uv_params_change(self, uv_ranges: list, uv_min_area: int):
+    def _on_uv_params_change(self, uv_ranges: list, uv_min_area: int, all_params: dict = None):
         """UV 参数变化回调"""
         # 更新检测器的 UV 颜色范围
         self.detector.color_ranges["UV"] = uv_ranges
         # 更新 uv_min_area 参数
         self.detector.uv_min_area = uv_min_area
+        # 更新自适应参数
+        if all_params:
+            self.detector.uv_adaptive_enabled = bool(int(all_params.get("uv_adaptive_enabled", 0)))
+            self.detector.uv_v_percentile = int(all_params.get("uv_v_percentile", 95))
+            self.detector.uv_v_floor = int(all_params.get("uv_v_floor", 25))
+            self.detector.uv_s_min = int(all_params.get("uv_s_min", 20))
+            h_low = int(all_params.get("uv_h_low", 130))
+            h_high = int(all_params.get("uv_h_high", 160))
+            self.detector.uv_h_range = (h_low, h_high)
 
     def _on_cam_params_change(self, params: dict):
         """摄像头参数变化回调（参数已由 CameraDebugWindow 直接应用到 cap）"""

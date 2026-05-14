@@ -75,6 +75,13 @@ class UVDebugWindow:
             "uv_v_max2": 255,
             # UV 最小面积阈值
             "uv_min_area": 2,
+            # 自适应 UV 检测
+            "uv_adaptive_enabled": 0,
+            "uv_v_percentile": 95,
+            "uv_v_floor": 25,
+            "uv_s_min": 20,
+            "uv_h_low": 130,
+            "uv_h_high": 160,
         }
 
         # 从 YAML 加载
@@ -172,19 +179,39 @@ class UVDebugWindow:
                            self.params["uv_min_area"], 100,
                            lambda val: self._on_trackbar("uv_min_area", val))
 
+        # 自适应 UV 检测控制
+        cv2.createTrackbar("Adaptive", self.window_name,
+                           self.params["uv_adaptive_enabled"], 1,
+                           lambda val: self._on_trackbar("uv_adaptive_enabled", val))
+        cv2.createTrackbar("V Percentile", self.window_name,
+                           self.params["uv_v_percentile"], 99,
+                           lambda val: self._on_trackbar("uv_v_percentile", val))
+        cv2.createTrackbar("V Floor", self.window_name,
+                           self.params["uv_v_floor"], 100,
+                           lambda val: self._on_trackbar("uv_v_floor", val))
+        cv2.createTrackbar("S Min", self.window_name,
+                           self.params["uv_s_min"], 50,
+                           lambda val: self._on_trackbar("uv_s_min", val))
+        cv2.createTrackbar("H Low", self.window_name,
+                           self.params["uv_h_low"], 180,
+                           lambda val: self._on_trackbar("uv_h_low", val))
+        cv2.createTrackbar("H High", self.window_name,
+                           self.params["uv_h_high"], 180,
+                           lambda val: self._on_trackbar("uv_h_high", val))
+
         self._window_created = True
 
         # 初始化时触发一次回调
         if self.on_params_change:
-            self.on_params_change(self.get_color_ranges(), self.params["uv_min_area"])
+            self.on_params_change(self.get_color_ranges(), self.params["uv_min_area"], self.params)
 
     def _on_trackbar(self, name: str, value: int):
         """滑动条回调"""
         self.params[name] = value
 
-        # 触发回调（传递颜色范围和最小面积）
+        # 触发回调（传递颜色范围、最小面积和全部参数）
         if self.on_params_change:
-            self.on_params_change(self.get_color_ranges(), self.params["uv_min_area"])
+            self.on_params_change(self.get_color_ranges(), self.params["uv_min_area"], self.params)
 
         # 保存配置
         self._save_config()
@@ -234,7 +261,18 @@ class UVDebugWindow:
 
         # 计算 UV mask
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        uv_ranges = self.get_color_ranges()
+
+        if self.params["uv_adaptive_enabled"]:
+            # 自适应模式：用 V 百分位计算阈值
+            v_channel = hsv[:, :, 2]
+            v_min = max(int(np.percentile(v_channel, self.params["uv_v_percentile"])),
+                        self.params["uv_v_floor"])
+            h_lo = self.params["uv_h_low"]
+            h_hi = self.params["uv_h_high"]
+            s_min = self.params["uv_s_min"]
+            uv_ranges = [(np.array([h_lo, s_min, v_min]), np.array([h_hi, 255, 255]))]
+        else:
+            uv_ranges = self.get_color_ranges()
 
         mask = None
         for lower, upper in uv_ranges:
@@ -244,22 +282,27 @@ class UVDebugWindow:
         if mask is None:
             mask = np.zeros(frame.shape[:2], dtype=np.uint8)
 
-        # 显示 UV mask（彩色叠加）
-        preview = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-
-        # 在 mask 上绘制检测到的 UV 点轮廓
+        # 找到有效轮廓
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area >= self.params["uv_min_area"]:
-                # 绘制轮廓（绿色）
-                cv2.drawContours(preview, [cnt], -1, (0, 255, 0), 2)
-                # 计算并绘制质心（红色）
-                M = cv2.moments(cnt)
-                if M['m00'] > 0:
-                    cx = int(M['m10'] / M['m00'])
-                    cy = int(M['m01'] / M['m00'])
-                    cv2.circle(preview, (cx, cy), 5, (0, 0, 255), -1)
+        valid_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= self.params["uv_min_area"]]
+
+        # 左侧：原图 + 紫色叠加
+        preview_left = frame.copy()
+        purple_overlay = np.zeros_like(frame)
+        purple_overlay[mask > 0] = (180, 50, 180)  # BGR 紫色
+        cv2.addWeighted(purple_overlay, 0.5, preview_left, 0.5, 0, preview_left)
+
+        # 右侧：二值化 mask（黑底白色）+ 质心
+        preview_right = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        for cnt in valid_contours:
+            M = cv2.moments(cnt)
+            if M['m00'] > 0:
+                cx = int(M['m10'] / M['m00'])
+                cy = int(M['m01'] / M['m00'])
+                cv2.circle(preview_right, (cx, cy), 5, (0, 0, 255), -1)
+
+        # 左右拼接
+        preview = np.hstack([preview_left, preview_right])
 
         # 绘制参数信息
         self._draw_params_info(preview)
@@ -290,6 +333,24 @@ class UVDebugWindow:
         cv2.putText(frame,
                     f"Min Area: {self.params['uv_min_area']}",
                     (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+        y += 15
+
+        # 自适应模式信息
+        adaptive = self.params["uv_adaptive_enabled"]
+        mode_str = "ADAPTIVE" if adaptive else "STATIC"
+        color = (0, 255, 255) if adaptive else (200, 200, 200)
+        cv2.putText(frame,
+                    f"Mode: {mode_str}",
+                    (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+        if adaptive:
+            y += 15
+            cv2.putText(frame,
+                        f"V%={self.params['uv_v_percentile']} Vf={self.params['uv_v_floor']} "
+                        f"S={self.params['uv_s_min']} H=[{self.params['uv_h_low']}-{self.params['uv_h_high']}]",
+                        (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
+            y += 12
+            cv2.putText(frame, "R1/R2 sliders inactive",
+                        (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (100, 100, 100), 1)
 
     def get_color_ranges(self) -> list:
         """
