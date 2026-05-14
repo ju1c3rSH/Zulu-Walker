@@ -8,13 +8,13 @@ import cv2
 import sys
 
 
-
 class CameraStream:
     """
     摄像头初始化的时候，会先检测是否支持V4L2接口（Linux专用），如果支持则使用V4L2接口进行视频捕获，这通常会提供更好的性能和更低的延迟。如果不支持V4L2接口，则回退到默认的视频捕获方式。摄像头参数设置部分也进行了错误处理，以确保在某些参数无法设置时不会导致程序崩溃。帧的读取和更新通过一个独立的线程进行，使用队列来存储最新的帧，确保读取时不会阻塞。
     设置完捕获方式后，会开始设置相关摄像头参数，如分辨率、帧率、缓冲区大小和视频编码格式。最后，摄像头捕获线程会持续运行，直到调用`release`方法来停止线程并释放摄像头资源。
 
     """
+
     def __init__(self, source=0, width=640, height=480, queue_size=2):
         try:
             self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
@@ -26,19 +26,24 @@ class CameraStream:
 
         try:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        except: pass
+        except:
+            pass
         try:
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        except: pass
+        except:
+            pass
         try:
             self.cap.set(cv2.CAP_PROP_FPS, 120)
-        except: pass
+        except:
+            pass
         try:
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
-        except: pass
+        except:
+            pass
         try:
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        except: pass
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        except:
+            pass
 
         self.queue = Queue(maxsize=queue_size)
         self.running = True
@@ -78,23 +83,28 @@ class CameraStream:
                 self._cap_fps_actual = self._cap_fps_count / elapsed
                 self._cap_fps_count = 0
                 self._cap_fps_start = time.time()
-                print(f"[CameraStream] FPS: {self._cap_fps_actual:.1f}, "
-                      f"queue: {self.queue.qsize()}, dropped: {self._frames_dropped}")
+                print(
+                    f"[CameraStream] FPS: {self._cap_fps_actual:.1f}, "
+                    f"queue: {self.queue.qsize()}, dropped: {self._frames_dropped}"
+                )
 
             """
             这里使用非阻塞式队列来更新每一帧的数据
             如果队列已满，则先尝试移除旧的帧以腾出空间，然后再将新的帧放入队列中。这种方式确保了读取最新帧时不会被旧帧阻塞，同时也避免了内存占用过多的问题。
-            """        
+            """
             if self.queue.full():
                 try:
                     self.queue.get_nowait()
                     self._frames_dropped += 1
-                except:
+                except Exception as e:
+                    print(f"Error dropping frame from queue: {e}")
                     pass
+
 
             try:
                 self.queue.put_nowait(frame)
-            except:
+            except Exception as e:
+                print(f"Error putting frame into queue: {e}")
                 pass
 
     def read_frame(self):
@@ -112,4 +122,5 @@ class CameraStream:
             self.thread.join(timeout=2.0)
         self.cap.release()
 
-#usage :camera = CameraStream(0)
+
+# usage :camera = CameraStream(0)

@@ -162,9 +162,16 @@ def load_uv_params(config_path: str = None) -> Dict[str, Any]:
         "uv_h_max2": 155,
         "uv_s_min2": 0,
         "uv_s_max2": 50,
-        "uv_v_min2": 236,
+        "uv_v_min2": 235,
         "uv_v_max2": 255,
         "uv_min_area": 2,
+        # 自适应 UV 检测
+        "uv_adaptive_enabled": 0,
+        "uv_v_percentile": 94,
+        "uv_v_floor": 12,
+        "uv_s_min": 20,
+        "uv_h_low": 121,
+        "uv_h_high": 165,
     }
 
     if not os.path.exists(config_path):
@@ -205,6 +212,20 @@ def apply_uv_params_to_detector(detector: CircleTargetDetector, uv_params: Dict[
     # 更新 UV 最小面积
     if "uv_min_area" in uv_params:
         detector.uv_min_area = int(uv_params["uv_min_area"])
+
+    # 自适应 UV 检测参数
+    if "uv_adaptive_enabled" in uv_params:
+        detector.uv_adaptive_enabled = bool(int(uv_params["uv_adaptive_enabled"]))
+    if "uv_v_percentile" in uv_params:
+        detector.uv_v_percentile = int(uv_params["uv_v_percentile"])
+    if "uv_v_floor" in uv_params:
+        detector.uv_v_floor = int(uv_params["uv_v_floor"])
+    if "uv_s_min" in uv_params:
+        detector.uv_s_min = int(uv_params["uv_s_min"])
+    if "uv_h_low" in uv_params:
+        detector.uv_h_range = (int(uv_params["uv_h_low"]), detector.uv_h_range[1])
+    if "uv_h_high" in uv_params:
+        detector.uv_h_range = (detector.uv_h_range[0], int(uv_params["uv_h_high"]))
 
 
 # ── 摄像头硬件参数 ──────────────────────────────────────────────
