@@ -13,7 +13,7 @@ from typing import Tuple
 
 # 目标实际尺寸 (mm)
 reference_size_dict = {
-    "quad": (290.0, 200.0, 245.0),  # mm (宽, 高, 平均)
+    "quad": (264.0, 177.0, 220.5),  # mm (宽, 高, 平均)
 }
 
 @dataclass
