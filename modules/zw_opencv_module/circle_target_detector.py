@@ -1718,72 +1718,37 @@ class CircleTargetDetector:
         return ordered
     def _get_quad_center_perspective(self, quad: np.ndarray, is_ordered: bool = False) -> Optional[Tuple[float, float]]:
         """
-        使用透视变换计算四边形的真实几何中心
+        使用对角线交点计算四边形的真实几何中心
 
-        当四边形因透视变形变成梯形时，简单平均中心不是真正的几何中心。
-        本方法通过透视变换将四边形校正为矩形，计算中心后再投影回原图。
+        矩形经透视投影后的四边形，两条对角线的交点即为原矩形中心的精确投影。
+        这是射影几何下的精确解，不依赖目标矩形尺寸或长宽比配置。
 
         Args:
             quad: 四边形顶点，形状为 (4, 1, 2) 或 (4, 2)
-            is_ordered: 是否已按 TL,TR,BR,BL 顺序排列
+            is_ordered: 是否已按 TL,TR,BR,BL 顺序排列（不影响结果，保留参数兼容性）
 
         Returns:
-            校正后的中心坐标 (x, y)，或 None（输入无效时）
+            中心坐标 (x, y)，或 None（输入无效时）
         """
-        # 1. 验证输入
         if quad is None or len(quad) != 4:
             return None
 
-        # 2. 排序四边形顶点
-        if is_ordered:
-            src_points = quad.reshape(4, 2).astype(np.float32)
-        else:
-            ordered_quad = self._order_quad_points(quad)
-            src_points = ordered_quad.reshape(4, 2).astype(np.float32)
+        pts = quad.reshape(4, 2).astype(np.float64)
+        p0, p1, p2, p3 = pts[0], pts[1], pts[2], pts[3]
 
-        # 3. 计算四边形的平均边长作为基准尺寸
-        edges = []
-        for i in range(4):
-            p1 = src_points[i]
-            p2 = src_points[(i + 1) % 4]
-            edges.append(np.linalg.norm(p2 - p1))
+        # 对角线: p0→p2 和 p1→p3
+        x1, y1 = p0; x2, y2 = p2
+        x3, y3 = p1; x4, y4 = p3
 
-        avg_edge = np.mean(edges)
+        denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+        if abs(denom) < 1e-10:
+            return None  # 对角线平行（退化四边形）
 
-        # 4. 根据长宽比计算目标矩形的尺寸
-        # 使用配置的长宽比，默认为 1.0（正方形）
-        aspect_ratio = self.quad_aspect_ratio
-        if aspect_ratio >= 1.0:
-            target_width = int(avg_edge)
-            target_height = int(avg_edge / aspect_ratio)
-        else:
-            target_width = int(avg_edge * aspect_ratio)
-            target_height = int(avg_edge)
+        t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+        cx = x1 + t * (x2 - x1)
+        cy = y1 + t * (y2 - y1)
 
-        target_width = max(50, target_width)
-        target_height = max(50, target_height)
-
-        # 5. 定义目标矩形顶点（左上、右上、右下、左下）
-        dst_points = np.array([
-            [0, 0],
-            [target_width, 0],
-            [target_width, target_height],
-            [0, target_height]
-        ], dtype=np.float32)
-
-        # 6. 计算透视变换矩阵
-        # M = cv2.getPerspectiveTransform(src_points, dst_points)
-        M_inv = cv2.getPerspectiveTransform(dst_points, src_points)
-
-        # 7. 计算矩形中心（透视校正后的中心）
-        corrected_center = np.array([[target_width / 2, target_height / 2]], dtype=np.float32)
-
-        # 8. 将中心投影回原图坐标
-        src_center = cv2.perspectiveTransform(
-            corrected_center.reshape(1, 1, 2), M_inv
-        )[0, 0]
-
-        return (float(src_center[0]), float(src_center[1]))
+        return (float(cx), float(cy))
     def _detect_circle_in_quad(self, gray: np.ndarray, quad: np.ndarray) -> Optional[Tuple[Tuple[float, float], float]]:
         """
         在四边形内使用透视变换和霍夫圆检测
