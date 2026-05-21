@@ -204,8 +204,8 @@ class CircleTargetProcessor(Processor):
         pixel_error_y = target_y - center_y
 
         # 归一化到 [-5000, 5000]，精度 ~0.06px (640x480)
-        percent_error_x = int((pixel_error_x * 10000) / self._frame_width)
-        percent_error_y = int((pixel_error_y * 10000) / self._frame_height)
+        percent_error_x = int((pixel_error_x * 1000) / self._frame_width)
+        percent_error_y = int((pixel_error_y * 1000) / self._frame_height)
 
         return percent_error_x, percent_error_y
 

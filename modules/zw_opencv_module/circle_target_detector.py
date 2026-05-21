@@ -133,9 +133,9 @@ class CircleTargetDetector:
         self.uv_max_lost_frames = 10
 
         # 亮度主导自适应 UV 检测
-        self.uv_adaptive_enabled = False
+        self.uv_adaptive_enabled = True
         self.uv_v_percentile = 95
-        self.uv_v_floor = 25
+        self.uv_v_floor = 80
         self.uv_s_min = 20
         self.uv_h_range = (130, 160)
         # EMA 时序平滑
