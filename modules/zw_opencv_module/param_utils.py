@@ -44,7 +44,7 @@ def get_default_params() -> Dict[str, Dict[str, Any]]:
             "blur_sigma": 38.0,
             "min_area_threshold_quad": 1680,
             "quad_aspect_ratio": 1.51,
-            "uv_min_area": 5,
+            "uv_min_area": 0,
             "enable_color_filter": True,
         },
         "contour_ellipse": {
@@ -164,7 +164,7 @@ def load_uv_params(config_path: str = None) -> Dict[str, Any]:
         "uv_s_max2": 50,
         "uv_v_min2": 235,
         "uv_v_max2": 255,
-        "uv_min_area": 2,
+        "uv_min_area": 0,
         # 自适应 UV 检测
         "uv_adaptive_enabled": 0,
         "uv_v_percentile": 94,

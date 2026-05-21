@@ -11,7 +11,7 @@ from utils.log_util import UARTModuleLogger
 u = UARTModuleLogger("SerialController")
 
 class UartTest:
-    def __init__(self, port: str = "/dev/ttyS4", baudrate: int = 115200):
+    def __init__(self, port: str = "/dev/ttyS4", baudrate: int = 921600):
         self.port = port
         self.baudrate = baudrate
         self.serial = SerialController(port, baudrate)
@@ -222,7 +222,7 @@ uart_test_instance = None
 def init():
     """模块初始化函数（供ModuleManager调用）"""
     global uart_test_instance
-    uart_test_instance = UartTest(port="/dev/ttyS4", baudrate=115200)
+    uart_test_instance = UartTest(port="/dev/ttyS4", baudrate=921600)
     uart_test_instance.init()
 
 def start():
