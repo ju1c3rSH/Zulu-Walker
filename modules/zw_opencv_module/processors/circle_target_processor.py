@@ -185,7 +185,7 @@ class CircleTargetProcessor(Processor):
             uv_center: UV点坐标，如果提供则计算UV点与四边形中心的偏差
 
         Returns:
-            (percent_error_x, percent_error_y): 归一化到 [-100, 100] 的坐标偏差
+            (percent_error_x, percent_error_y): 归一化到 [-5000, 5000] 的坐标偏差
         """
         # 目标中心（四边形中心）
         target_x, target_y = target.center_coordinates
@@ -203,10 +203,9 @@ class CircleTargetProcessor(Processor):
         pixel_error_x = target_x - center_x
         pixel_error_y = target_y - center_y
 
-        # 归一化到 [-100, 100]
-        #TODO 有空尝试把int改成float，看看能不能提高精度
-        percent_error_x = int((pixel_error_x * 200) / self._frame_width)
-        percent_error_y = int((pixel_error_y * 200) / self._frame_height)
+        # 归一化到 [-5000, 5000]，精度 ~0.06px (640x480)
+        percent_error_x = int((pixel_error_x * 10000) / self._frame_width)
+        percent_error_y = int((pixel_error_y * 10000) / self._frame_height)
 
         return percent_error_x, percent_error_y
 

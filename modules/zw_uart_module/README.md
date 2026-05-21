@@ -48,7 +48,7 @@ send_error(0, -3)  # X direction error, value -3
 ```python
 from zw_uart_module import STM32UartInterface
 
-with STM32UartInterface("/dev/ttyS4", baudrate=115200) as uart:
+with STM32UartInterface("/dev/ttyS4", baudrate=921600) as uart:
     uart.send_error(0, -3)  # Send error frame
 
     # Query state in main loop

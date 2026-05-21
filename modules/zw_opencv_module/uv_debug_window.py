@@ -74,9 +74,9 @@ class UVDebugWindow:
             "uv_v_min2": 236,
             "uv_v_max2": 255,
             # UV 最小面积阈值
-            "uv_min_area": 2,
+            "uv_min_area": 0,
             # 自适应 UV 检测
-            "uv_adaptive_enabled": 0,
+            "uv_adaptive_enabled": 1,
             "uv_v_percentile": 95,
             "uv_v_floor": 25,
             "uv_s_min": 20,

@@ -57,7 +57,7 @@ METHOD_PARAMS: Dict[str, List[ParamDef]] = {
         # 四边形面积阈值
         ParamDef("min_area_threshold_quad", "Min Quad Area", 1680, 10, 2000, 10),
         # UV 最小面积阈值
-        ParamDef("uv_min_area", "UV Min Area", 5, 1, 100, 1),
+        ParamDef("uv_min_area", "UV Min Area", 0, 1, 100, 1),
         # 颜色过滤开关
         ParamDef("enable_color_filter", "Color Filter", 1, 0, 1, 1),  # 0=off, 1=on
     ],

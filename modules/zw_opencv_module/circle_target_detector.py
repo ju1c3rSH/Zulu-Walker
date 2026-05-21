@@ -117,7 +117,7 @@ class CircleTargetDetector:
         self.uv_spot_center = None  # UV点中心坐标
 
         # UV 点最小面积阈值
-        self.uv_min_area = 5
+        self.uv_min_area = 0
 
         # 颜色过滤开关（可选功能）
         self.enable_color_filter = True

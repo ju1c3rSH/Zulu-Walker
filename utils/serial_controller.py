@@ -11,7 +11,7 @@ from .log_util import UARTModuleLogger
 
 
 class SerialController:
-    def __init__(self,  port: str = "/dev/ttyS4", baudrate: int = 115200):
+    def __init__(self,  port: str = "/dev/ttyS4", baudrate: int = 921600):
         """
         @Brief: 初始化串口控制器
 
