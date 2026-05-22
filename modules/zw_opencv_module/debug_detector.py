@@ -119,7 +119,7 @@ class DebugDetector:
         if all_params:
             self.detector.uv_adaptive_enabled = bool(int(all_params.get("uv_adaptive_enabled", 0)))
             self.detector.uv_v_percentile = int(all_params.get("uv_v_percentile", 95))
-            self.detector.uv_v_floor = int(all_params.get("uv_v_floor", 80))
+            self.detector.uv_v_floor = int(all_params.get("uv_v_floor", 90))
             self.detector.uv_s_min = int(all_params.get("uv_s_min", 20))
             h_low = int(all_params.get("uv_h_low", 130))
             h_high = int(all_params.get("uv_h_high", 160))
