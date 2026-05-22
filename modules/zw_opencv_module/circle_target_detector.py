@@ -1867,13 +1867,16 @@ class CircleTargetDetector:
         return dist <= max_offset
 
     def _update_transition_matrix(self, kf, dt):
-        """根据实际 dt 更新恒速模型的转移矩阵"""
+        """根据实际 dt 更新恒速模型的转移矩阵和过程噪声"""
         kf.transitionMatrix = np.array([
             [1, 0, dt, 0],
             [0, 1, 0, dt],
             [0, 0, 1, 0],
             [0, 0, 0, 1],
         ], dtype=np.float32)
+        q = float(kf.processNoiseCov[0, 0])
+        kf.processNoiseCov = np.diag(np.array(
+            [q, q, q * dt, q * dt], dtype=np.float32))
 
     def _kalman_update(self, measurement: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
         """
