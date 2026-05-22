@@ -1,4 +1,5 @@
 from typing import Optional, Tuple, List
+import time
 
 from .circle import CircleTargets, CircleTargetItem, ShapeType
 import cv2
@@ -45,10 +46,13 @@ class CircleTargetDetector:
         self.kf.processNoiseCov = np.eye(4, dtype=np.float32) * 0.1
         self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 3.0
         self.kf.errorCovPost = np.eye(4, dtype=np.float32)
+        self._kf_q_base = 0.3
+        self._kf_q_vel_base = 0.3
 
         self.tracking_initialized = False
         self.lost_frames = 0  # 连续丢失帧计数
         self.max_lost_frames = 10  # 最大允许丢失帧数，超过则重置Kalman滤波器
+        self._last_predict_time = None
         
         self.color_ranges = {
             "Red": [
@@ -128,22 +132,29 @@ class CircleTargetDetector:
         self.uv_kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
         self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.5
         self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1.0
+        self._uv_q_base = 0.5
+        self._uv_q_vel_base = 0.5
         self.uv_tracking_initialized = False
         self.uv_lost_frames = 0
         self.uv_max_lost_frames = 10
+        self._uv_last_predict_time = None
 
         # 亮度主导自适应 UV 检测
         self.uv_adaptive_enabled = True
         self.uv_v_percentile = 95
         self.uv_v_floor = 90
-        self.uv_s_min = 20
+        self.uv_s_min = 80
+        self.uv_s_gate = 80   # 百分位采样时的饱和度门限，排除白色/低饱和度像素
         self.uv_h_range = (130, 160)
+        # 亮度对比验证
+        self.uv_contrast_ratio_min = 1.15  # UV 点中心与环周的最小亮度比
+        self.uv_contrast_dilate = 30       # 环周膨胀像素数
         # EMA 时序平滑
         self._ema_v_min = None
         self._ema_alpha = 0.6
         # 丢失恢复
         self._uv_miss_counter = 0
-        self._uv_miss_threshold = 5
+        self._uv_miss_threshold = 10
 
     def set_detect_method(self, method: DetectMethod):
         """设置检测方法"""
@@ -1024,14 +1035,21 @@ class CircleTargetDetector:
 
     def _compute_v_primary_ranges(self, roi_hsv: np.ndarray, roi_mask: np.ndarray) -> list:
         """基于亮度百分位的自适应 UV 阈值计算，仅调整 V 下限，S/H 固定宽松范围"""
-        v_channel = roi_hsv[:, :, 2][roi_mask > 0]
-        if v_channel.size == 0:
+        # 只从有饱和度的像素采样 V（排除白色/灰色像素）
+        s_channel = roi_hsv[:, :, 1]
+        v_channel = roi_hsv[:, :, 2]
+        sat_gate = (roi_mask > 0) & (s_channel >= self.uv_s_gate)
+        v_sampled = v_channel[sat_gate]
+
+        if v_sampled.size == 0:
+            v_sampled = v_channel[roi_mask > 0]
+        if v_sampled.size == 0:
             h_lo, h_hi = self.uv_h_range
             return [(np.array([h_lo, self.uv_s_min, self.uv_v_floor]),
                      np.array([h_hi, 255, 255]))]
 
         # 1. 百分位计算当前帧 V 下限
-        raw_v_min = int(np.percentile(v_channel, self.uv_v_percentile))
+        raw_v_min = int(np.percentile(v_sampled, self.uv_v_percentile))
         raw_v_min = max(raw_v_min, self.uv_v_floor)
 
         # 2. EMA 平滑
@@ -1042,11 +1060,13 @@ class CircleTargetDetector:
                                (1 - self._ema_alpha) * self._ema_v_min)
         smoothed_v_min = int(self._ema_v_min)
 
-        # 3. 丢失恢复：连续丢失过多帧时回退到宽松范围
+        # 3. 丢失恢复：连续丢失过多帧时重置 EMA，使用 floor 作为阈值
         if self._uv_miss_counter >= self._uv_miss_threshold:
             self._ema_v_min = None
             self._uv_miss_counter = 0
-            return [(np.array([130, 20, 25]), np.array([160, 255, 255]))]
+            h_lo, h_hi = self.uv_h_range
+            return [(np.array([h_lo, self.uv_s_min, self.uv_v_floor]),
+                     np.array([h_hi, 255, 255]))]
 
         # 4. 构建单个范围
         h_lo, h_hi = self.uv_h_range
@@ -1136,6 +1156,24 @@ class CircleTargetDetector:
                 if self.uv_adaptive_enabled:
                     self._uv_miss_counter += 1
                 return None
+            # 亮度对比验证：UV 点应比周围明显更亮
+            if self.uv_adaptive_enabled:
+                inner_mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.drawContours(inner_mask, [largest_contour], -1, 255, -1)
+                kernel = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE,
+                    (self.uv_contrast_dilate * 2 + 1, self.uv_contrast_dilate * 2 + 1))
+                outer_mask = cv2.dilate(inner_mask, kernel)
+                annulus_mask = cv2.subtract(outer_mask, inner_mask)
+                if cv2.countNonZero(annulus_mask) >= 10:
+                    roi_v = roi_hsv[:, :, 2]
+                    mean_inner = cv2.mean(roi_v, mask=inner_mask)[0]
+                    mean_annulus = cv2.mean(roi_v, mask=annulus_mask)[0]
+                    if mean_annulus < 1:
+                        mean_annulus = 1.0
+                    if mean_inner / mean_annulus < self.uv_contrast_ratio_min:
+                        self._uv_miss_counter += 1
+                        return None
             # 使用亮度加权质心
             gray_roi = gray[y:y+h, x:x+w] if gray is not None else cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
             masked_gray = cv2.bitwise_and(gray_roi, gray_roi, mask=contour_mask)
@@ -1184,6 +1222,13 @@ class CircleTargetDetector:
                     return None
 
         if self.uv_tracking_initialized:
+            now = time.time()
+            if self._uv_last_predict_time is not None:
+                dt = max(0.001, min(0.2, now - self._uv_last_predict_time))
+            else:
+                dt = 1.0 / 90.0
+            self._uv_last_predict_time = now
+            self._update_transition_matrix(self.uv_kalman, dt, self._uv_q_base, self._uv_q_vel_base)
             prediction = self.uv_kalman.predict()
             return (int(prediction[0]), int(prediction[1]))
 
@@ -1856,6 +1901,19 @@ class CircleTargetDetector:
                       (quad_center[1] - circle_center[1])**2)
         return dist <= max_offset
 
+    def _update_transition_matrix(self, kf, dt, q_base, q_vel_base):
+        """根据实际 dt 更新恒速模型的转移矩阵和过程噪声"""
+        kf.transitionMatrix = np.array([
+            [1, 0, dt, 0],
+            [0, 1, 0, dt],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+        ], dtype=np.float32)
+        dt2 = dt * dt
+        kf.processNoiseCov = np.diag(np.array(
+            [q_base / dt2, q_base / dt2, q_vel_base * dt, q_vel_base * dt],
+            dtype=np.float32))
+
     def _kalman_update(self, measurement: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
         """
         使用卡尔曼滤波更新位置
@@ -1894,6 +1952,13 @@ class CircleTargetDetector:
 
         # 预测
         if self.tracking_initialized:
+            now = time.time()
+            if self._last_predict_time is not None:
+                dt = max(0.001, min(0.2, now - self._last_predict_time))
+            else:
+                dt = 1.0 / 90.0
+            self._last_predict_time = now
+            self._update_transition_matrix(self.kf, dt, self._kf_q_base, self._kf_q_vel_base)
             prediction = self.kf.predict()
             return (float(prediction[0, 0]), float(prediction[1, 0]))
 
