@@ -168,7 +168,7 @@ def load_uv_params(config_path: str = None) -> Dict[str, Any]:
         # 自适应 UV 检测
         "uv_adaptive_enabled": 1,
         "uv_v_percentile": 94,
-        "uv_v_floor": 80,
+        "uv_v_floor": 90,
         "uv_s_min": 20,
         "uv_h_low": 121,
         "uv_h_high": 165,

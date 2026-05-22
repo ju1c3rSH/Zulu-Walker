@@ -78,7 +78,7 @@ class UVDebugWindow:
             # 自适应 UV 检测
             "uv_adaptive_enabled": 1,
             "uv_v_percentile": 95,
-            "uv_v_floor": 80,
+            "uv_v_floor": 90,
             "uv_s_min": 20,
             "uv_h_low": 130,
             "uv_h_high": 160,
