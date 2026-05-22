@@ -79,9 +79,12 @@ class UVDebugWindow:
             "uv_adaptive_enabled": 1,
             "uv_v_percentile": 95,
             "uv_v_floor": 90,
-            "uv_s_min": 20,
+            "uv_s_min": 80,
             "uv_h_low": 130,
             "uv_h_high": 160,
+            "uv_s_gate": 80,
+            "uv_contrast_ratio_min": 115,  # x100 存储，实际 1.15
+            "uv_contrast_dilate": 30,
         }
 
         # 从 YAML 加载
@@ -198,6 +201,15 @@ class UVDebugWindow:
         cv2.createTrackbar("H High", self.window_name,
                            self.params["uv_h_high"], 180,
                            lambda val: self._on_trackbar("uv_h_high", val))
+        cv2.createTrackbar("S Gate", self.window_name,
+                           self.params["uv_s_gate"], 255,
+                           lambda val: self._on_trackbar("uv_s_gate", val))
+        cv2.createTrackbar("ContrastR", self.window_name,
+                           self.params["uv_contrast_ratio_min"], 300,
+                           lambda val: self._on_trackbar("uv_contrast_ratio_min", val))
+        cv2.createTrackbar("CtrDilate", self.window_name,
+                           self.params["uv_contrast_dilate"], 50,
+                           lambda val: self._on_trackbar("uv_contrast_dilate", val))
 
         self._window_created = True
 
@@ -347,6 +359,12 @@ class UVDebugWindow:
             cv2.putText(frame,
                         f"V%={self.params['uv_v_percentile']} Vf={self.params['uv_v_floor']} "
                         f"S={self.params['uv_s_min']} H=[{self.params['uv_h_low']}-{self.params['uv_h_high']}]",
+                        (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
+            y += 12
+            cr = self.params['uv_contrast_ratio_min'] / 100.0
+            cv2.putText(frame,
+                        f"S_gate={self.params['uv_s_gate']} CR={cr:.1f} "
+                        f"Dilate={self.params['uv_contrast_dilate']}",
                         (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
             y += 12
             cv2.putText(frame, "R1/R2 sliders inactive",

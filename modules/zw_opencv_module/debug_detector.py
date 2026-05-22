@@ -120,10 +120,13 @@ class DebugDetector:
             self.detector.uv_adaptive_enabled = bool(int(all_params.get("uv_adaptive_enabled", 0)))
             self.detector.uv_v_percentile = int(all_params.get("uv_v_percentile", 95))
             self.detector.uv_v_floor = int(all_params.get("uv_v_floor", 90))
-            self.detector.uv_s_min = int(all_params.get("uv_s_min", 20))
+            self.detector.uv_s_min = int(all_params.get("uv_s_min", 80))
             h_low = int(all_params.get("uv_h_low", 130))
             h_high = int(all_params.get("uv_h_high", 160))
             self.detector.uv_h_range = (h_low, h_high)
+            self.detector.uv_s_gate = int(all_params.get("uv_s_gate", 80))
+            self.detector.uv_contrast_ratio_min = int(all_params.get("uv_contrast_ratio_min", 115)) / 100.0
+            self.detector.uv_contrast_dilate = int(all_params.get("uv_contrast_dilate", 30))
 
     def _on_cam_params_change(self, params: dict):
         """摄像头参数变化回调（参数已由 CameraDebugWindow 直接应用到 cap）"""

@@ -139,14 +139,18 @@ class CircleTargetDetector:
         self.uv_adaptive_enabled = True
         self.uv_v_percentile = 95
         self.uv_v_floor = 90
-        self.uv_s_min = 20
+        self.uv_s_min = 80
+        self.uv_s_gate = 80   # 百分位采样时的饱和度门限，排除白色/低饱和度像素
         self.uv_h_range = (130, 160)
+        # 亮度对比验证
+        self.uv_contrast_ratio_min = 1.15  # UV 点中心与环周的最小亮度比
+        self.uv_contrast_dilate = 30       # 环周膨胀像素数
         # EMA 时序平滑
         self._ema_v_min = None
         self._ema_alpha = 0.6
         # 丢失恢复
         self._uv_miss_counter = 0
-        self._uv_miss_threshold = 5
+        self._uv_miss_threshold = 10
 
     def set_detect_method(self, method: DetectMethod):
         """设置检测方法"""
@@ -1027,14 +1031,21 @@ class CircleTargetDetector:
 
     def _compute_v_primary_ranges(self, roi_hsv: np.ndarray, roi_mask: np.ndarray) -> list:
         """基于亮度百分位的自适应 UV 阈值计算，仅调整 V 下限，S/H 固定宽松范围"""
-        v_channel = roi_hsv[:, :, 2][roi_mask > 0]
-        if v_channel.size == 0:
+        # 只从有饱和度的像素采样 V（排除白色/灰色像素）
+        s_channel = roi_hsv[:, :, 1]
+        v_channel = roi_hsv[:, :, 2]
+        sat_gate = (roi_mask > 0) & (s_channel >= self.uv_s_gate)
+        v_sampled = v_channel[sat_gate]
+
+        if v_sampled.size == 0:
+            v_sampled = v_channel[roi_mask > 0]
+        if v_sampled.size == 0:
             h_lo, h_hi = self.uv_h_range
             return [(np.array([h_lo, self.uv_s_min, self.uv_v_floor]),
                      np.array([h_hi, 255, 255]))]
 
         # 1. 百分位计算当前帧 V 下限
-        raw_v_min = int(np.percentile(v_channel, self.uv_v_percentile))
+        raw_v_min = int(np.percentile(v_sampled, self.uv_v_percentile))
         raw_v_min = max(raw_v_min, self.uv_v_floor)
 
         # 2. EMA 平滑
@@ -1045,11 +1056,13 @@ class CircleTargetDetector:
                                (1 - self._ema_alpha) * self._ema_v_min)
         smoothed_v_min = int(self._ema_v_min)
 
-        # 3. 丢失恢复：连续丢失过多帧时回退到宽松范围
+        # 3. 丢失恢复：连续丢失过多帧时重置 EMA，使用 floor 作为阈值
         if self._uv_miss_counter >= self._uv_miss_threshold:
             self._ema_v_min = None
             self._uv_miss_counter = 0
-            return [(np.array([130, 20, 25]), np.array([160, 255, 255]))]
+            h_lo, h_hi = self.uv_h_range
+            return [(np.array([h_lo, self.uv_s_min, self.uv_v_floor]),
+                     np.array([h_hi, 255, 255]))]
 
         # 4. 构建单个范围
         h_lo, h_hi = self.uv_h_range
@@ -1139,6 +1152,24 @@ class CircleTargetDetector:
                 if self.uv_adaptive_enabled:
                     self._uv_miss_counter += 1
                 return None
+            # 亮度对比验证：UV 点应比周围明显更亮
+            if self.uv_adaptive_enabled:
+                inner_mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.drawContours(inner_mask, [largest_contour], -1, 255, -1)
+                kernel = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE,
+                    (self.uv_contrast_dilate * 2 + 1, self.uv_contrast_dilate * 2 + 1))
+                outer_mask = cv2.dilate(inner_mask, kernel)
+                annulus_mask = cv2.subtract(outer_mask, inner_mask)
+                if cv2.countNonZero(annulus_mask) >= 10:
+                    roi_v = roi_hsv[:, :, 2]
+                    mean_inner = cv2.mean(roi_v, mask=inner_mask)[0]
+                    mean_annulus = cv2.mean(roi_v, mask=annulus_mask)[0]
+                    if mean_annulus < 1:
+                        mean_annulus = 1.0
+                    if mean_inner / mean_annulus < self.uv_contrast_ratio_min:
+                        self._uv_miss_counter += 1
+                        return None
             # 使用亮度加权质心
             gray_roi = gray[y:y+h, x:x+w] if gray is not None else cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
             masked_gray = cv2.bitwise_and(gray_roi, gray_roi, mask=contour_mask)
