@@ -46,7 +46,7 @@ class CircleTargetDetector:
         self.kf.processNoiseCov = np.eye(4, dtype=np.float32) * 0.1
         self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 3.0
         self.kf.errorCovPost = np.eye(4, dtype=np.float32)
-        self._kf_q_base = 0.1
+        self._kf_q_base = 0.3
 
         self.tracking_initialized = False
         self.lost_frames = 0  # 连续丢失帧计数
