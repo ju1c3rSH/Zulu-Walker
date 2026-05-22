@@ -42,8 +42,8 @@ class CircleTargetDetector:
         self.kf = cv2.KalmanFilter(4, 2)
         self.kf.transitionMatrix = np.array([[1,0,1,0], [0,1,0,1], [0,0,1,0], [0,0,0,1]], np.float32)
         self.kf.measurementMatrix = np.array([[1,0,0,0], [0,1,0,0]], np.float32)
-        self.kf.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
-        self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1.0
+        self.kf.processNoiseCov = np.eye(4, dtype=np.float32) * 0.1
+        self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 3.0
         self.kf.errorCovPost = np.eye(4, dtype=np.float32)
 
         self.tracking_initialized = False
@@ -126,8 +126,8 @@ class CircleTargetDetector:
         self.uv_kalman = cv2.KalmanFilter(4, 2)  # 4状态(x,y,vx,vy), 2测量(x,y)
         self.uv_kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
         self.uv_kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
-        self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 1.0
-        self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.1
+        self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.5
+        self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1.0
         self.uv_tracking_initialized = False
         self.uv_lost_frames = 0
         self.uv_max_lost_frames = 10
