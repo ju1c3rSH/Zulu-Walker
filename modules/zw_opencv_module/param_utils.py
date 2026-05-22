@@ -169,9 +169,12 @@ def load_uv_params(config_path: str = None) -> Dict[str, Any]:
         "uv_adaptive_enabled": 1,
         "uv_v_percentile": 94,
         "uv_v_floor": 90,
-        "uv_s_min": 20,
+        "uv_s_min": 80,
         "uv_h_low": 121,
         "uv_h_high": 165,
+        "uv_s_gate": 80,
+        "uv_contrast_ratio_min": 115,  # x100 存储，实际 1.15
+        "uv_contrast_dilate": 30,
     }
 
     if not os.path.exists(config_path):
@@ -226,6 +229,12 @@ def apply_uv_params_to_detector(detector: CircleTargetDetector, uv_params: Dict[
         detector.uv_h_range = (int(uv_params["uv_h_low"]), detector.uv_h_range[1])
     if "uv_h_high" in uv_params:
         detector.uv_h_range = (detector.uv_h_range[0], int(uv_params["uv_h_high"]))
+    if "uv_s_gate" in uv_params:
+        detector.uv_s_gate = int(uv_params["uv_s_gate"])
+    if "uv_contrast_ratio_min" in uv_params:
+        detector.uv_contrast_ratio_min = int(uv_params["uv_contrast_ratio_min"]) / 100.0
+    if "uv_contrast_dilate" in uv_params:
+        detector.uv_contrast_dilate = int(uv_params["uv_contrast_dilate"])
 
 
 # ── 摄像头硬件参数 ──────────────────────────────────────────────
