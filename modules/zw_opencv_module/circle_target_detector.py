@@ -1,4 +1,5 @@
 from typing import Optional, Tuple, List
+import time
 
 from .circle import CircleTargets, CircleTargetItem, ShapeType
 import cv2
@@ -49,6 +50,7 @@ class CircleTargetDetector:
         self.tracking_initialized = False
         self.lost_frames = 0  # 连续丢失帧计数
         self.max_lost_frames = 10  # 最大允许丢失帧数，超过则重置Kalman滤波器
+        self._last_predict_time = None
         
         self.color_ranges = {
             "Red": [
@@ -131,6 +133,7 @@ class CircleTargetDetector:
         self.uv_tracking_initialized = False
         self.uv_lost_frames = 0
         self.uv_max_lost_frames = 10
+        self._uv_last_predict_time = None
 
         # 亮度主导自适应 UV 检测
         self.uv_adaptive_enabled = True
@@ -1184,6 +1187,13 @@ class CircleTargetDetector:
                     return None
 
         if self.uv_tracking_initialized:
+            now = time.time()
+            if self._uv_last_predict_time is not None:
+                dt = max(0.001, min(0.2, now - self._uv_last_predict_time))
+            else:
+                dt = 1.0 / 90.0
+            self._uv_last_predict_time = now
+            self._update_transition_matrix(self.uv_kalman, dt)
             prediction = self.uv_kalman.predict()
             return (int(prediction[0]), int(prediction[1]))
 
@@ -1856,6 +1866,15 @@ class CircleTargetDetector:
                       (quad_center[1] - circle_center[1])**2)
         return dist <= max_offset
 
+    def _update_transition_matrix(self, kf, dt):
+        """根据实际 dt 更新恒速模型的转移矩阵"""
+        kf.transitionMatrix = np.array([
+            [1, 0, dt, 0],
+            [0, 1, 0, dt],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+        ], dtype=np.float32)
+
     def _kalman_update(self, measurement: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
         """
         使用卡尔曼滤波更新位置
@@ -1894,6 +1913,13 @@ class CircleTargetDetector:
 
         # 预测
         if self.tracking_initialized:
+            now = time.time()
+            if self._last_predict_time is not None:
+                dt = max(0.001, min(0.2, now - self._last_predict_time))
+            else:
+                dt = 1.0 / 90.0
+            self._last_predict_time = now
+            self._update_transition_matrix(self.kf, dt)
             prediction = self.kf.predict()
             return (float(prediction[0, 0]), float(prediction[1, 0]))
 
