@@ -46,6 +46,7 @@ class CircleTargetDetector:
         self.kf.processNoiseCov = np.eye(4, dtype=np.float32) * 0.1
         self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 3.0
         self.kf.errorCovPost = np.eye(4, dtype=np.float32)
+        self._kf_q_base = 0.1
 
         self.tracking_initialized = False
         self.lost_frames = 0  # 连续丢失帧计数
@@ -130,6 +131,7 @@ class CircleTargetDetector:
         self.uv_kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
         self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.5
         self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1.0
+        self._uv_q_base = 0.5
         self.uv_tracking_initialized = False
         self.uv_lost_frames = 0
         self.uv_max_lost_frames = 10
@@ -1224,7 +1226,7 @@ class CircleTargetDetector:
             else:
                 dt = 1.0 / 90.0
             self._uv_last_predict_time = now
-            self._update_transition_matrix(self.uv_kalman, dt)
+            self._update_transition_matrix(self.uv_kalman, dt, self._uv_q_base)
             prediction = self.uv_kalman.predict()
             return (int(prediction[0]), int(prediction[1]))
 
@@ -1897,7 +1899,7 @@ class CircleTargetDetector:
                       (quad_center[1] - circle_center[1])**2)
         return dist <= max_offset
 
-    def _update_transition_matrix(self, kf, dt):
+    def _update_transition_matrix(self, kf, dt, q_base):
         """根据实际 dt 更新恒速模型的转移矩阵和过程噪声"""
         kf.transitionMatrix = np.array([
             [1, 0, dt, 0],
@@ -1905,9 +1907,10 @@ class CircleTargetDetector:
             [0, 0, 1, 0],
             [0, 0, 0, 1],
         ], dtype=np.float32)
-        q = float(kf.processNoiseCov[0, 0])
+        dt2 = dt * dt
         kf.processNoiseCov = np.diag(np.array(
-            [q, q, q * dt, q * dt], dtype=np.float32))
+            [q_base / dt2, q_base / dt2, q_base * dt, q_base * dt],
+            dtype=np.float32))
 
     def _kalman_update(self, measurement: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
         """
@@ -1953,7 +1956,7 @@ class CircleTargetDetector:
             else:
                 dt = 1.0 / 90.0
             self._last_predict_time = now
-            self._update_transition_matrix(self.kf, dt)
+            self._update_transition_matrix(self.kf, dt, self._kf_q_base)
             prediction = self.kf.predict()
             return (float(prediction[0, 0]), float(prediction[1, 0]))
 
