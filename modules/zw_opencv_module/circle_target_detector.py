@@ -39,12 +39,24 @@ class CircleTargetDetector:
         
         self.lsd = cv2.createLineSegmentDetector(0)
         
-        self.kf = cv2.KalmanFilter(4, 2)
-        self.kf.transitionMatrix = np.array([[1,0,1,0], [0,1,0,1], [0,0,1,0], [0,0,0,1]], np.float32)
-        self.kf.measurementMatrix = np.array([[1,0,0,0], [0,1,0,0]], np.float32)
-        self.kf.processNoiseCov = np.eye(4, dtype=np.float32) * 0.1
+        # 恒加速模型: 状态 [x, y, vx, vy, ax, ay], 测量 [x, y]
+        self.kf = cv2.KalmanFilter(6, 2)
+        dt = 1.0
+        self.kf.transitionMatrix = np.array([
+            [1, 0, dt,  0, 0.5*dt*dt, 0         ],
+            [0, 1,  0, dt, 0,          0.5*dt*dt],
+            [0, 0,  1,  0, dt,         0         ],
+            [0, 0,  0,  1, 0,          dt        ],
+            [0, 0,  0,  0, 1,          0         ],
+            [0, 0,  0,  0, 0,          1         ],
+        ], dtype=np.float32)
+        self.kf.measurementMatrix = np.array([
+            [1, 0, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0],
+        ], dtype=np.float32)
+        self.kf.processNoiseCov = np.diag([0.01, 0.01, 0.1, 0.1, 1.0, 1.0]).astype(np.float32)
         self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 3.0
-        self.kf.errorCovPost = np.eye(4, dtype=np.float32)
+        self.kf.errorCovPost = np.eye(6, dtype=np.float32)
 
         self.tracking_initialized = False
         self.lost_frames = 0  # 连续丢失帧计数
@@ -123,10 +135,22 @@ class CircleTargetDetector:
         self.enable_color_filter = True
 
         # UV 点卡尔曼滤波器
-        self.uv_kalman = cv2.KalmanFilter(4, 2)  # 4状态(x,y,vx,vy), 2测量(x,y)
-        self.uv_kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
-        self.uv_kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
-        self.uv_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.5
+        # 恒加速模型: 状态 [x, y, vx, vy, ax, ay], 测量 [x, y]
+        self.uv_kalman = cv2.KalmanFilter(6, 2)
+        dt = 1.0
+        self.uv_kalman.transitionMatrix = np.array([
+            [1, 0, dt,  0, 0.5*dt*dt, 0         ],
+            [0, 1,  0, dt, 0,          0.5*dt*dt],
+            [0, 0,  1,  0, dt,         0         ],
+            [0, 0,  0,  1, 0,          dt        ],
+            [0, 0,  0,  0, 1,          0         ],
+            [0, 0,  0,  0, 0,          1         ],
+        ], dtype=np.float32)
+        self.uv_kalman.measurementMatrix = np.array([
+            [1, 0, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0],
+        ], dtype=np.float32)
+        self.uv_kalman.processNoiseCov = np.diag([0.05, 0.05, 0.5, 0.5, 5.0, 5.0]).astype(np.float32)
         self.uv_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1.0
         self.uv_tracking_initialized = False
         self.uv_lost_frames = 0
@@ -1168,8 +1192,8 @@ class CircleTargetDetector:
 
             if not self.uv_tracking_initialized:
                 # 首次检测：直接用测量值初始化状态
-                self.uv_kalman.statePost = np.array([[x], [y], [0], [0]], dtype=np.float32)
-                self.uv_kalman.errorCovPost = np.eye(4, dtype=np.float32)
+                self.uv_kalman.statePost = np.array([[x], [y], [0], [0], [0], [0]], dtype=np.float32)
+                self.uv_kalman.errorCovPost = np.eye(6, dtype=np.float32)
                 self.uv_tracking_initialized = True
                 self.uv_lost_frames = 0
             else:
@@ -1873,8 +1897,8 @@ class CircleTargetDetector:
 
             if not self.tracking_initialized:
                 # 初始化状态
-                self.kf.statePost = np.array([[x], [y], [0], [0]], dtype=np.float32)
-                self.kf.errorCovPost = np.eye(4, dtype=np.float32)
+                self.kf.statePost = np.array([[x], [y], [0], [0], [0], [0]], dtype=np.float32)
+                self.kf.errorCovPost = np.eye(6, dtype=np.float32)
                 self.tracking_initialized = True
                 self.lost_frames = 0
             else:
