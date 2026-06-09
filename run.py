@@ -25,7 +25,7 @@ def run_main():
 
 def run_debug(args):
     """运行调试器"""
-    from modules.zw_opencv_module.debug_detector import DebugDetector
+    from modules.zw_opencv_module.debug.detector import DebugDetector
     detector = DebugDetector(
         camera_source=args.camera,
         width=args.width,
