@@ -15,7 +15,7 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from .circle_target_detector import DetectMethod, CircleTargetDetector
+from .detectors.circle_target_detector import DetectMethod, CircleTargetDetector
 
 
 def get_default_params() -> Dict[str, Dict[str, Any]]:
