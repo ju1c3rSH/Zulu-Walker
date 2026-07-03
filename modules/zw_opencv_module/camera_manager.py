@@ -27,13 +27,7 @@ from .param_utils import (
     load_uv_params, apply_uv_params_to_detector,
     load_camera_params, apply_camera_params_to_capture
 )
-from utils.state_machine import VisualStateMachine
 from utils.camera_misc_util import CameraMiscUtil
-from modules.zw_uart_module import send_orange_frame
-from modules.zw_uart_module.protocol import (
-    ORANGE_STATE_IDLE, ORANGE_STATE_SEARCH, ORANGE_STATE_TRACKING,
-    ORANGE_STATE_RECOVERY, ORANGE_STATE_FAIL
-)
 
 @dataclass
 class CameraConfig:
@@ -45,7 +39,6 @@ class CameraConfig:
     sensor_height_mm: Optional[float] = None
     enabled: bool = True
     tasks: List[dict] = field(default_factory=list)
-    gaussian_blur_enabled: bool = False
     gaussian_blur_kernel_size: int = 5
     gaussian_blur_sigma: float = 1.5
     camera_stream_queue_size: int = 2
@@ -77,10 +70,6 @@ class Camera:
         self._empty_queue_count = 0
         self._fresh_frame_count = 0
         self._diag_start_time = time.time()
-        # 高斯模糊参数
-        self.gaussian_blur_enabled = config.gaussian_blur_enabled
-        self.gaussian_blur_kernel_size = config.gaussian_blur_kernel_size
-        self.gaussian_blur_sigma = config.gaussian_blur_sigma
         # 焦距计算器
         self.focal_calculator = None
         self._setup_stream(config)
@@ -226,13 +215,6 @@ class Camera:
             self._is_current_frame_gunmu = True
             return None, {}, False
 
-        # 应用高斯模糊降噪
-        if self.gaussian_blur_enabled:
-            frame = cv2.GaussianBlur(
-                frame,
-                (self.gaussian_blur_kernel_size, self.gaussian_blur_kernel_size),
-                self.gaussian_blur_sigma
-            )
 
         # 计时：处理阶段
         profiler.start(self.get_task.__name__ + "_processing")
@@ -272,7 +254,6 @@ class CameraManager:
         self.frame_composer: Optional[FrameComposer] = None
         self.ffmpeg_pusher: Optional[FFmpegPusher] = None
         self.config: Optional[CameraSystemConfig] = None
-        self.state_machine = VisualStateMachine()
 
         self._running = False
         self._process_thread: Optional[Thread] = None
@@ -288,23 +269,10 @@ class CameraManager:
         self._last_display_time = 0.0
         self._display_interval = 1.0 / 15  # 15fps display refresh
 
-        self._setup_state_callbacks()
+        self._event_bus = None
 
-    def _setup_state_callbacks(self):
-        def on_search(context, from_state):
-            print("[CameraManager] Enter SEARCH state")
-
-        def on_tracking(context, from_state):
-            print("[CameraManager] Enter TRACKING state")
-
-        def on_idle(context, from_state):
-            print("[CameraManager] Enter IDLE state")
-            for camera in self.cameras.values():
-                camera.disable_task("circle_detect")
-
-        self.state_machine.on_state_enter(VisualStateMachine.States.SEARCH, on_search)
-        self.state_machine.on_state_enter(VisualStateMachine.States.TRACKING, on_tracking)
-        self.state_machine.on_state_enter(VisualStateMachine.States.IDLE, on_idle)
+    def set_event_bus(self, bus):
+        self._event_bus = bus
 
     @classmethod
     def from_config(cls, config_path: str) -> "CameraManager":
@@ -347,9 +315,6 @@ class CameraManager:
                 height=cam_data.get("height", 480),
                 enabled=cam_data.get("enabled", True),
                 tasks=cam_data.get("tasks", []),
-                gaussian_blur_enabled=gaussian_blur.get("enabled", False),
-                gaussian_blur_kernel_size=gaussian_blur.get("kernel_size", 5),
-                gaussian_blur_sigma=gaussian_blur.get("sigma", 1.5),
                 camera_stream_queue_size=cam_data.get("camera_stream_queue_size", 2),
             )
             self.add_camera(cam_id, cam_config)
@@ -404,13 +369,6 @@ class CameraManager:
             return cam.disable_task(task_name)
         return False
 
-    def set_target_color(self, color: Optional[str]):
-        self.state_machine.context.target_color = color
-        for camera in self.cameras.values():
-            task = camera.get_task("circle_detect")
-            if task:
-                task.processor.set_target_color(color)
-
     def start(self):
         if self._running:
             return
@@ -428,8 +386,6 @@ class CameraManager:
         # 从 YAML 加载检测参数并应用到所有检测器
         self._apply_detect_params()
         self._apply_camera_params()
-
-        self.state_machine.start()
 
         self._running = True
         self._process_thread = Thread(target=self._process_loop, daemon=True)
@@ -512,14 +468,6 @@ class CameraManager:
                     self._fps_frame_count = 0
                     self._fps_start_time = time.time()
 
-            profiler.start("handle_detection")
-            self._handle_detection(all_results)
-            profiler.stop("handle_detection")
-
-            profiler.start("state_machine")
-            self.state_machine.update()
-            profiler.stop("state_machine")
-
             if self.config and self.config.enable_streaming:
                 if self.ffmpeg_pusher and composed_frame is not None:
                     profiler.start("ffmpeg_push")
@@ -553,78 +501,6 @@ class CameraManager:
                 profiler.start("idle_wait")
                 time.sleep(0.001)
                 profiler.stop("idle_wait")
-
-    def _handle_detection(self, all_results: Dict):
-        ctx = self.state_machine.context
-
-        for camera_id, result in all_results.items():
-            if result is None and  result == {}:
-                continue
-                print(f"[CameraManager] No results for camera {camera_id}")
-            if not isinstance(result, dict):
-                print(f"[CameraManager] Invalid results format for camera {camera_id}: {result}")
-                continue
-            circle_result = result.get("circle_detect")
-            #_is_frame_results_gunmu = result.get("is_gunmu", False)
-            if circle_result is None:
-                continue
-            
-
-            data = circle_result.result_data
-            if data:
-                ctx.target_found = data.get("target_found", False)
-                ctx.target_center = data.get("target", {}).center_coordinates if data.get("target") else None
-                ctx.percent_error_x = data.get("percent_error_x", 0)
-                ctx.percent_error_y = data.get("percent_error_y", 0)
-                ctx.is_quad_detected = data.get("is_quad_detected", False)
-                ctx.target_distance_mm = data.get("target_distance_mm", None)
-                ctx.is_uv_spot_detected = data.get("is_uv_spot_detected", False)
-                ctx.confidence = 1.0 if ctx.target_found else 0.0
-            else:
-                ctx.target_found = False
-                ctx.confidence = 0.0
-
-            if ctx.target_found:
-                ctx.consecutive_detected_frames += 1
-                ctx.consecutive_lost_frames = 0
-            else:
-                ctx.consecutive_lost_frames += 1
-                ctx.consecutive_detected_frames = 0
-
-            self._send_error_frame(ctx)
-
-            if self.state_machine.is_searching() and ctx.target_found and ctx.consecutive_detected_frames >= 3:
-                self.state_machine.trigger(VisualStateMachine.Events.TARGET_FOUND)
-            elif self.state_machine.is_tracking() and ctx.consecutive_lost_frames >= 5:
-                self.state_machine.trigger(VisualStateMachine.Events.TARGET_LOST)
-            break
-
-    def _send_error_frame(self, ctx):
-        """
-        Send error frame to STM32 using orange_send protocol.
-
-        Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + distance(float32) + EE
-        - state: 根据当前状态机状态映射到枚举值
-        - deta_x: percent_error_x
-        - deta_y: percent_error_y
-        - distance: target_distance_mm (mm)
-        """
-        # 状态映射
-        if self.state_machine.is_idle():
-            state = ORANGE_STATE_IDLE
-        elif self.state_machine.is_searching():
-            state = ORANGE_STATE_SEARCH
-        elif self.state_machine.is_tracking():
-            state = ORANGE_STATE_TRACKING
-        elif self.state_machine.is_recovering():
-            state = ORANGE_STATE_RECOVERY
-        else:  # FAIL
-            state = ORANGE_STATE_FAIL
-
-        # 获取距离，如果未检测到则为 0.0
-        distance_mm = ctx.target_distance_mm if ctx.target_distance_mm is not None else 0.0
-
-        send_orange_frame(state, ctx.percent_error_x, ctx.percent_error_y, distance_mm)
 
     def process_all(self) -> Tuple[Optional[np.ndarray], Dict[str, Dict[str, VisionResult]], bool]:
         frames = []
