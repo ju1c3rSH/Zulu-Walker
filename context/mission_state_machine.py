@@ -36,6 +36,7 @@ class MissionState:
     NAV_TO_ROUGH = 7
     ALIGN_ROUGH = 8
     PLACE_ROUGH = 9
+    # 这里可能要加中间State
     NAV_TO_TEMP = 10
     ALIGN_TEMP = 11
     PLACE_TEMP = 12
