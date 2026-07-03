@@ -71,19 +71,6 @@ ERROR_TYPE_Y = 1            # Y direction error
 ERROR_TYPE_Z = 2            # Z direction error
 ERROR_TYPE_OTHER = 3        # Other error
 
-# Orange Send 状态枚举（与 VisualStateMachine.States 对应）
-ORANGE_STATE_IDLE = 0       # 待机
-ORANGE_STATE_SEARCH = 1     # 搜索
-ORANGE_STATE_TRACKING = 2   # 跟踪
-ORANGE_STATE_RECOVERY = 3   # 恢复
-ORANGE_STATE_FAIL = 4       # 失败
-
-# Orange Send 协议常量
-ORANGE_SEND_HEADER_1 = 0xAA
-ORANGE_SEND_HEADER_2 = 0xBB
-ORANGE_SEND_TAIL = 0xEE
-ORANGE_SEND_FRAME_SIZE = 19  # 2(header) + 4(state) + 4(deta_x) + 4(deta_y) + 4(distance) + 1(tail)
-
 # Frame size limits
 MIN_FRAME_SIZE = 4          # SOF + Length + Type + Checksum (no payload)
 MAX_FRAME_SIZE = 255        # Limited by Length field (1 byte)
@@ -206,34 +193,6 @@ def parse_zone_payload(payload: bytes) -> Optional[int]:
     if len(payload) != 1:
         return None
     return payload[0]
-
-
-def build_orange_send_frame(state: int, deta_x: int, deta_y: int, distance_mm: float = 0.0) -> bytes:
-    """
-    Build a frame matching STM32 orange_send protocol.
-
-    Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + distance(float32) + EE
-    Total: 19 bytes
-
-    Args:
-        state: 状态值 (0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL)
-        deta_x: X 方向误差 (int32)
-        deta_y: Y 方向误差 (int32)
-        distance_mm: 目标距离 (float32, mm)
-
-    Returns:
-        Complete frame bytes ready to send
-    """
-    import struct
-    frame = bytearray()
-    frame.append(ORANGE_SEND_HEADER_1)  # Header 1: 0xAA
-    frame.append(ORANGE_SEND_HEADER_2)  # Header 2: 0xBB
-    frame.extend(state.to_bytes(4, byteorder='little', signed=True))
-    frame.extend(deta_x.to_bytes(4, byteorder='little', signed=True))
-    frame.extend(deta_y.to_bytes(4, byteorder='little', signed=True))
-    frame.extend(struct.pack('<f', distance_mm))  # float32 little-endian
-    frame.append(ORANGE_SEND_TAIL)  # Tail: 0xEE
-    return bytes(frame)
 
 
 # ===== Mission synchronization helpers =====

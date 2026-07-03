@@ -25,11 +25,11 @@ def init():
 
     print("[zw_opencv_module] Initializing...")
     print(cv2.getBuildInformation())
-    # Default config path
     _config_path = os.path.join(_module_dir, "config", "camera_config.yaml")
 
-    # Create CameraManager instance
+    from context import EventBus
     _camera_manager = CameraManager()
+    _camera_manager.set_event_bus(EventBus())
 
     print("[zw_opencv_module] Initialized successfully")
 
