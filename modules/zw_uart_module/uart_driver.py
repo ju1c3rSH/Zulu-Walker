@@ -13,8 +13,12 @@ from typing import Callable, List, Optional
 
 from .protocol import (
     SOF, TYPE_ARRIVED, TYPE_PICK, TYPE_SET,
+    TYPE_CMD_FROM_MCU, TYPE_ACTION_DONE,
+    TYPE_HEARTBEAT, TYPE_REQUEST_SYNC, TYPE_EMERGENCY_STOP,
     FrameData, parse_frame, parse_zone_payload,
-    build_orange_send_frame, ORANGE_SEND_FRAME_SIZE
+    parse_cmd_payload, parse_action_done_payload,
+    parse_heartbeat_payload, parse_request_sync_payload,
+    parse_emergency_stop_payload,
 )
 from .exceptions import UartError
 
@@ -165,6 +169,9 @@ class STM32UartInterface:
         # PICK event callbacks
         self._pick_callbacks: List[Callable[[int], None]] = []
 
+        # EventBus (set after init to avoid circular imports)
+        self._event_bus = None
+
         # Logger
         self._logger = logging.getLogger(__name__)
         self._debug_hex = False
@@ -269,9 +276,22 @@ class STM32UartInterface:
         except Exception as e:
             self._logger.error(f"Error processing received data: {e}")
 
+    def set_event_bus(self, bus):
+        self._event_bus = bus
+
+    def send_raw(self, frame: bytes) -> bool:
+        try:
+            with self._write_lock:
+                if not self._serial.is_connected:
+                    return False
+                return self._serial.send_bytes(frame) == len(frame)
+        except Exception as e:
+            self._logger.error(f"Failed to send raw frame: {e}")
+            return False
+
     def _handle_frame(self, frame: FrameData):
         """
-        Handle a parsed frame by updating internal state.
+        Handle a parsed frame — legacy zone events + mission sync types.
 
         Args:
             frame: Parsed frame data
@@ -282,6 +302,12 @@ class STM32UartInterface:
                 with self._state_lock:
                     self._last_arrived_zone = zone_id
                 self._logger.info(f"ARRIVED_AT_ZONE: zone={zone_id}")
+                if self._event_bus:
+                    try:
+                        from context.events import ArrivedEvent
+                        self._event_bus.publish(ArrivedEvent(zone_id))
+                    except ImportError:
+                        pass
 
         elif frame.frame_type == TYPE_PICK:
             zone_id = parse_zone_payload(frame.payload)
@@ -301,6 +327,58 @@ class STM32UartInterface:
                 with self._state_lock:
                     self._current_zone = zone_id
                 self._logger.info(f"SET_ZONE: zone={zone_id}")
+
+        elif frame.frame_type == TYPE_CMD_FROM_MCU:
+            parsed = parse_cmd_payload(frame.payload)
+            if parsed is not None and self._event_bus:
+                try:
+                    from context.events import McuCmdReceived
+                    self._event_bus.publish(McuCmdReceived(parsed[0], parsed[1]))
+                except ImportError:
+                    self._logger.warning(
+                        f"CMD_FROM_MCU cmd_id=0x{parsed[0]:02X} (no event bus)")
+
+        elif frame.frame_type == TYPE_ACTION_DONE:
+            parsed = parse_action_done_payload(frame.payload)
+            if parsed is not None and self._event_bus:
+                try:
+                    from context.events import ActionDoneEvent
+                    self._event_bus.publish(ActionDoneEvent(parsed[0], parsed[1]))
+                except ImportError:
+                    self._logger.warning(
+                        f"ACTION_DONE action={parsed[0]} result={parsed[1]} (no event bus)")
+
+        elif frame.frame_type == TYPE_HEARTBEAT:
+            parsed = parse_heartbeat_payload(frame.payload)
+            if parsed is not None and self._event_bus:
+                try:
+                    from context.events import HeartbeatEvent
+                    self._event_bus.publish(
+                        HeartbeatEvent(parsed[0], parsed[1], parsed[2]))
+                except ImportError:
+                    self._logger.debug(
+                        f"HEARTBEAT seq={parsed[0]} (no event bus)")
+
+        elif frame.frame_type == TYPE_REQUEST_SYNC:
+            parsed = parse_request_sync_payload(frame.payload)
+            if parsed is not None and self._event_bus:
+                try:
+                    from context.events import RequestSyncEvent
+                    self._event_bus.publish(RequestSyncEvent(parsed))
+                except ImportError:
+                    self._logger.warning(
+                        f"REQUEST_SYNC state={parsed} (no event bus)")
+
+        elif frame.frame_type == TYPE_EMERGENCY_STOP:
+            parsed = parse_emergency_stop_payload(frame.payload)
+            if parsed is not None:
+                self._logger.error(f"EMERGENCY_STOP reason={parsed}")
+                if self._event_bus:
+                    try:
+                        from context.events import EmergencyStopEvent
+                        self._event_bus.publish(EmergencyStopEvent(parsed))
+                    except ImportError:
+                        pass
 
         else:
             self._logger.warning(f"Unknown frame type: 0x{frame.frame_type:02X}")
@@ -385,49 +463,6 @@ class STM32UartInterface:
             return False
         except Exception as e:
             self._logger.error(f"Failed to send error frame: {e}")
-            return False
-
-    def send_orange_frame(self, state: int, deta_x: int, deta_y: int, distance_mm: float = 0.0) -> bool:
-        """
-        Send orange frame to STM32 (matching orange_send.h protocol).
-
-        Frame format: AA BB + state(int32) + deta_x(int32) + deta_y(int32) + distance(float32) + EE
-        Total: 19 bytes
-
-        Args:
-            state: State value (0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL)
-            deta_x: X direction error (int32)
-            deta_y: Y direction error (int32)
-            distance_mm: Target distance in mm (float32)
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
-        try:
-            frame = build_orange_send_frame(state, deta_x, deta_y, distance_mm)
-
-            with self._write_lock:
-                if not self._serial.is_connected:
-                    self._logger.warning("Cannot send: not connected")
-                    return False
-
-                bytes_sent = self._serial.send_bytes(frame)
-
-                if bytes_sent == ORANGE_SEND_FRAME_SIZE:
-                    if self._debug_hex:
-                        self._logger.debug(f"Sent: {frame.hex()}")
-                    self._logger.info(
-                        f"Sent orange frame: state={state}, deta_x={deta_x}, deta_y={deta_y}, distance={distance_mm:.1f}mm"
-                    )
-                    return True
-                else:
-                    self._logger.error(
-                        f"Send incomplete: {bytes_sent}/{ORANGE_SEND_FRAME_SIZE} bytes"
-                    )
-                    return False
-
-        except Exception as e:
-            self._logger.error(f"Failed to send orange frame: {e}")
             return False
 
 

@@ -35,9 +35,7 @@ from .protocol import (
     SOF,
     TYPE_ERROR, TYPE_ARRIVED, TYPE_PICK, TYPE_SET,
     ERROR_TYPE_X, ERROR_TYPE_Y, ERROR_TYPE_Z, ERROR_TYPE_OTHER,
-    ORANGE_STATE_IDLE, ORANGE_STATE_SEARCH, ORANGE_STATE_TRACKING,
-    ORANGE_STATE_RECOVERY, ORANGE_STATE_FAIL,
-    FrameData, build_error_frame, parse_frame, build_orange_send_frame
+    FrameData, build_error_frame, parse_frame
 )
 from .exceptions import (
     UartError, InvalidFrameError, ChecksumError, ParameterError
@@ -48,7 +46,7 @@ _uart_interface: STM32UartInterface = None
 _running: bool = False
 
 
-def init():
+def init(event_bus=None):
     """Module initialization (called by ModuleManager)."""
     global _uart_interface
 
@@ -56,6 +54,8 @@ def init():
 
     # Create STM32UartInterface instance
     _uart_interface = STM32UartInterface()
+    if event_bus is not None:
+        _uart_interface.set_event_bus(event_bus)
 
     print("[zw_uart_module] Initialized successfully")
 
@@ -100,12 +100,3 @@ def stop():
         _uart_interface.stop()
 
     print("[zw_uart_module] Stopped")
-
-
-# === Direct access functions ===
-
-def send_orange_frame(state: int, deta_x: int, deta_y: int, distance_mm: float = 0.0) -> bool:
-    """Send orange frame to STM32 (convenience function)."""
-    if _uart_interface:
-        return _uart_interface.send_orange_frame(state, deta_x, deta_y, distance_mm)
-    return False
