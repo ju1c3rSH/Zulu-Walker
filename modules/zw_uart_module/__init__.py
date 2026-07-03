@@ -104,53 +104,8 @@ def stop():
 
 # === Direct access functions ===
 
-def get_interface() -> STM32UartInterface:
-    """Get the STM32UartInterface instance."""
-    return _uart_interface
-
-
-def get_current_zone() -> int:
-    """Get current zone ID (convenience function)."""
-    if _uart_interface:
-        return _uart_interface.get_current_zone()
-    return 0
-
-
-def get_last_arrived_zone() -> int:
-    """Get last arrived zone ID (convenience function)."""
-    if _uart_interface:
-        return _uart_interface.get_last_arrived_zone()
-    return 0
-
-
-def get_last_pick_zone() -> int:
-    """Get last pick zone ID (convenience function)."""
-    if _uart_interface:
-        return _uart_interface.get_last_pick_zone()
-    return 0
-
-
-def send_error(error_type: int, error_value: int) -> bool:
-    """Send error frame to STM32 (convenience function)."""
-    if _uart_interface:
-        return _uart_interface.send_error(error_type, error_value)
-    return False
-
-
 def send_orange_frame(state: int, deta_x: int, deta_y: int, distance_mm: float = 0.0) -> bool:
     """Send orange frame to STM32 (convenience function)."""
     if _uart_interface:
         return _uart_interface.send_orange_frame(state, deta_x, deta_y, distance_mm)
     return False
-
-
-def add_pick_callback(callback):
-    """Add callback for PICK events (convenience function)."""
-    if _uart_interface:
-        _uart_interface.add_pick_callback(callback)
-
-
-def remove_pick_callback(callback):
-    """Remove PICK event callback (convenience function)."""
-    if _uart_interface:
-        _uart_interface.remove_pick_callback(callback)
