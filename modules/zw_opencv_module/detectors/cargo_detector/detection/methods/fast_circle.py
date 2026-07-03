@@ -1,0 +1,244 @@
+import cv2
+import numpy as np
+from typing import Optional, Tuple
+
+from .base import BaseDetectionMethod
+from .....models.color import Color
+from .....models.cargo import CargoItem
+from .. import kalman_filter
+
+
+class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
+    SV_PERCENTILE = 5
+    EMA_ALPHA = 0.3
+    TARGET_W = 640
+    TARGET_H = 480
+
+    def __init__(self, name: str = "fast_circle", detector=None):
+        super().__init__(name=name, detector=detector)
+
+    def detect(self, frame: np.ndarray, target_color: Color) -> Optional[CargoItem]:
+        small, scale = self._scale_frame(frame)
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+
+        result = self._try_roi(small, hsv, target_color, scale)
+        if result is not None:
+            return result
+
+        result = self._try_global(small, hsv, target_color, scale)
+        if result is not None:
+            return result
+
+        return self._fallback_predict(target_color, scale)
+
+    def _scale_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, float]:
+        h, w = frame.shape[:2]
+        if h == 0 or w == 0:
+            return frame, 1.0
+        s = min(self.TARGET_H / h, self.TARGET_W / w, 1.0)
+        if s < 1.0:
+            return cv2.resize(
+                frame, (int(w * s), int(h * s)),
+                interpolation=cv2.INTER_AREA
+            ), s
+        return frame, 1.0
+
+    def _decide_roi(self, frame: np.ndarray) -> Optional[Tuple[np.ndarray, Tuple[int, int]]]:
+        if self.detector.last_center is None:
+            return None
+        if self.detector.roi_miss_count >= self.detector.max_roi_miss:
+            return None
+        cx, cy = int(self.detector.last_center[0]), int(self.detector.last_center[1])
+        half = self.detector.roi_size // 2
+        h, w = frame.shape[:2]
+        x1 = max(cx - half, 0)
+        y1 = max(cy - half, 0)
+        x2 = min(cx + half, w)
+        y2 = min(cy + half, h)
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return frame[y1:y2, x1:x2], (x1, y1)
+
+    def _try_roi(self, full_frame: np.ndarray, full_hsv: np.ndarray,
+                 target_color: Color, scale: float) -> Optional[CargoItem]:
+        roi = self._decide_roi(full_frame)
+        if roi is None:
+            return None
+        sub_img, offset = roi
+        sub_hsv = cv2.cvtColor(sub_img, cv2.COLOR_BGR2HSV)
+
+        mask = self._adaptive_color_segment(sub_hsv, target_color)
+        if mask is None:
+            self.detector.roi_miss_count += 1
+            return None
+
+        morphed = self._morph_process(mask)
+        result = self._find_best_contour(morphed)
+        if result is None:
+            self.detector.roi_miss_count += 1
+            return None
+
+        center, radius = result
+        center = (center[0] + offset[0], center[1] + offset[1])
+        return self._finalize(center, radius, target_color, scale)
+
+    def _try_global(self, frame: np.ndarray, hsv: np.ndarray,
+                    target_color: Color, scale: float) -> Optional[CargoItem]:
+        mask = self._adaptive_color_segment(hsv, target_color)
+        if mask is None:
+            return None
+
+        morphed = self._morph_process(mask)
+        self.detector._last_mask = mask
+        self.detector._last_morphed = morphed
+
+        result = self._find_best_contour(morphed)
+        if result is None:
+            return None
+
+        center, radius = result
+        return self._finalize(center, radius, target_color, scale)
+
+    def _adaptive_color_segment(self, hsv: np.ndarray, target_color: Color) -> Optional[np.ndarray]:
+        if target_color not in self.detector.color_ranges:
+            return None
+
+        ranges = self.detector.color_ranges[target_color]
+
+        mask_coarse = None
+        for lower, upper in ranges:
+            wide_upper = np.array([upper[0], 255, 255], dtype=np.uint8)
+            wide_lower = np.array([lower[0], 0, 0], dtype=np.uint8)
+            chunk = cv2.inRange(hsv, wide_lower, wide_upper)
+            mask_coarse = chunk if mask_coarse is None else cv2.bitwise_or(mask_coarse, chunk)
+
+        if mask_coarse is None or cv2.countNonZero(mask_coarse) < 50:
+            return None
+
+        s_low, v_low = self._compute_adaptive_sv(hsv, mask_coarse)
+
+        mask_fine = None
+        for lower, upper in ranges:
+            adjusted_lower = np.array([lower[0], max(lower[1], s_low), max(lower[2], v_low)], dtype=np.uint8)
+            adjusted_upper = np.array([upper[0], upper[1], upper[2]], dtype=np.uint8)
+            chunk = cv2.inRange(hsv, adjusted_lower, adjusted_upper)
+            mask_fine = chunk if mask_fine is None else cv2.bitwise_or(mask_fine, chunk)
+
+        return mask_fine
+
+    def _compute_adaptive_sv(self, hsv: np.ndarray, mask: np.ndarray) -> Tuple[int, int]:
+        s_channel = hsv[:, :, 1][mask > 0]
+        v_channel = hsv[:, :, 2][mask > 0]
+
+        if len(s_channel) < 10:
+            return (50, 50)
+
+        s_low = int(np.percentile(s_channel, self.SV_PERCENTILE))
+        v_low = int(np.percentile(v_channel, self.SV_PERCENTILE))
+
+        if not hasattr(self.detector, "_ema_s"):
+            self.detector._ema_s = s_low
+            self.detector._ema_v = v_low
+        else:
+            self.detector._ema_s = int(self.EMA_ALPHA * s_low + (1 - self.EMA_ALPHA) * self.detector._ema_s)
+            self.detector._ema_v = int(self.EMA_ALPHA * v_low + (1 - self.EMA_ALPHA) * self.detector._ema_v)
+
+        return (self.detector._ema_s, self.detector._ema_v)
+
+    def _morph_process(self, mask: np.ndarray) -> np.ndarray:
+        k_open = self.detector.kernel_open
+        if k_open % 2 == 0:
+            k_open += 1
+        k_close = self.detector.kernel_close
+        if k_close % 2 == 0:
+            k_close += 1
+
+        kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_open, k_open))
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_close, k_close))
+
+        opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
+        closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel_close)
+        return closed
+
+    def _find_best_contour(self, binary: np.ndarray) -> Optional[Tuple[Tuple[float, float], float]]:
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        largest = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest)
+        if area < self.detector.min_area:
+            return None
+
+        peri = cv2.arcLength(largest, True)
+        if peri == 0:
+            return None
+
+        circularity = 4.0 * np.pi * area / (peri * peri)
+        if circularity < self.detector.min_circularity:
+            return None
+
+        M = cv2.moments(largest)
+        if M["m00"] == 0:
+            return None
+
+        cx = M["m10"] / M["m00"]
+        cy = M["m01"] / M["m00"]
+
+        inside = cv2.pointPolygonTest(largest, (float(cx), float(cy)), False)
+        if inside < 0:
+            return None
+
+        radius = np.sqrt(area / np.pi)
+        return ((float(cx), float(cy)), float(radius))
+
+    def _finalize(self, center: Tuple[float, float], radius: float,
+                  target_color: Color, scale: float) -> Optional[CargoItem]:
+        if scale < 1.0:
+            center = (center[0] / scale, center[1] / scale)
+            radius = radius / scale
+
+        smoothed = self._kalman_predict(center)
+
+        self.detector.last_center = center
+        self.detector.roi_miss_count = 0
+
+        self.detector._center_history.append(center)
+        self.detector._radius_history.append(radius)
+
+        final_center = smoothed if smoothed is not None else center
+        return self._build_cargo_item(final_center, target_color)
+
+    def _kalman_predict(self, measurement: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+        result, self.detector.tracking_initialized, self.detector.lost_frames, self.detector._last_predict_time = (
+            kalman_filter.kalman_update(
+                self.detector.kf, measurement,
+                self.detector.tracking_initialized,
+                self.detector.lost_frames,
+                self.detector.max_lost_frames,
+                self.detector._kf_q_base,
+                self.detector._kf_q_vel_base,
+                self.detector._last_predict_time,
+            )
+        )
+        return result
+
+    def _fallback_predict(self, target_color: Color, scale: float) -> Optional[CargoItem]:
+        center = self._kalman_predict(None)
+        if center is not None:
+            if scale < 1.0:
+                center = (center[0] / scale, center[1] / scale)
+            return self._build_cargo_item(center, target_color)
+
+        if len(self.detector._center_history) > 0:
+            avg = (
+                sum(c[0] for c in self.detector._center_history) / len(self.detector._center_history),
+                sum(c[1] for c in self.detector._center_history) / len(self.detector._center_history),
+            )
+            return self._build_cargo_item(avg, target_color)
+
+        return None
+
+    def _build_cargo_item(self, center: Tuple[float, float], target_color: Color) -> CargoItem:
+        from ..target_creation import create_cargo_item
+        return create_cargo_item(center, target_color)
