@@ -52,14 +52,11 @@ from .visual_state_machine import (
 )
 
 __all__ = [
-    # 基类
     "BaseStateMachine",
     "State",
     "Transition",
-    # 视觉状态机
     "VisualStateMachine",
     "VisualContext",
-    # 状态类
     "IdleState",
     "SearchState",
     "TrackingState",
