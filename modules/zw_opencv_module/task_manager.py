@@ -121,14 +121,13 @@ class TaskManager:
         if all_results is None:
             all_results = {}
 
-        processed_frame = frame  # camera_manager 已保存干净副本
+        processed_frame = frame  # 显示用帧，累积绘制
 
         for task in self.tasks.values():
             if task.enabled:
-                # 计时：任务处理
                 timer_name = f"task_{task.name}_process"
                 profiler.start(timer_name)
-                result = task.execute(processed_frame, all_results)
+                result = task.execute(frame, all_results)  # 始终用原始帧处理
                 profiler.stop(timer_name)
 
                 all_results[task.name] = result
