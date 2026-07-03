@@ -29,6 +29,42 @@ TYPE_ARRIVED = 0x02         # STM32 -> Orange Pi: zone_id(1B)
 TYPE_PICK = 0x03            # STM32 -> Orange Pi: zone_id(1B)
 TYPE_SET = 0x04             # STM32 -> Orange Pi: zone_id(1B)
 
+# Mission synchronization frame types (added for logistics competition)
+TYPE_CMD_FROM_MCU = 0x10        # MCU -> Orange Pi: cmd_id(1B) + args
+TYPE_STATUS_FROM_VISION = 0x11  # Orange Pi -> MCU: mission_state + visual_state + flags + cargo_count
+TYPE_QR_RESULT = 0x12           # Orange Pi -> MCU: len(1B) + ascii QR string
+TYPE_COLOR_RESULT = 0x13        # Orange Pi -> MCU: slot_idx + color_id + confidence
+TYPE_ACTION_DONE = 0x14         # MCU -> Orange Pi: action_id + result
+TYPE_HEARTBEAT = 0x15           # Bidirectional: seq + mission_state + visual_state
+TYPE_REQUEST_SYNC = 0x16        # Bidirectional: requested_state
+TYPE_VISUAL_SERVO_DATA = 0x17   # Orange Pi -> MCU: error_x(2B) + error_y(2B) + distance(2B) + state(1B)
+TYPE_EMERGENCY_STOP = 0x18      # Bidirectional: reason(1B)
+
+# Sub-commands for TYPE_CMD_FROM_MCU
+CMD_START_QR = 0x01             # Start QR detection
+CMD_START_COLOR_DETECT = 0x02   # No arg
+CMD_TRACK_TARGET = 0x03         # arg: color_id(1B)
+CMD_TRACK_RING = 0x04           # arg: color_id(1B)
+CMD_TRACK_TOP = 0x05            # arg: color_id(1B)
+CMD_STOP_VISUAL = 0x06          # No arg
+
+class VisualFlags:
+    """Bit flags for STATUS_FROM_VISION."""
+    TARGET_FOUND = 0x01
+    READY_TO_PICK = 0x02
+    READY_TO_PLACE = 0x04
+    VISUAL_FAIL = 0x08
+    QR_OK = 0x10
+    CARGO_CONFIRMED = 0x20
+    COLOR_MISMATCH = 0x40
+
+# Action result codes for TYPE_ACTION_DONE
+ACTION_OK = 0x00
+ACTION_BUSY = 0x01
+ACTION_TIMEOUT = 0x02
+ACTION_FAIL = 0x03
+ACTION_NO_CARGO = 0x04
+
 # Error types for TYPE_ERROR
 ERROR_TYPE_X = 0            # X direction error
 ERROR_TYPE_Y = 1            # Y direction error
@@ -172,25 +208,6 @@ def parse_zone_payload(payload: bytes) -> Optional[int]:
     return payload[0]
 
 
-def parse_error_payload(payload: bytes) -> Optional[tuple]:
-    """
-    Parse error frame payload.
-
-    Args:
-        payload: Payload bytes (error_type + error_value)
-
-    Returns:
-        (error_type, error_value) tuple if valid, None if invalid
-    """
-    if len(payload) != 3:
-        return None
-
-    error_type = payload[0]
-    error_value = int.from_bytes(payload[1:3], byteorder='little', signed=True)
-
-    return (error_type, error_value)
-
-
 def build_orange_send_frame(state: int, deta_x: int, deta_y: int, distance_mm: float = 0.0) -> bytes:
     """
     Build a frame matching STM32 orange_send protocol.
@@ -217,3 +234,146 @@ def build_orange_send_frame(state: int, deta_x: int, deta_y: int, distance_mm: f
     frame.extend(struct.pack('<f', distance_mm))  # float32 little-endian
     frame.append(ORANGE_SEND_TAIL)  # Tail: 0xEE
     return bytes(frame)
+
+
+# ===== Mission synchronization helpers =====
+
+def _build_frame(frame_type: int, payload: bytes) -> bytes:
+    """Build a standard SOF/Length/Type/Payload/Checksum frame."""
+    content = bytes([frame_type]) + payload
+    checksum = xor_checksum(content)
+    length = len(content) + 1
+    return bytes([SOF, length]) + content + bytes([checksum])
+
+
+def build_cmd_frame(cmd_id: int, args: bytes = b"") -> bytes:
+    """Build TYPE_CMD_FROM_MCU frame."""
+    return _build_frame(TYPE_CMD_FROM_MCU, bytes([cmd_id]) + args)
+
+
+def parse_cmd_payload(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_CMD_FROM_MCU payload -> (cmd_id, args)."""
+    if len(payload) < 1:
+        return None
+    return payload[0], payload[1:]
+
+
+def build_status_from_vision_frame(
+    mission_state: int, visual_state: int, flags: int, cargo_count: int
+) -> bytes:
+    """Build TYPE_STATUS_FROM_VISION frame."""
+    payload = bytes([mission_state, visual_state, flags, cargo_count])
+    return _build_frame(TYPE_STATUS_FROM_VISION, payload)
+
+
+def parse_status_from_vision_payload(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_STATUS_FROM_VISION payload."""
+    if len(payload) != 4:
+        return None
+    return payload[0], payload[1], payload[2], payload[3]
+
+
+def build_qr_result_frame(qr_str: str) -> bytes:
+    """Build TYPE_QR_RESULT frame."""
+    data = qr_str.encode('ascii', errors='ignore')
+    if len(data) > MAX_PAYLOAD_SIZE - 1:
+        raise ValueError(f"QR string too long: {len(data)}")
+    payload = bytes([len(data)]) + data
+    return _build_frame(TYPE_QR_RESULT, payload)
+
+
+def parse_qr_result_payload(payload: bytes) -> Optional[str]:
+    """Parse TYPE_QR_RESULT payload."""
+    if len(payload) < 1:
+        return None
+    length = payload[0]
+    if len(payload) != 1 + length:
+        return None
+    return payload[1:].decode('ascii', errors='ignore')
+
+
+def build_color_result_frame(color_id: int, confidence: int) -> bytes:
+    """Build TYPE_COLOR_RESULT frame."""
+    return _build_frame(TYPE_COLOR_RESULT, bytes([color_id, confidence]))
+
+
+def parse_color_result_payload(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_COLOR_RESULT payload -> (color_id, confidence)."""
+    if len(payload) != 2:
+        return None
+    return payload[0], payload[1]
+
+
+def build_action_done_frame(action_id: int, result: int) -> bytes:
+    """Build TYPE_ACTION_DONE frame."""
+    return _build_frame(TYPE_ACTION_DONE, bytes([action_id, result]))
+
+
+def parse_action_done_payload(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_ACTION_DONE payload -> (action_id, result)."""
+    if len(payload) != 2:
+        return None
+    return payload[0], payload[1]
+
+
+def build_heartbeat_frame(seq: int, mission_state: int, visual_state: int) -> bytes:
+    """Build TYPE_HEARTBEAT frame."""
+    return _build_frame(TYPE_HEARTBEAT, bytes([seq, mission_state, visual_state]))
+
+
+def parse_heartbeat_payload(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_HEARTBEAT payload -> (seq, mission_state, visual_state)."""
+    if len(payload) != 3:
+        return None
+    return payload[0], payload[1], payload[2]
+
+
+def build_request_sync_frame(requested_state: int) -> bytes:
+    """Build TYPE_REQUEST_SYNC frame."""
+    return _build_frame(TYPE_REQUEST_SYNC, bytes([requested_state]))
+
+
+def parse_request_sync_payload(payload: bytes) -> Optional[int]:
+    """Parse TYPE_REQUEST_SYNC payload."""
+    if len(payload) != 1:
+        return None
+    return payload[0]
+
+
+def build_visual_servo_data_frame(
+    error_x: int, error_y: int, distance_mm: int, state: int
+) -> bytes:
+    """
+    Build TYPE_VISUAL_SERVO_DATA frame.
+    All 16-bit values are signed little-endian.
+    """
+    payload = (
+        error_x.to_bytes(2, byteorder='little', signed=True)
+        + error_y.to_bytes(2, byteorder='little', signed=True)
+        + distance_mm.to_bytes(2, byteorder='little', signed=True)
+        + bytes([state])
+    )
+    return _build_frame(TYPE_VISUAL_SERVO_DATA, payload)
+
+
+def parse_visual_servo_data_payload(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_VISUAL_SERVO_DATA payload -> (error_x, error_y, distance_mm, state)."""
+    if len(payload) != 7:
+        return None
+    error_x = int.from_bytes(payload[0:2], byteorder='little', signed=True)
+    error_y = int.from_bytes(payload[2:4], byteorder='little', signed=True)
+    distance_mm = int.from_bytes(payload[4:6], byteorder='little', signed=True)
+    state = payload[6]
+    return error_x, error_y, distance_mm, state
+
+
+def build_emergency_stop_frame(reason: int) -> bytes:
+    """Build TYPE_EMERGENCY_STOP frame."""
+    return _build_frame(TYPE_EMERGENCY_STOP, bytes([reason]))
+
+
+def parse_emergency_stop_payload(payload: bytes) -> Optional[int]:
+    """Parse TYPE_EMERGENCY_STOP payload -> reason."""
+    if len(payload) != 1:
+        return None
+    return payload[0]
