@@ -9,7 +9,7 @@ from .events import (
     HeartbeatEvent, EmergencyStopEvent, RequestSyncEvent,
     FrameReady, ServoData, TargetFound, TargetLost,
     ReadyToPick, ReadyToPlace,
-    QRResult, ColorResult,
+    QRResult, ColorResult, FrameResult,
 )
 
 __all__ = [
@@ -21,5 +21,5 @@ __all__ = [
     "HeartbeatEvent", "EmergencyStopEvent", "RequestSyncEvent",
     "FrameReady", "ServoData", "TargetFound", "TargetLost",
     "ReadyToPick", "ReadyToPlace",
-    "QRResult", "ColorResult",
+    "QRResult", "ColorResult", "FrameResult",
 ]
