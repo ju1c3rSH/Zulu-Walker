@@ -494,6 +494,13 @@ class CameraManager:
                     print(f"Error in result callback: {e}")
             profiler.stop("callbacks")
 
+            if self._event_bus:
+                try:
+                    from context.events import FrameResult
+                    self._event_bus.publish(FrameResult(all_results))
+                except ImportError:
+                    pass
+
             profiler.stop("total")
             if any_fresh:
                 profiler.end_frame()

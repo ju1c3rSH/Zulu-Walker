@@ -100,3 +100,7 @@ def stop():
         _uart_interface.stop()
 
     print("[zw_uart_module] Stopped")
+
+
+def get_interface():
+    return _uart_interface

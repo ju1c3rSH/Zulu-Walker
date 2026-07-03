@@ -13,6 +13,7 @@ class ModuleManager:
         self.modules = {}
         self.running = True
         self._loop_methods = {}
+
     def load_module(self,module_name):
         try:
             # 使用 modules.{name} 路径加载，与绝对导入一致
@@ -27,6 +28,7 @@ class ModuleManager:
         except Exception as e:
             print(f"Failed to load module '{module_name}': {e}")
             return False
+
     def start_all(self):
         """启动所有模块
         检查模块是否有Loop和Start方法，分别调用，并将Loop方法注册到主循环调用列表
@@ -89,7 +91,7 @@ class SystemConfig:
     AUTO_START_MODULES = [
         #'uart_test',
         'zw_opencv_module',
-        'zw_uart_module',
+        # 'zw_uart_module' -- loaded manually in main() with event_bus injection
     ]
 
 
@@ -97,8 +99,36 @@ class SystemConfig:
 def main():
     """主入口"""
     print("0xfb709394")
+
+    # 创建中枢层：Coordinator ← EventBus ← 各模块
+    from context import EventBus, MissionCoordinator
+    bus = EventBus()
+    coordinator = MissionCoordinator(bus)
+
+    # 注入 EventBus 到各模块（必须在 start_all() 之前）
+    import modules.zw_opencv_module as opencv_mod
+    import modules.zw_uart_module as uart_mod
+    opencv_mod.init(event_bus=bus)
+    uart_mod.init(event_bus=bus)
+
+    # 启动模块（UART 不在 AUTO_START_MODULES 里，手动启动）
     manager = ModuleManager()
     manager.start_all()
+    uart_mod.start()
+
+    # 桥接：Coordinator ↔ 各模块（必须在 start 之后，拿到实例引用）
+    from modules.zw_opencv_module import get_camera_manager
+    from modules.zw_uart_module import get_interface
+
+    cm = get_camera_manager()
+    if cm:
+        coordinator.connect_camera(cm)
+
+    uart = get_interface()
+    if uart:
+        coordinator.set_uart_sender(uart.send_raw)
+
+    coordinator.start()
     manager.run_main_loop()
     
     
