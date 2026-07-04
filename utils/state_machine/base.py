@@ -266,6 +266,29 @@ class BaseStateMachine(ABC):
         if callback in self._state_callbacks:
             self._state_callbacks.remove(callback)
 
+    def on_state_enter(
+        self,
+        state: str,
+        callback: Callable[[Any, str], None]
+    ) -> None:
+        """进入指定状态时触发回调 (callback(context, from_state))"""
+        self.add_enter_callback(state, callback)
+
+    def on_state_exit(
+        self,
+        state: str,
+        callback: Callable[[Any, str], None]
+    ) -> None:
+        """退出指定状态时触发回调 (callback(context, to_state))"""
+        self.add_exit_callback(state, callback)
+
+    def on_state_change(
+        self,
+        callback: Callable[[str, str, Optional[str]], None]
+    ) -> None:
+        """任意状态发生变化时触发回调 (callback(old_state, new_state, event))"""
+        self.add_state_change_callback(callback)
+
     def add_enter_callback(
         self,
         state_name: str,
