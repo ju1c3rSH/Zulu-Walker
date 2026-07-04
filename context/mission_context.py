@@ -19,11 +19,12 @@ from modules.zw_uart_module.protocol import (
     build_status_from_vision_frame, build_visual_servo_data_frame,
     build_qr_result_frame, build_color_result_frame,
     build_heartbeat_frame,
-    CMD_START_QR, CMD_START_COLOR_DETECT,
-    CMD_TRACK_TARGET, CMD_TRACK_RING, CMD_TRACK_TOP,
+    CMD_START_QR, CMD_TRACK_CARGO, CMD_TRACK_RING,
     CMD_STOP_VISUAL,
 )
+from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.cargo import CargoSet
+from modules.zw_opencv_module.processors.base import ColorTrackable
 
 
 _VISUAL_STATE_TO_INT = {
@@ -46,12 +47,12 @@ class MissionCoordinator:
         self.event_bus = event_bus
         self.mission_sm = MissionStateMachine()
         self.visual_sm = VisualStateMachine()
-        self.cargo_set = CargoSet.create_standard()
+        self.mission_sm.context.cargo_set = CargoSet.create_standard()
 
         self._uart_sender: Optional[callable] = None
         self._camera_manager = None
         self._qr_decoded = False
-        self._active_task: Optional[str] = None  # "qr_detect" / "target_track" / etc
+        self._active_task: Optional[str] = None  # "qr_detect" / "track_cargo" / "ring_track"
 
         self._ready_frames = 0
         self._heartbeat_seq = 0
@@ -126,31 +127,23 @@ class MissionCoordinator:
         elif not self._qr_decoded:
             return  # QR 门控
 
-        elif cmd == CMD_START_COLOR_DETECT:
-            self._activate_task("color_detect")
-
-        elif cmd == CMD_TRACK_TARGET:
-            color = int(args[0]) if len(args) >= 1 else 0
-            self._activate_task("target_track", color)
+        elif cmd == CMD_TRACK_CARGO:
+            color_id = int(args[0]) if len(args) >= 1 else 0
+            self._activate_task("track_cargo", Color(color_id))
 
         elif cmd == CMD_TRACK_RING:
-            color = int(args[0]) if len(args) >= 1 else 0
-            self._activate_task("ring_track", color)
-
-        elif cmd == CMD_TRACK_TOP:
-            color = int(args[0]) if len(args) >= 1 else 0
-            self._activate_task("top_track", color)
+            color_id = int(args[0]) if len(args) >= 1 else 0
+            self._activate_task("ring_track", Color(color_id))
 
         elif cmd == CMD_STOP_VISUAL:
             self._deactivate_all_visual()
 
-    def _activate_task(self, task_name: str, color: Optional[int] = None) -> None:
+    def _activate_task(self, task_name: str, color: Optional[Color] = None) -> None:
         if not self._camera_manager:
             return
 
         cm = self._camera_manager
-        all_tasks = ["qr_detect", "color_detect",
-                     "target_track", "ring_track", "top_track"]
+        all_tasks = ["qr_detect", "track_cargo", "ring_track"]
 
         # disable all
         for cam in cm.cameras.values():
@@ -158,16 +151,19 @@ class MissionCoordinator:
                 cam.disable_task(name)
 
         # enable the target one
-        for cam in cm.cameras.values():
-            if (task_name == "qr_detect" and cam.config.source == "qr_cam"):
+        for cam_id, cam in cm.cameras.items():
+            is_qr = cam_id.endswith("_qr")
+            is_cargo = cam_id.endswith("_cargo")
+
+            if task_name == "qr_detect" and is_qr:
                 cam.enable_task(task_name)
                 self._active_task = task_name
                 break
-            elif task_name != "qr_detect" and cam.config.source != "qr_cam":
+            elif task_name in ("track_cargo", "ring_track") and is_cargo:
                 cam.enable_task(task_name)
                 if color is not None:
                     t = cam.get_task(task_name)
-                    if t and hasattr(t.processor, 'set_target_color'):
+                    if t and isinstance(t.processor, ColorTrackable):
                         t.processor.set_target_color(color)
                 self.visual_sm.start()  # IDLE → SEARCH
                 self._active_task = task_name
@@ -177,7 +173,7 @@ class MissionCoordinator:
     def _deactivate_all_visual(self) -> None:
         if not self._camera_manager:
             return
-        all_tasks = ["color_detect", "target_track", "ring_track", "top_track"]
+        all_tasks = ["track_cargo", "ring_track"]
         for cam in self._camera_manager.cameras.values():
             for name in all_tasks:
                 cam.disable_task(name)
@@ -237,9 +233,7 @@ class MissionCoordinator:
 
                 if task_name == "qr_detect":
                     self._handle_track_frame(data)
-                elif task_name == "color_detect":
-                    self._handle_track_frame(data)
-                elif task_name in ("target_track", "ring_track", "top_track"):
+                elif task_name in ("track_cargo", "ring_track"):
                     self._handle_track_frame(data)
 
     def _handle_track_frame(self, data: dict) -> None:
@@ -325,6 +319,7 @@ class MissionCoordinator:
     # ===== debug =====
 
     def get_info(self) -> dict:
+        cs = self.mission_sm.context.cargo_set
         return {
             "mission": self.mission_sm.get_info(),
             "visual_state": self.visual_sm.current_state,
@@ -333,10 +328,10 @@ class MissionCoordinator:
             "ready_frames": self._ready_frames,
             "cargo_batch1": [
                 {"index": i.index, "color": i.color.name, "available": i.available}
-                for i in self.cargo_set.get_batch(1)
-            ],
+                for i in cs.get_batch(1)
+            ] if cs else [],
             "cargo_batch2": [
                 {"index": i.index, "color": i.color.name, "available": i.available}
-                for i in self.cargo_set.get_batch(2)
-            ],
+                for i in cs.get_batch(2)
+            ] if cs else [],
         }
