@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
+"""
+Processor 基类和协议定义。
+
+Protocol 规范：
+  ColorTrackable — 实现了 set_target_color(color: Color) 的 Processor
+    自动满足此协议。使用 isinstance(processor, ColorTrackable) 检测，
+    运行时通过 @runtime_checkable 反射检查方法是否存在。
+    注意：Protocol 不检查方法签名，请确保实现正确。
+"""
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Optional, Protocol,runtime_checkable
+from ..models.color import Color
 import numpy as np
 
 
@@ -57,3 +67,8 @@ class Processor(ABC):
             np.ndarray: 绘制后的帧
         """
         return frame
+
+@runtime_checkable
+class ColorTrackable(Protocol):
+    @abstractmethod
+    def set_target_color(self,color:Color) -> None: ...
