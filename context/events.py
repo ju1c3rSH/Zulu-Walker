@@ -47,7 +47,7 @@ class FrameReady:
 class ServoData:
     error_x: int
     error_y: int
-    distance_mm: int
+    flags: int
     visual_state: int
 
 
