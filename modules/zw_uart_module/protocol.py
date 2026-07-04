@@ -42,9 +42,7 @@ TYPE_EMERGENCY_STOP = 0x18      # Bidirectional: reason(1B)
 
 # Sub-commands for TYPE_CMD_FROM_MCU
 CMD_START_QR = 0x01             # Start QR detection
-CMD_TRACK_CARGO = 0x03          # arg: color_id(1B) — track cargo from top view
-CMD_TRACK_RING = 0x04           # arg: color_id(1B) — align to color ring
-CMD_STOP_VISUAL = 0x06          # No arg
+CMD_STOP_VISUAL = 0x06          # No arg — emergency stop all visual tasks
 
 class VisualFlags:
     """Bit flags for STATUS_FROM_VISION."""
