@@ -19,8 +19,7 @@ from modules.zw_uart_module.protocol import (
     build_status_from_vision_frame, build_visual_servo_data_frame,
     build_qr_result_frame, build_color_result_frame,
     build_heartbeat_frame,
-    CMD_START_QR, CMD_TRACK_CARGO, CMD_TRACK_RING,
-    CMD_STOP_VISUAL,
+    CMD_START_QR, CMD_STOP_VISUAL,
 )
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.cargo import CargoSet
@@ -126,14 +125,6 @@ class MissionCoordinator:
 
         elif not self._qr_decoded:
             return  # QR 门控
-
-        elif cmd == CMD_TRACK_CARGO:
-            color_id = int(args[0]) if len(args) >= 1 else 0
-            self._activate_task("track_cargo", Color(color_id))
-
-        elif cmd == CMD_TRACK_RING:
-            color_id = int(args[0]) if len(args) >= 1 else 0
-            self._activate_task("ring_track", Color(color_id))
 
         elif cmd == CMD_STOP_VISUAL:
             self._deactivate_all_visual()
