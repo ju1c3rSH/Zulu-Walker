@@ -23,8 +23,6 @@ from .processors.base import VisionResult
 from .processors.circle_target_processor import CircleTargetProcessor
 from .performance import profiler
 from .param_utils import (
-    load_detect_params, apply_params_to_detector, get_config_path,
-    load_uv_params, apply_uv_params_to_detector,
     load_camera_params, apply_camera_params_to_capture
 )
 from utils.camera_misc_util import CameraMiscUtil
@@ -195,7 +193,7 @@ class Camera:
             self._last_frame = frame.copy()  # 保存干净副本，避免累积绘制问题
             self._fresh_frame_count += 1
         elif self._last_frame is not None:
-            self._is_current_frame_gunmu = True
+            self._is_current_frame_gunmu = False
             self._empty_queue_count += 1
             # 每 5 秒打印一次空队列率
             elapsed = time.time() - self._diag_start_time
@@ -383,38 +381,11 @@ class CameraManager:
                 use_hardware_accel=True,
             )
 
-        # 从 YAML 加载检测参数并应用到所有检测器
-        self._apply_detect_params()
         self._apply_camera_params()
 
         self._running = True
         self._process_thread = Thread(target=self._process_loop, daemon=True)
         self._process_thread.start()
-
-    def _apply_detect_params(self):
-        """从 YAML 加载检测参数并应用到所有检测器"""
-        config_path = get_config_path()
-        current_method, methods_params = load_detect_params(config_path)
-        params = methods_params.get(current_method.value, {})
-
-        # 加载 UV 参数
-        uv_params = load_uv_params()
-
-        print(f"[CameraManager] Loading detect params from: {config_path}")
-        print(f"[CameraManager] Current method: {current_method.value}")
-        print(f"[CameraManager] Params: {params}")
-        print(f"[CameraManager] UV params: {uv_params}")
-
-        for camera in self.cameras.values():
-            task = camera.get_task("circle_detect")
-            if task and hasattr(task.processor, 'detector'):
-                apply_params_to_detector(task.processor.detector, current_method, params)
-                apply_uv_params_to_detector(task.processor.detector, uv_params)
-                detector = task.processor.detector
-                print(f"[CameraManager] After apply - quad_aspect_ratio: {detector.quad_aspect_ratio}, "
-                      f"uv_min_area: {detector.uv_min_area}, enable_color_filter: {detector.enable_color_filter}")
-
-        print(f"[CameraManager] Loaded detect params: method={current_method.value}")
 
     def _apply_camera_params(self):
         """从 YAML 加载摄像头硬件参数并应用到所有摄像头"""
