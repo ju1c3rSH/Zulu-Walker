@@ -121,6 +121,7 @@ class MissionCoordinator:
         if cmd == CMD_START_QR:
             self._qr_decoded = False
             self.mission_sm.start()
+            self.mission_sm.update()
             self._activate_task("qr_detect")
 
         elif not self._qr_decoded:
@@ -184,9 +185,11 @@ class MissionCoordinator:
 
     def _on_arrived(self, event: ArrivedEvent) -> None:
         self.mission_sm.on_arrived(event.zone_id)
+        self.mission_sm.update()
 
     def _on_action_done(self, event: ActionDoneEvent) -> None:
         self.mission_sm.on_action_done(event.action_id, event.result)
+        self.mission_sm.update()
 
     def _on_heartbeat(self, event: HeartbeatEvent) -> None:
         self._last_mcu_heartbeat = time.monotonic()
@@ -209,6 +212,7 @@ class MissionCoordinator:
                 0, 0,
                 self.mission_sm.context.cargo_count,
             ))
+            self.mission_sm.update()
 
     def _on_color_result_event(self, event: ColorResult) -> None:
         self._send(build_color_result_frame(event.color_id, event.confidence))
@@ -274,11 +278,13 @@ class MissionCoordinator:
             from modules.zw_uart_module.protocol import VisualFlags
             flags |= VisualFlags.TARGET_FOUND
             state = self.mission_sm.current_state
-            if state in ("ALIGN_RAW",):
+            picking = self.mission_sm.context.picking_from_rough
+            if state in ("ALIGN_RAW",) or (state == "ALIGN_ROUGH" and picking):
                 flags |= VisualFlags.READY_TO_PICK
-            elif state in ("ALIGN_ROUGH", "ALIGN_TEMP"):
+            elif state in ("ALIGN_ROUGH", "ALIGN_TEMP") and not (state == "ALIGN_ROUGH" and picking):
                 flags |= VisualFlags.READY_TO_PLACE
             self.mission_sm.on_visual_status(self._visual_state_int(), flags)
+            self.mission_sm.update()
             self._send(build_status_from_vision_frame(
                 self.mission_sm.current_state_id,
                 self._visual_state_int(),

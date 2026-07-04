@@ -96,11 +96,16 @@
   - 离开上述状态 → 自动 `_deactivate_all_visual()`
 
 ### P1 — 功能补全
-- [ ] `MissionSM` 参数化改造（3 循环 + 2 批次）：
-  - 当前是单次直线流程，需改为 `current_step(0→1→2)` + `current_batch(1→2)` 循环
-  - `CHECK_LOAD` 后判断是否还有物料 → 回 `ALIGN_RAW` 或去 `NAV_TO_ROUGH`
-  - `PLACE_ROUGH` 后判断是否还有物料 → 回 `ALIGN_ROUGH` 或去 `NAV_TO_TEMP`
-- [ ] `PLACE_TEMP` 死锁修复：`on_action_done` 触发 `ALL_PLACED` 事件，或改为条件自动转换
+- [x] `MissionSM` 参数化改造（3 循环 + 2 批次）
+  - `_CheckLoadState.on_execute` 根据 zone+step 路由（RAW→RAW 循环 / ROUGH→ROUGH 循环 / 去下一站）
+  - `_PlaceRoughState.on_execute` 循环放料 → 切换 `picking_from_rough` 进入取料阶段
+  - `_PlaceTempState.on_execute` 循环放料 → `cargo_count==0` 回家 ✅ 修死锁
+- [x] 新增 `PICK_ROUGH` 状态（MissionState=26）+ `_PickRoughState` 类 + 事件转换
+- [x] 混合事件模型：视觉决策改用 `on_execute`（6 个视觉事件转换删除），MCU 事件保留事件驱动
+- [x] `place_action_done` 标志解决 PLACE 状态不等 ACTION_DONE 就跳走的问题
+- [x] `mission_context.py` 5 处事件处理器后加 `mission_sm.update()`
+- [x] `_handle_track_frame` 中 ALIGN_ROUGH 区分 `picking_from_rough` → 正确设置 READY_TO_PICK/PLACE
+- [x] 文档同步：`protocol.md` action_id=4 + 3 循环说明；`state_machine.md` PICK_ROUGH + 混合模型
 
 ### P2 — 架构纯净化
 - [ ] Coordinator 桥接代码 EventBus 化：`_activate_task` / `_deactivate_all_visual` 改为 `EnableTask` / `DisableTask` 事件
