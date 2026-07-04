@@ -88,7 +88,9 @@ class MissionContext:
     cargo_set: Optional[CargoSet] = None
 
     # Batch order parsed from QR, e.g. [Color.RED, Color.GREEN, Color.BLUE]
-    batch_order: List[Color] = field(default_factory=list)
+    current_batch_order: List[Color] = field(default_factory=list)
+    first_batch_order: List[Color] = field(default_factory=list)
+    second_batch_order: List[Color] = field(default_factory=list)
 
     # Progress
     current_batch: int = 0          # 1=first, 2=second
@@ -122,7 +124,7 @@ class MissionContext:
 
     def reset(self):
         """Reset context to initial values (keep QR result optionally)."""
-        self.batch_order.clear()
+        self.current_batch_order.clear()
         self.current_batch = 0
         self.current_step = 0
         self.cargo_count = 0
@@ -154,7 +156,11 @@ class MissionContext:
             second = [int(c) for c in parts[1] if c in '123']
             if len(first) != 3 or len(second) != 3:
                 return False
-            self.batch_order = [Color(v) for v in first]
+            self.current_batch_order = [Color(v) for v in first]
+            # 这里记录下两个批次的顺序，方便后续使用
+            self.first_batch_order = [Color(v) for v in first]
+            self.second_batch_order = [Color(v) for v in second]
+
             # second batch stored in cargo_set via CargoItem.batch
         except (ValueError, TypeError):
             return False
@@ -163,20 +169,20 @@ class MissionContext:
 
     def current_target_color(self) -> Optional[Color]:
         """Return the color that should be picked/placed now."""
-        if not self.batch_order or self.current_step >= len(self.batch_order):
+        if not self.current_batch_order or self.current_step >= len(self.current_batch_order):
             return None
-        return self.batch_order[self.current_step]
+        return self.current_batch_order[self.current_step]
 
     def advance_target(self):
         """Move to next target in current batch."""
-        if self.current_step < len(self.batch_order) - 1:
+        if self.current_step < len(self.current_batch_order) - 1:
             self.current_step += 1
         else:
             self.current_step = 0
 
     def is_batch_complete(self) -> bool:
         """True when all 3 materials in current batch are handled."""
-        return self.current_step >= len(self.batch_order) - 1 and self.cargo_count == 0
+        return self.current_step >= len(self.current_batch_order) - 1 and self.cargo_count == 0
 
     def update_visual_flags(self, flags: int):
         self.visual_flags = flags
@@ -242,9 +248,11 @@ class _NavToRawState(State):
 class _AlignRawState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         print("[MissionSM] Enter ALIGN_RAW")
+        
         ctx.state_entry_time = time()
         ctx.ready_to_pick = False
         ctx.target_found = False
+
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         # Transition to PICK_RAW when visual reports READY_TO_PICK
@@ -293,7 +301,7 @@ class _CheckLoadState(State):
         if ctx.cargo_confirmed:
             ctx.cargo_count += 1
             ctx.current_step += 1
-            ctx.target_color = ctx.batch_order[ctx.current_step] if ctx.current_step < 3 else Color.RED
+            ctx.target_color = ctx.current_batch_order[ctx.current_step] if ctx.current_step < 3 else Color.RED
             if ctx.current_step < 3:
                 if ctx.current_zone == Zone.RAW:
                     return MissionStateNames.ALIGN_RAW
@@ -359,7 +367,7 @@ class _PlaceRoughState(State):
             return MissionStateNames.ALIGN_ROUGH
         ctx.picking_from_rough = True
         ctx.current_step = 0
-        ctx.target_color = ctx.batch_order[0] if ctx.batch_order else Color.RED
+        ctx.target_color = ctx.current_batch_order[0] if ctx.current_batch_order else Color.RED
         return MissionStateNames.ALIGN_ROUGH
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
@@ -729,4 +737,4 @@ if __name__ == "__main__":
 
     sm.on_qr_result("123+231")
     print("After QR:", sm.get_info())
-    print("Batch order:", sm.context.batch_order)
+    print("Batch order:", sm.context.current_batch_order)
