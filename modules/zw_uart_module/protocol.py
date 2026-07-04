@@ -33,7 +33,7 @@ TYPE_SET = 0x04             # STM32 -> Orange Pi: zone_id(1B)
 TYPE_CMD_FROM_MCU = 0x10        # MCU -> Orange Pi: cmd_id(1B) + args
 TYPE_STATUS_FROM_VISION = 0x11  # Orange Pi -> MCU: mission_state + visual_state + flags + cargo_count
 TYPE_QR_RESULT = 0x12           # Orange Pi -> MCU: len(1B) + ascii QR string
-TYPE_COLOR_RESULT = 0x13        # Orange Pi -> MCU: slot_idx + color_id + confidence
+TYPE_COLOR_RESULT = 0x13        # Orange Pi -> MCU: color_id(1B) + confidence(1B)
 TYPE_ACTION_DONE = 0x14         # MCU -> Orange Pi: action_id + result
 TYPE_HEARTBEAT = 0x15           # Bidirectional: seq + mission_state + visual_state
 TYPE_REQUEST_SYNC = 0x16        # Bidirectional: requested_state
@@ -42,10 +42,8 @@ TYPE_EMERGENCY_STOP = 0x18      # Bidirectional: reason(1B)
 
 # Sub-commands for TYPE_CMD_FROM_MCU
 CMD_START_QR = 0x01             # Start QR detection
-CMD_START_COLOR_DETECT = 0x02   # No arg
-CMD_TRACK_TARGET = 0x03         # arg: color_id(1B)
-CMD_TRACK_RING = 0x04           # arg: color_id(1B)
-CMD_TRACK_TOP = 0x05            # arg: color_id(1B)
+CMD_TRACK_CARGO = 0x03          # arg: color_id(1B) — track cargo from top view
+CMD_TRACK_RING = 0x04           # arg: color_id(1B) — align to color ring
 CMD_STOP_VISUAL = 0x06          # No arg
 
 class VisualFlags:
