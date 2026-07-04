@@ -3,6 +3,7 @@ import numpy as np
 from typing import Optional, Tuple
 from ..detectors.circle_target_detector import CircleTargetDetector, DetectMethod
 from ..models.circle import CircleTargetItem, CircleTargets
+from ..models import Color
 from utils.focal_distance_util import reference_size_dict
 
 from .base import Processor, VisionResult
@@ -16,7 +17,7 @@ class CircleTargetProcessor(Processor):
         self.detector = CircleTargetDetector(name)
         self.target_max_radius = 10  # 最大圆半径,单位为cm
         self.target_min_radius = 2  # 最小圆半径,单位为cm
-        self.target_color: Optional[str] = "Red"  # 目标颜色
+        self.target_color: Optional[Color] = Color.RED  # 目标颜色
         self._frame_width: int = 640
         self._frame_height: int = 480
         self._fps: float = 0.0  # 从外部获取的FPS
@@ -25,14 +26,21 @@ class CircleTargetProcessor(Processor):
         self._last_logged_target_found: Optional[bool] = None
         cv2.ocl.setUseOpenCL(True)
 
-    def set_target_color(self, color: Optional[str]):
+    def set_target_color(self, color: Optional[Color]):
         """
         设置目标颜色
 
         Args:
-            color: 颜色名称 ('Red', 'Green', 'Blue') 或 None 表示检测所有颜色
+            color: 目标颜色枚举，None 表示检测所有颜色
         """
         self.target_color = color
+
+    @property
+    def _target_color_str(self) -> Optional[str]:
+        """Convert Color enum to detector-compatible string (e.g. 'Red')."""
+        if self.target_color is None:
+            return None
+        return self.target_color.name.lower().capitalize()
 
     def set_detect_method(self, method: DetectMethod):
         """
@@ -72,21 +80,21 @@ class CircleTargetProcessor(Processor):
             self._frame_height, self._frame_width = frame.shape[:2]
 
             targets = self.detector.detect_circle_targets(
-                frame, target_color=self.target_color
+                frame, target_color=self._target_color_str
             )
 
             target = self._find_target(targets)
 
             if target is None:
                 error_msg = "Target not found"
-                if self.target_color:
-                    error_msg = f"{self.target_color} color target not found"
+                if self.target_color is not None:
+                    error_msg = f"{self.target_color.name} target not found"
                 self._log_status(False, None, 0, 0)
                 return VisionResult(
                     task_name=self.name,
                     result_data={
                         "targets": targets,
-                        "target_color": self.target_color,
+                        "target_color": self._target_color_str,
                         "percent_error_x": 0,
                         "percent_error_y": 0,
                         "target_distance_mm": None,
@@ -171,7 +179,8 @@ class CircleTargetProcessor(Processor):
             return max(targets.targets, key=lambda t: t.radius or 0)
 
         # 根据目标颜色过滤
-        matching = [t for t in targets.targets if t.color == self.target_color]
+        color_str = self._target_color_str
+        matching = [t for t in targets.targets if t.color == color_str]
         if matching:
             return max(matching, key=lambda t: t.radius or 0)
         return None
