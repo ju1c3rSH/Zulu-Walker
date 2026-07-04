@@ -37,7 +37,7 @@ TYPE_COLOR_RESULT = 0x13        # Orange Pi -> MCU: color_id(1B) + confidence(1B
 TYPE_ACTION_DONE = 0x14         # MCU -> Orange Pi: action_id + result
 TYPE_HEARTBEAT = 0x15           # Bidirectional: seq + mission_state + visual_state
 TYPE_REQUEST_SYNC = 0x16        # Bidirectional: requested_state
-TYPE_VISUAL_SERVO_DATA = 0x17   # Orange Pi -> MCU: error_x(2B) + error_y(2B) + distance(2B) + state(1B)
+TYPE_VISUAL_SERVO_DATA = 0x17   # Orange Pi -> MCU: error_x(2B) + error_y(2B) + flags(1B) + state(1B)
 TYPE_EMERGENCY_STOP = 0x18      # Bidirectional: reason(1B)
 
 # Sub-commands for TYPE_CMD_FROM_MCU
@@ -296,30 +296,31 @@ def parse_request_sync_payload(payload: bytes) -> Optional[int]:
 
 
 def build_visual_servo_data_frame(
-    error_x: int, error_y: int, distance_mm: int, state: int
+    error_x: int, error_y: int, flags: int, state: int
 ) -> bytes:
     """
-    Build TYPE_VISUAL_SERVO_DATA frame.
-    All 16-bit values are signed little-endian.
+    Build TYPE_VISUAL_SERVO_DATA frame (每帧必发).
+    error_x/error_y: signed int16 LE, 未检出时为0.
+    flags: VisualFlags bitmask.
+    state: visual_state (0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL).
     """
     payload = (
         error_x.to_bytes(2, byteorder='little', signed=True)
         + error_y.to_bytes(2, byteorder='little', signed=True)
-        + distance_mm.to_bytes(2, byteorder='little', signed=True)
-        + bytes([state])
+        + bytes([flags, state])
     )
     return _build_frame(TYPE_VISUAL_SERVO_DATA, payload)
 
 
 def parse_visual_servo_data_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_VISUAL_SERVO_DATA payload -> (error_x, error_y, distance_mm, state)."""
-    if len(payload) != 7:
+    """Parse TYPE_VISUAL_SERVO_DATA payload -> (error_x, error_y, flags, state)."""
+    if len(payload) != 6:
         return None
     error_x = int.from_bytes(payload[0:2], byteorder='little', signed=True)
     error_y = int.from_bytes(payload[2:4], byteorder='little', signed=True)
-    distance_mm = int.from_bytes(payload[4:6], byteorder='little', signed=True)
-    state = payload[6]
-    return error_x, error_y, distance_mm, state
+    flags = payload[4]
+    state = payload[5]
+    return error_x, error_y, flags, state
 
 
 def build_emergency_stop_frame(reason: int) -> bytes:
