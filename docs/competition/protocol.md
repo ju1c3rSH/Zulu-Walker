@@ -56,7 +56,7 @@ Checksum  = Type 到 Payload 所有字节的异或（XOR）
 | **0x14** | `TYPE_ACTION_DONE` | MCU → OP | `action_id(1B) + result(1B)` | MCU 动作完成 |
 | **0x15** | `TYPE_HEARTBEAT` | 双向 | `seq(1B) + mission_state(1B) + visual_state(1B)` | 心跳 + 状态快照。MCU → OP 时 `visual_state` 恒为 0 |
 | **0x16** | `TYPE_REQUEST_SYNC` | 双向 | `requested_state(1B)` | 请求对方强制同步到某状态 |
-| **0x17** | `TYPE_VISUAL_SERVO_DATA` | OP → MCU | `error_x(2B LE) + error_y(2B LE) + distance(2B LE) + state(1B)` | 高频视觉伺服数据 |
+| **0x17** | `TYPE_VISUAL_SERVO_DATA` | OP → MCU | `error_x(2B LE) + error_y(2B LE) + flags(1B) + state(1B)` | 高频视觉伺服数据（每帧必发） |
 | **0x18** | `TYPE_EMERGENCY_STOP` | 双向 | `reason(1B)` | 任意一方急停 |
 
 ---
@@ -166,14 +166,33 @@ OP → RETURN_HOME → FINISHED
 ### 9.2 视觉伺服数据流
 
 ```
-OP 进入 TRACKING 状态后，每帧发送 VISUAL_SERVO_DATA：
-  error_x: int16 LE（归一化 -5000~5000，0=画面中心）
+OP 每帧发送 VISUAL_SERVO_DATA（无论是否检测到目标）：
+  error_x: int16 LE（归一化 -5000~5000，0=画面中心。未检出时为 0）
   error_y: int16 LE（同上）
-  distance_mm: int16 LE（目标距离，毫米）
+  flags: 1B（同 VisualFlags 位定义，包含 TARGET_FOUND / READY_TO_PICK / READY_TO_PLACE 等）
   state: 1B（当前 visual_state: 0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL）
 
-MCU 根据 error_x/error_y 做 PID 微调，直到视觉上报 ready_to_pick/ready_to_place
+MCU 根据每帧 flags 直接决策：
+  flags & READY_TO_PICK  → 执行抓取
+  flags & READY_TO_PLACE → 执行放置
+  flags & TARGET_FOUND   → PID 微调（使用 error_x/error_y）
+  否则                   → 保持/回退
 ```
+
+> **注意**：不再通过 STATUS_FROM_VISION 单独发送 READY 信号。每帧 SERVO_DATA 自带 flags，MCU 仅需解析一个帧即可做出所有决策，消除时序竞争。
+
+#### READY 标志锁存
+
+OP 进入 stable tracking（连续 N 帧稳定检测到目标）后，锁存 `READY_TO_PICK` 或 `READY_TO_PLACE` 标志。锁存期间**每帧持续发送**该标志，不受视觉噪声干扰（目标短暂丢失不解除）。
+
+锁存仅在以下条件清除：
+| 清除条件 | 说明 |
+|---|---|
+| MCU 回应 `ACTION_DONE`（result=OK） | 动作完成，解除锁存 |
+| OP 激活新视觉任务（`_activate_task`） | 切换到新的跟踪目标 |
+| OP 停用视觉（`_deactivate_all_visual`） | 进入导航 / 错误状态 |
+
+> **RAW 原料区风险**：圆盘旋转供料，MCU 收到 READY 后若机械臂动作期间目标随圆盘转走，可能抓空。此时 MCU 应自行判断失败 → ERROR 恢复，或在下一次圆盘停顿时重新锁定。
 
 ### 9.3 心跳与超时
 
