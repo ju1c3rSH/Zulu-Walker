@@ -13,7 +13,7 @@
 │                                                         │
 │  ┌────────────────┐     ┌───────────────────────────┐  │
 │  │ MissionSM (镜像) │◄───►│      VisualSM (主控)      │  │
-│  │  26 states      │     │  IDLE/SEARCH/TRACKING/    │  │
+│  │  27 states      │     │  IDLE/SEARCH/TRACKING/    │  │
 │  │                 │     │  RECOVERY/FAIL            │  │
 │  └───────┬─────────┘     └───────────────────────────┘  │
 │          │                                                │
@@ -25,7 +25,7 @@
 │                   STM32 (MCU)                             │
 │  ┌────────────────┐     ┌───────────────────────────┐  │
 │  │ MissionSM (主控) │     │    VisualSM (镜像)         │  │
-│  │  26 states      │     │   (心跳中的 visual_state)  │  │
+│  │  27 states      │     │   (心跳中的 visual_state)  │  │
 │  └────────────────┘     └───────────────────────────┘  │
 │                                                         │
 └───────────────────────────────────────────────────────┘
@@ -105,7 +105,7 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 
 ## 3. MissionStateMachine
 
-### 状态列表（26 状态，须与 STM32 固件同步）
+### 状态列表（27 状态，须与 STM32 固件同步）
 
 | ID | 名称 | 含义 |
 |----|------|------|
@@ -126,6 +126,7 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 | 23 | `RETURN_HOME` | 返回启停区 |
 | 24 | `FINISHED` | 任务完成 |
 | 25 | `ERROR` | 异常 |
+| **26** | **`PICK_ROUGH`** | **粗加工区取回物料（放完后重新捡起）** |
 
 ### 事件列表
 
@@ -156,17 +157,26 @@ stateDiagram-v2
     READ_QR --> NAV_TO_RAW: QR_OK
     
     NAV_TO_RAW --> ALIGN_RAW: ARRIVED_RAW
-    ALIGN_RAW --> PICK_RAW: READY_TO_PICK
+    ALIGN_RAW --> PICK_RAW: on_execute
     PICK_RAW --> CHECK_LOAD: PICK_DONE
     
-    CHECK_LOAD --> NAV_TO_ROUGH: LOAD_CONFIRMED
+    CHECK_LOAD --> ALIGN_RAW: on_execute (step<3, RAW)
+    CHECK_LOAD --> NAV_TO_ROUGH: on_execute (step>=3, RAW)
+    
     NAV_TO_ROUGH --> ALIGN_ROUGH: ARRIVED_ROUGH
-    ALIGN_ROUGH --> PLACE_ROUGH: READY_TO_PLACE
-    PLACE_ROUGH --> NAV_TO_TEMP: PLACE_DONE
+    ALIGN_ROUGH --> PLACE_ROUGH: on_execute (!picking)
+    ALIGN_ROUGH --> PICK_ROUGH: on_execute (picking)
+    PLACE_ROUGH --> ALIGN_ROUGH: on_execute (cargo>0)
+    PLACE_ROUGH --> ALIGN_ROUGH: on_execute (cargo=0 → picking phase)
+    
+    PICK_ROUGH --> CHECK_LOAD: PICK_DONE
+    CHECK_LOAD --> ALIGN_ROUGH: on_execute (step<3, ROUGH)
+    CHECK_LOAD --> NAV_TO_TEMP: on_execute (step>=3, ROUGH)
     
     NAV_TO_TEMP --> ALIGN_TEMP: ARRIVED_TEMP
-    ALIGN_TEMP --> PLACE_TEMP: READY_TO_PLACE
-    PLACE_TEMP --> RETURN_HOME: ALL_PLACED
+    ALIGN_TEMP --> PLACE_TEMP: on_execute
+    PLACE_TEMP --> ALIGN_TEMP: on_execute (cargo>0)
+    PLACE_TEMP --> RETURN_HOME: on_execute (cargo=0)
     
     RETURN_HOME --> FINISHED: RETURNED_HOME
     
@@ -187,18 +197,63 @@ stateDiagram-v2
     RETURN_HOME --> ERROR: ERROR
 ```
 
-### 批次逻辑
+### 批次逻辑与混合事件模型
 
-当前实现为单次直线流程（一次 pick → 一次 place → 完成）。后续改为参数化设计：
+状态机采用**混合模型**：MCU 触发的事件（`ARRIVED_*`、`ACTION_DONE`）使用事件驱动即时转换；
+内部决策（`ready_to_pick`、`cargo_count`、`picking_from_rough`）通过 `on_execute` 在 `update()` 中处理。
 
-- `current_step` (0→1→2) 同一批次的 3 个物料循环
-- `current_batch` (1→2) 两批次的切换
-- `batch_order: List[Color]` 当前批次取料顺序
+**完整一次 batch 的状态链**：
+
+```
+RAW 区:
+  ALIGN_RAW → PICK_RAW → CHECK_LOAD [×3]
+  cargo_count: 0→1→2→3, current_step: 0→1→2
+  → NAV_TO_ROUGH (step=0 重置)
+
+ROUGH 区 — 放料阶段 (picking_from_rough=False):
+  ALIGN_ROUGH → PLACE_ROUGH [×3]
+  cargo_count: 3→2→1→0
+  放完后 → ALIGN_ROUGH (picking_from_rough=True, step=0 重置)
+
+ROUGH 区 — 取料阶段 (picking_from_rough=True):
+  ALIGN_ROUGH → PICK_ROUGH → CHECK_LOAD [×3]
+  cargo_count: 0→1→2→3, current_step: 0→1→2
+  取完后 → NAV_TO_TEMP (picking_from_rough=False, step=0 重置)
+
+TEMP 区:
+  ALIGN_TEMP → PLACE_TEMP [×3]
+  cargo_count: 3→2→1→0
+  → RETURN_HOME → FINISHED
+```
+
+**`on_execute` 决策逻辑**：
+
+| State | 条件 | 下一步 |
+|---|---|---|
+| `_AlignRawState` | `ready_to_pick && !color_mismatch` | `PICK_RAW` |
+| `_AlignRoughState` | `picking_from_rough && ready_to_pick` | `PICK_ROUGH` |
+| `_AlignRoughState` | `!picking_from_rough && ready_to_place` | `PLACE_ROUGH` |
+| `_AlignTempState` | `ready_to_place` | `PLACE_TEMP` |
+| `_CheckLoadState` | `zone=RAW, step<3` | `ALIGN_RAW` |
+| `_CheckLoadState` | `zone=RAW, step>=3` | `NAV_TO_ROUGH` |
+| `_CheckLoadState` | `zone=ROUGH, step<3` | `ALIGN_ROUGH` |
+| `_CheckLoadState` | `zone=ROUGH, step>=3` | `NAV_TO_TEMP` |
+| `_PlaceRoughState` | `place_action_done && cargo>0` | `ALIGN_ROUGH` |
+| `_PlaceRoughState` | `place_action_done && cargo==0` | `ALIGN_ROUGH (picking=True)` |
+| `_PlaceTempState` | `place_action_done && cargo>0` | `ALIGN_TEMP` |
+| `_PlaceTempState` | `place_action_done && cargo==0` | `RETURN_HOME` |
+
+**`update()` 调用时机**（在 `MissionCoordinator` 中）：
+
+每次外部事件处理后立即调 `mission_sm.update()`，确保 `on_execute` 及时检查状态。
 
 ```python
-# 每次 pick 完成 → cargo_count += 1, current_step += 1
-# 每次 place 完成 → cargo_count -= 1
-# cargo_count == 0 且 current_step > 2 → 本批次完成
+# 每个事件处理器末尾
+self.mission_sm.on_arrived(zone_id)
+self.mission_sm.update()
+
+self.mission_sm.on_action_done(action_id, result)
+self.mission_sm.update()
 ```
 
 ---
