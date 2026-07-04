@@ -21,6 +21,9 @@ from .frame_composer import FrameComposer
 from .ffmpeg_pusher import FFmpegPusher
 from .processors.base import VisionResult
 from .processors.circle_target_processor import CircleTargetProcessor
+from .processors.qr_processor import QRCodeProcessor
+from .processors.cargo_processor import TrackCargoProcessor
+from .processors.ring_track_processor import RingTrackProcessor
 from .performance import profiler
 from .param_utils import (
     load_camera_params, apply_camera_params_to_capture
@@ -110,9 +113,14 @@ class Camera:
                 self.task_manager.register_task(task)
 
     def _create_processor(self, task_type: str, name: str):
-        if task_type == "CircleTargetProcessor":
-            return CircleTargetProcessor(name)
-        return None
+        registry = {
+            "CircleTargetProcessor": CircleTargetProcessor,
+            "QRCodeProcessor": QRCodeProcessor,
+            "TrackCargoProcessor": TrackCargoProcessor,
+            "RingTrackProcessor": RingTrackProcessor,
+        }
+        cls = registry.get(task_type)
+        return cls(name) if cls else None
 
     def _init_focal_calculator(self, config: CameraConfig):
         """初始化焦距距离计算器"""
