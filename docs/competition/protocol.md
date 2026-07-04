@@ -87,7 +87,20 @@ bit 7: 保留
 
 ---
 
-## 6. 结果码（ACTION_DONE）
+## 6. action_id 映射（TYPE_ACTION_DONE）
+
+每完成一个动作，MCU 发一次 `ACTION_DONE`，`action_id` 标识动作类型：
+
+| action_id | 对应动作 | 触发事件 | 每批次循环次数 |
+|:---|:---|:---|:---|
+| 1 | `PICK_RAW` — 原料区取料 | `PICK_DONE` | 3（每次取 1 个物料） |
+| 2 | `PLACE_ROUGH` — 粗加工区放料 | `place_action_done` 标志 | 3（每次放 1 个物料） |
+| 3 | `PLACE_TEMP` — 暂存区放料/码垛 | `place_action_done` 标志 | 3（每次放 1 个物料） |
+| 4 | `PICK_ROUGH` — 粗加工区取料（回收入机器人） | `PICK_DONE` | 3（每次取 1 个物料） |
+
+> **注意**：`action_id=2/3`（PLACE）不触发事件转换，而是通过 `place_action_done` 标志让状态机的 `on_execute` 决定下一步。详见 `docs/architecture/state_machine.md` §2 混合模型。
+
+## 8. 结果码
 
 | 值 | 名称 | 含义 |
 |:---|:---|:---|
@@ -99,7 +112,7 @@ bit 7: 保留
 
 ---
 
-## 7. 典型通信时序
+## 9. 典型通信时序
 
 ### 7.1 标准流程（区域自动控制）
 
@@ -124,16 +137,33 @@ OP 自动切换到 ring_track
   → VISUAL_SERVO_DATA
   → STATUS_FROM_VISION flags=ready_to_place
 MCU 放置 → ACTION_DONE action_id=2, result=OK
+OP 重复 ALIGN+PLACE 直到 cargo_count=0
+OP 切换到 PICK 阶段（picking_from_rough=True）
 
-... 循环直到 FINISHED
+MCU 到达 ROUGH 色环前（取回阶段）
+OP ALIGN_ROUGH → VISUAL_SERVO_DATA
+  → STATUS_FROM_VISION flags=ready_to_pick
+MCU 取回 → ACTION_DONE action_id=4, result=OK
+OP 重复 ALIGN+PICK 直到 cargo_count=3
+
+MCU 到达 TEMP → TYPE_ARRIVED zone=4
+OP 自动切换到 ring_track
+  → VISUAL_SERVO_DATA
+  → STATUS_FROM_VISION flags=ready_to_place
+MCU 放置 → ACTION_DONE action_id=3, result=OK
+OP 重复 ALIGN+PLACE 直到 cargo_count=0
+
+OP → RETURN_HOME → FINISHED
 ```
 
 关键要点：
 - **MCU 不需要发 CMD 来开关视觉任务** — OP 自动根据状态切换
 - **MCU 不需要发 CMD 来传递颜色** — OP 从 `batch_order` 自动获取
 - MCU 只需发 `TYPE_ARRIVED` 告知到达区域，发 `ACTION_DONE` 告知动作完成
+- **`ARRIVED_*` 同步职责**：MCU 决定前往某区域后，更新自身 MissionSM + 发 `TYPE_ARRIVED`；
+  OP 收到后更新镜像 MissionSM。双方状态机保持同步。
 
-### 7.2 视觉伺服数据流
+### 9.2 视觉伺服数据流
 
 ```
 OP 进入 TRACKING 状态后，每帧发送 VISUAL_SERVO_DATA：
@@ -145,7 +175,7 @@ OP 进入 TRACKING 状态后，每帧发送 VISUAL_SERVO_DATA：
 MCU 根据 error_x/error_y 做 PID 微调，直到视觉上报 ready_to_pick/ready_to_place
 ```
 
-### 7.3 心跳与超时
+### 9.3 心跳与超时
 
 ```
 双方每 100ms 互发 HEARTBEAT：
@@ -159,7 +189,7 @@ MCU 根据 error_x/error_y 做 PID 微调，直到视觉上报 ready_to_pick/rea
   → 停车，等待人工 RESET
 ```
 
-### 7.4 错误恢复
+### 9.4 错误恢复
 
 ```
 MCU/OP 发现异常 → 切 ERROR

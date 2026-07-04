@@ -19,6 +19,7 @@ from time import time
 
 from utils.state_machine.base import BaseStateMachine, State
 from modules.zw_opencv_module.models.color import Color
+from modules.zw_opencv_module.models.cargo import CargoSet
 from modules.zw_uart_module.protocol import VisualFlags
 
 
@@ -53,6 +54,7 @@ class MissionState:
     RETURN_HOME = 23
     FINISHED = 24
     ERROR = 25
+    PICK_ROUGH = 26
 
 
 class VisualState:
@@ -82,19 +84,23 @@ class MissionContext:
     # Task from QR code, e.g. "123+231"
     qr_result: str = ""
 
-    # Parsed task queues
-    first_batch: List[int] = field(default_factory=list)
-    second_batch: List[int] = field(default_factory=list)
+    # Cargo tracking (global single instance)
+    cargo_set: Optional[CargoSet] = None
+
+    # Batch order parsed from QR, e.g. [Color.RED, Color.GREEN, Color.BLUE]
+    batch_order: List[Color] = field(default_factory=list)
 
     # Progress
-    current_batch: int = 0          # 0=none, 1=first, 2=second
-    current_index: int = 0          # index within batch (0..2)
+    current_batch: int = 0          # 1=first, 2=second
+    current_step: int = 0           # 0→1→2 within current batch
     cargo_count: int = 0            # materials currently on robot (0..3)
+    picking_from_rough: bool = False  # ROUGH 区处于取料阶段(True)还是放料阶段(False)
+    place_action_done: bool = False   # PLACE 状态下 MCU 动作完成
 
     # Visual feedback
     visual_state: int = VisualState.IDLE
     visual_flags: int = 0
-    target_color: int = 0
+    target_color: Color = Color.RED
     target_found: bool = False
     ready_to_pick: bool = False
     ready_to_place: bool = False
@@ -116,14 +122,17 @@ class MissionContext:
 
     def reset(self):
         """Reset context to initial values (keep QR result optionally)."""
-        self.first_batch.clear()
-        self.second_batch.clear()
+        self.batch_order.clear()
         self.current_batch = 0
-        self.current_index = 0
+        self.current_step = 0
         self.cargo_count = 0
+        self.picking_from_rough = False
+        self.place_action_done = False
+        if self.cargo_set:
+            self.cargo_set.reset_all()
         self.visual_state = VisualState.IDLE
         self.visual_flags = 0
-        self.target_color = 0
+        self.target_color = Color.RED
         self.target_found = False
         self.ready_to_pick = False
         self.ready_to_place = False
@@ -136,46 +145,38 @@ class MissionContext:
         self.error_msg = ""
 
     def parse_qr(self, qr_str: str) -> bool:
-        """Parse QR string like '123+231' into batches."""
+        """Parse QR string like '123+231' into batches. (Stub — full impl TBD)"""
         parts = qr_str.strip().split('+')
         if len(parts) != 2:
             return False
         try:
-            self.first_batch = [int(c) for c in parts[0] if c in '123']
-            self.second_batch = [int(c) for c in parts[1] if c in '123']
-            if len(self.first_batch) != 3 or len(self.second_batch) != 3:
+            first = [int(c) for c in parts[0] if c in '123']
+            second = [int(c) for c in parts[1] if c in '123']
+            if len(first) != 3 or len(second) != 3:
                 return False
-        except ValueError:
+            self.batch_order = [Color(v) for v in first]
+            # second batch stored in cargo_set via CargoItem.batch
+        except (ValueError, TypeError):
             return False
         self.qr_result = qr_str
         return True
 
-    def current_target_color(self) -> Optional[int]:
+    def current_target_color(self) -> Optional[Color]:
         """Return the color that should be picked/placed now."""
-        batch = self._current_batch_list()
-        if not batch or self.current_index >= len(batch):
+        if not self.batch_order or self.current_step >= len(self.batch_order):
             return None
-        return batch[self.current_index]
+        return self.batch_order[self.current_step]
 
     def advance_target(self):
         """Move to next target in current batch."""
-        batch = self._current_batch_list()
-        if batch and self.current_index < len(batch) - 1:
-            self.current_index += 1
+        if self.current_step < len(self.batch_order) - 1:
+            self.current_step += 1
         else:
-            self.current_index = 0
+            self.current_step = 0
 
     def is_batch_complete(self) -> bool:
         """True when all 3 materials in current batch are handled."""
-        batch = self._current_batch_list()
-        return self.current_index >= len(batch) - 1 and self.cargo_count == 0
-
-    def _current_batch_list(self) -> List[int]:
-        if self.current_batch == 1:
-            return self.first_batch
-        if self.current_batch == 2:
-            return self.second_batch
-        return []
+        return self.current_step >= len(self.batch_order) - 1 and self.cargo_count == 0
 
     def update_visual_flags(self, flags: int):
         self.visual_flags = flags
@@ -267,7 +268,19 @@ class _PickRawState(State):
         return None
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
-        pass
+        ctx.cargo_confirmed = True
+
+
+class _PickRoughState(State):
+    def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        print("[MissionSM] Enter PICK_ROUGH")
+        ctx.state_entry_time = time()
+
+    def on_execute(self, ctx: MissionContext) -> Optional[str]:
+        return None
+
+    def on_exit(self, ctx: MissionContext, to_state: str) -> None:
+        ctx.cargo_confirmed = True
 
 
 class _CheckLoadState(State):
@@ -277,10 +290,22 @@ class _CheckLoadState(State):
         ctx.cargo_confirmed = False
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
-        # STM32 checks load sensors; visual can also confirm.
         if ctx.cargo_confirmed:
             ctx.cargo_count += 1
-            return MissionStateNames.NAV_TO_ROUGH
+            ctx.current_step += 1
+            ctx.target_color = ctx.batch_order[ctx.current_step] if ctx.current_step < 3 else Color.RED
+            if ctx.current_step < 3:
+                if ctx.current_zone == Zone.RAW:
+                    return MissionStateNames.ALIGN_RAW
+                else:
+                    return MissionStateNames.ALIGN_ROUGH
+            else:
+                ctx.current_step = 0
+                if ctx.current_zone == Zone.RAW:
+                    return MissionStateNames.NAV_TO_ROUGH
+                else:
+                    ctx.picking_from_rough = False
+                    return MissionStateNames.NAV_TO_TEMP
         if ctx.state_entry_time + 3.0 < time() and not ctx.cargo_confirmed:
             ctx.error_code = 1
             return MissionStateNames.ERROR
@@ -309,7 +334,9 @@ class _AlignRoughState(State):
         ctx.ready_to_place = False
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
-        if ctx.ready_to_place:
+        if ctx.picking_from_rough and ctx.ready_to_pick and not ctx.color_mismatch:
+            return MissionStateNames.PICK_ROUGH
+        if not ctx.picking_from_rough and ctx.ready_to_place:
             return MissionStateNames.PLACE_ROUGH
         if ctx.visual_fail:
             return MissionStateNames.ERROR
@@ -325,11 +352,18 @@ class _PlaceRoughState(State):
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
-        return None
+        if not ctx.place_action_done:
+            return None
+        ctx.place_action_done = False
+        if ctx.cargo_count > 0:
+            return MissionStateNames.ALIGN_ROUGH
+        ctx.picking_from_rough = True
+        ctx.current_step = 0
+        ctx.target_color = ctx.batch_order[0] if ctx.batch_order else Color.RED
+        return MissionStateNames.ALIGN_ROUGH
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
-        if ctx.cargo_count > 0:
-            ctx.cargo_count -= 1
+        pass
 
 
 class _NavToTempState(State):
@@ -367,11 +401,15 @@ class _PlaceTempState(State):
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
-        return None
+        if not ctx.place_action_done:
+            return None
+        ctx.place_action_done = False
+        if ctx.cargo_count > 0:
+            return MissionStateNames.ALIGN_TEMP
+        return MissionStateNames.RETURN_HOME
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
-        if ctx.cargo_count > 0:
-            ctx.cargo_count -= 1
+        pass
 
 
 class _ReturnHomeState(State):
@@ -439,6 +477,7 @@ MissionStateNames = {
     MissionState.RETURN_HOME: "RETURN_HOME",
     MissionState.FINISHED: "FINISHED",
     MissionState.ERROR: "ERROR",
+    MissionState.PICK_ROUGH: "PICK_ROUGH",
 }
 
 
@@ -454,16 +493,11 @@ class MissionStateMachine(BaseStateMachine):
         START = "START"                         # WAIT_START -> READ_QR
         QR_OK = "QR_OK"                         # READ_QR -> NAV_TO_RAW
         ARRIVED_RAW = "ARRIVED_RAW"             # NAV_TO_RAW -> ALIGN_RAW
-        READY_TO_PICK = "READY_TO_PICK"         # ALIGN_RAW -> PICK_RAW
-        PICK_DONE = "PICK_DONE"                 # PICK_RAW -> CHECK_LOAD
-        LOAD_CONFIRMED = "LOAD_CONFIRMED"       # CHECK_LOAD -> NAV_TO_ROUGH
+        PICK_DONE = "PICK_DONE"                 # PICK_{RAW,ROUGH} -> CHECK_LOAD
         ARRIVED_ROUGH = "ARRIVED_ROUGH"         # NAV_TO_ROUGH -> ALIGN_ROUGH
-        READY_TO_PLACE = "READY_TO_PLACE"       # ALIGN_ROUGH -> PLACE_ROUGH
-        PLACE_DONE = "PLACE_DONE"               # PLACE_ROUGH -> next
         ARRIVED_TEMP = "ARRIVED_TEMP"           # NAV_TO_TEMP -> ALIGN_TEMP
-        ALL_PLACED = "ALL_PLACED"               # batch done -> next phase
         RETURNED_HOME = "RETURNED_HOME"         # RETURN_HOME -> FINISHED
-        RESET = "RESET"                         # ERROR -> IDLE
+        RESET = "RESET"                         # ERROR -> WAIT_START
         ERROR = "ERROR"                         # any -> ERROR
 
     def __init__(self):
@@ -493,6 +527,7 @@ class MissionStateMachine(BaseStateMachine):
         self.register_state(MissionStateNames[MissionState.RETURN_HOME], _ReturnHomeState())
         self.register_state(MissionStateNames[MissionState.FINISHED], _FinishedState())
         self.register_state(MissionStateNames[MissionState.ERROR], _ErrorState())
+        self.register_state(MissionStateNames[MissionState.PICK_ROUGH], _PickRoughState())
 
     def _setup_transitions(self) -> None:
         # WAIT_START -> READ_QR
@@ -516,25 +551,11 @@ class MissionStateMachine(BaseStateMachine):
             event=self.Events.ARRIVED_RAW
         )
 
-        # ALIGN_RAW -> PICK_RAW
-        self.register_transition(
-            MissionStateNames[MissionState.ALIGN_RAW],
-            MissionStateNames[MissionState.PICK_RAW],
-            event=self.Events.READY_TO_PICK
-        )
-
         # PICK_RAW -> CHECK_LOAD
         self.register_transition(
             MissionStateNames[MissionState.PICK_RAW],
             MissionStateNames[MissionState.CHECK_LOAD],
             event=self.Events.PICK_DONE
-        )
-
-        # CHECK_LOAD -> NAV_TO_ROUGH
-        self.register_transition(
-            MissionStateNames[MissionState.CHECK_LOAD],
-            MissionStateNames[MissionState.NAV_TO_ROUGH],
-            event=self.Events.LOAD_CONFIRMED
         )
 
         # NAV_TO_ROUGH -> ALIGN_ROUGH
@@ -544,20 +565,6 @@ class MissionStateMachine(BaseStateMachine):
             event=self.Events.ARRIVED_ROUGH
         )
 
-        # ALIGN_ROUGH -> PLACE_ROUGH
-        self.register_transition(
-            MissionStateNames[MissionState.ALIGN_ROUGH],
-            MissionStateNames[MissionState.PLACE_ROUGH],
-            event=self.Events.READY_TO_PLACE
-        )
-
-        # PLACE_ROUGH -> NAV_TO_TEMP (simplified: after one place)
-        self.register_transition(
-            MissionStateNames[MissionState.PLACE_ROUGH],
-            MissionStateNames[MissionState.NAV_TO_TEMP],
-            event=self.Events.PLACE_DONE
-        )
-
         # NAV_TO_TEMP -> ALIGN_TEMP
         self.register_transition(
             MissionStateNames[MissionState.NAV_TO_TEMP],
@@ -565,18 +572,11 @@ class MissionStateMachine(BaseStateMachine):
             event=self.Events.ARRIVED_TEMP
         )
 
-        # ALIGN_TEMP -> PLACE_TEMP
+        # PICK_ROUGH -> CHECK_LOAD
         self.register_transition(
-            MissionStateNames[MissionState.ALIGN_TEMP],
-            MissionStateNames[MissionState.PLACE_TEMP],
-            event=self.Events.READY_TO_PLACE
-        )
-
-        # PLACE_TEMP -> RETURN_HOME (simplified full run)
-        self.register_transition(
-            MissionStateNames[MissionState.PLACE_TEMP],
-            MissionStateNames[MissionState.RETURN_HOME],
-            event=self.Events.ALL_PLACED
+            MissionStateNames[MissionState.PICK_ROUGH],
+            MissionStateNames[MissionState.CHECK_LOAD],
+            event=self.Events.PICK_DONE
         )
 
         # RETURN_HOME -> FINISHED
@@ -607,7 +607,7 @@ class MissionStateMachine(BaseStateMachine):
             MissionState.CHECK_LOAD, MissionState.NAV_TO_ROUGH,
             MissionState.ALIGN_ROUGH, MissionState.PLACE_ROUGH,
             MissionState.NAV_TO_TEMP, MissionState.ALIGN_TEMP,
-            MissionState.PLACE_TEMP, MissionState.RETURN_HOME,
+            MissionState.PLACE_TEMP, MissionState.PICK_ROUGH, MissionState.RETURN_HOME,
         ]:
             self.register_transition(
                 MissionStateNames[sid],
@@ -628,7 +628,7 @@ class MissionStateMachine(BaseStateMachine):
             self.context.error_msg = f"Invalid QR: {qr_str}"
             return self.trigger(self.Events.ERROR)
         self.context.current_batch = 1
-        self.context.current_index = 0
+        self.context.current_step = 0
         return self.trigger(self.Events.QR_OK)
 
     def on_arrived(self, zone_id: int) -> bool:
@@ -662,9 +662,15 @@ class MissionStateMachine(BaseStateMachine):
         if state == MissionStateNames[MissionState.PICK_RAW] and action_id == 1:
             return self.trigger(self.Events.PICK_DONE)
         if state == MissionStateNames[MissionState.PLACE_ROUGH] and action_id == 2:
-            return self.trigger(self.Events.PLACE_DONE)
+            self.context.cargo_count -= 1
+            self.context.place_action_done = True
+            return False
+        if state == MissionStateNames[MissionState.PICK_ROUGH] and action_id == 4:
+            return self.trigger(self.Events.PICK_DONE)
         if state == MissionStateNames[MissionState.PLACE_TEMP] and action_id == 3:
-            return self.trigger(self.Events.PLACE_DONE)
+            self.context.cargo_count -= 1
+            self.context.place_action_done = True
+            return False
         return False
 
     def on_visual_status(self, visual_state: int, flags: int) -> bool:
@@ -672,18 +678,10 @@ class MissionStateMachine(BaseStateMachine):
         self.context.visual_state = visual_state
         self.context.update_visual_flags(flags)
 
-        state = self.current_state
         if self.context.visual_fail:
             self.context.error_code = 30
             self.context.error_msg = "Visual failure"
             return self.trigger(self.Events.ERROR)
-
-        if state == MissionStateNames[MissionState.ALIGN_RAW] and self.context.ready_to_pick:
-            return self.trigger(self.Events.READY_TO_PICK)
-        if state in (MissionStateNames[MissionState.ALIGN_ROUGH], MissionStateNames[MissionState.ALIGN_TEMP]) and self.context.ready_to_place:
-            return self.trigger(self.Events.READY_TO_PLACE)
-        if state == MissionStateNames[MissionState.CHECK_LOAD] and self.context.cargo_confirmed:
-            return self.trigger(self.Events.LOAD_CONFIRMED)
 
         return False
 
@@ -713,7 +711,7 @@ class MissionStateMachine(BaseStateMachine):
             "previous_state": self.previous_state,
             "qr": self.context.qr_result,
             "batch": self.context.current_batch,
-            "index": self.context.current_index,
+            "step": self.context.current_step,
             "cargo_count": self.context.cargo_count,
             "visual_state": self.context.visual_state,
             "visual_flags": self.context.visual_flags,
@@ -731,5 +729,4 @@ if __name__ == "__main__":
 
     sm.on_qr_result("123+231")
     print("After QR:", sm.get_info())
-    print("First batch:", sm.context.first_batch)
-    print("Second batch:", sm.context.second_batch)
+    print("Batch order:", sm.context.batch_order)
