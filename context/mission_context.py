@@ -6,20 +6,20 @@ from .event_bus import EventBus
 from .events import (
     McuCmdReceived, ArrivedEvent, ActionDoneEvent,
     HeartbeatEvent, EmergencyStopEvent, RequestSyncEvent,
-    FrameResult, ServoData, QRResult, ColorResult,
+    FrameResult, QRResult, ColorResult,
 )
 from .mission_state_machine import (
     MissionStateMachine, MissionContext,
-    MissionState, VisualState, Zone,
+    MissionState, MissionStateNames, VisualState, Zone,
 )
-from utils.state_machine.visual_state_machine import (
-    VisualStateMachine, VisualStateMachine as VSM,
-)
+from .visual_state_machine import VisualStateMachine
+from utils.state_machine.bridge import StateActionBridge
 from modules.zw_uart_module.protocol import (
     build_status_from_vision_frame, build_visual_servo_data_frame,
     build_qr_result_frame, build_color_result_frame,
     build_heartbeat_frame,
     CMD_START_QR, CMD_STOP_VISUAL,
+    VisualFlags,
 )
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.cargo import CargoSet
@@ -27,13 +27,12 @@ from modules.zw_opencv_module.processors.base import ColorTrackable
 
 
 _VISUAL_STATE_TO_INT = {
-    VSM.States.IDLE: 0,
-    VSM.States.SEARCH: 1,
-    VSM.States.TRACKING: 2,
-    VSM.States.RECOVERY: 3,
-    VSM.States.FAIL: 4,
+    VisualStateMachine.States.IDLE: 0,
+    VisualStateMachine.States.SEARCH: 1,
+    VisualStateMachine.States.TRACKING: 2,
+    VisualStateMachine.States.RECOVERY: 3,
+    VisualStateMachine.States.FAIL: 4,
 }
-_INT_TO_VISUAL_STATE = {v: k for k, v in _VISUAL_STATE_TO_INT.items()}
 
 _READY_THRESHOLD = 10
 _HEARTBEAT_INTERVAL = 0.1
@@ -51,15 +50,15 @@ class MissionCoordinator:
         self._uart_sender: Optional[callable] = None
         self._camera_manager = None
         self._qr_decoded = False
-        self._active_task: Optional[str] = None  # "qr_detect" / "track_cargo" / "ring_track"
+        self._active_task: Optional[str] = None
 
         self._ready_frames = 0
+        self._ready_latched = False
+        self._ready_flag = 0
         self._heartbeat_seq = 0
         self._last_mcu_heartbeat = 0.0
         self._running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
-
-    # ===== bridge =====
 
     def connect_camera(self, camera_manager) -> None:
         self._camera_manager = camera_manager
@@ -80,6 +79,7 @@ class MissionCoordinator:
     def start(self) -> None:
         self._running = True
         self._wire_events()
+        self._wire_state_actions()
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop, daemon=True)
         self._heartbeat_thread.start()
@@ -103,13 +103,34 @@ class MissionCoordinator:
         self.event_bus.subscribe(QRResult, self._on_qr_result_event)
         self.event_bus.subscribe(ColorResult, self._on_color_result_event)
 
+    def _wire_state_actions(self) -> None:
+        bridge = StateActionBridge(self.mission_sm)
+
+        bridge.when_enter("READ_QR",
+            lambda: self._activate_task("qr_detect"))
+
+        bridge.when_enter({"ALIGN_RAW"},
+            lambda: self._activate_task("track_cargo", self._current_target_color()))
+
+        bridge.when_enter({"ALIGN_ROUGH", "ALIGN_TEMP"},
+            lambda: self._activate_task("ring_track", self._current_target_color()))
+
+        bridge.when_enter({
+            "NAV_TO_RAW", "NAV_TO_ROUGH", "NAV_TO_TEMP",
+            "NAV_TO_RAW_SECOND", "NAV_TO_ROUGH_SECOND", "NAV_TO_TEMP_SECOND",
+            "RETURN_HOME", "WAIT_START", "FINISHED", "ERROR", "IDLE",
+        }, self._deactivate_all_visual)
+
+    def _current_target_color(self) -> Optional[Color]:
+        return self.mission_sm.context.current_target_color()
+
     # ===== startup =====
 
     def _send_initial_status(self) -> None:
         self._send(build_status_from_vision_frame(
             self.mission_sm.current_state_id,
-            0,  # visual_state=IDLE
-            0,  # flags=0
+            0,
+            0,
             self.mission_sm.context.cargo_count,
         ))
 
@@ -122,10 +143,9 @@ class MissionCoordinator:
             self._qr_decoded = False
             self.mission_sm.start()
             self.mission_sm.update()
-            self._activate_task("qr_detect")
 
         elif not self._qr_decoded:
-            return  # QR 门控
+            return
 
         elif cmd == CMD_STOP_VISUAL:
             self._deactivate_all_visual()
@@ -137,12 +157,10 @@ class MissionCoordinator:
         cm = self._camera_manager
         all_tasks = ["qr_detect", "track_cargo", "ring_track"]
 
-        # disable all
         for cam in cm.cameras.values():
             for name in all_tasks:
                 cam.disable_task(name)
 
-        # enable the target one
         for cam_id, cam in cm.cameras.items():
             is_qr = cam_id.endswith("_qr")
             is_cargo = cam_id.endswith("_cargo")
@@ -157,26 +175,29 @@ class MissionCoordinator:
                     t = cam.get_task(task_name)
                     if t and isinstance(t.processor, ColorTrackable):
                         t.processor.set_target_color(color)
-                self.visual_sm.start()  # IDLE → SEARCH
+                self.visual_sm.start()
                 self._active_task = task_name
                 self._ready_frames = 0
+                self._ready_latched = False
+                self._ready_flag = 0
                 break
 
     def _deactivate_all_visual(self) -> None:
         if not self._camera_manager:
             return
-        all_tasks = ["track_cargo", "ring_track"]
+        all_tasks = ["qr_detect", "track_cargo", "ring_track"]
         for cam in self._camera_manager.cameras.values():
             for name in all_tasks:
                 cam.disable_task(name)
         self.visual_sm.stop()
         self._active_task = None
         self._ready_frames = 0
+        self._ready_latched = False
+        self._ready_flag = 0
 
-        # notify MCU
         self._send(build_status_from_vision_frame(
             self.mission_sm.current_state_id,
-            0,  # visual=IDLE
+            0,
             0,
             self.mission_sm.context.cargo_count,
         ))
@@ -190,6 +211,9 @@ class MissionCoordinator:
     def _on_action_done(self, event: ActionDoneEvent) -> None:
         self.mission_sm.on_action_done(event.action_id, event.result)
         self.mission_sm.update()
+        if event.result == 0:
+            self._ready_latched = False
+            self._ready_flag = 0
 
     def _on_heartbeat(self, event: HeartbeatEvent) -> None:
         self._last_mcu_heartbeat = time.monotonic()
@@ -198,7 +222,7 @@ class MissionCoordinator:
         self.mission_sm.set_error(99, f"Emergency stop: reason={event.reason}")
 
     def _on_request_sync(self, event: RequestSyncEvent) -> None:
-        pass  # Phase 4 暂不实现完整同步
+        pass
 
     # ===== vision results =====
 
@@ -227,71 +251,67 @@ class MissionCoordinator:
                     continue
 
                 if task_name == "qr_detect":
-                    self._handle_track_frame(data)
+                    self._handle_qr_result(data)
                 elif task_name in ("track_cargo", "ring_track"):
-                    self._handle_track_frame(data)
+                    self._handle_track_result(data)
 
-    def _handle_track_frame(self, data: dict) -> None:
+    def _handle_qr_result(self, data: dict) -> None:
+        result = data.get("result", {})
+        qr_str = result.get("qr_data", "")
+        if qr_str:
+            self._on_qr_result_event(QRResult(qr_str))
+
+    def _handle_track_result(self, data: dict) -> None:
         ctx = self.visual_sm.context
         target_found = data.get("target_found", False)
 
         if target_found:
             ctx.target_found = True
-            ctx.consecutive_detected_frames += 1
-            ctx.consecutive_lost_frames = 0
             ctx.percent_error_x = data.get("percent_error_x", 0)
             ctx.percent_error_y = data.get("percent_error_y", 0)
-            ctx.target_distance_mm = data.get("target_distance_mm", 0.0)
-            ctx.confidence = 1.0
+            ctx.consecutive_detected_frames += 1
+            ctx.consecutive_lost_frames = 0
         else:
             ctx.target_found = False
+            ctx.percent_error_x = 0
+            ctx.percent_error_y = 0
             ctx.consecutive_lost_frames += 1
             ctx.consecutive_detected_frames = 0
-            ctx.confidence = 0.0
 
-        # servo data
-        if self.visual_sm.is_tracking():
-            self._send(build_visual_servo_data_frame(
-                ctx.percent_error_x,
-                ctx.percent_error_y,
-                int(ctx.target_distance_mm),
-                self._visual_state_int(),
-            ))
+        self.visual_sm.update()
 
-        # visual state transitions
-        if self.visual_sm.is_searching() and ctx.consecutive_detected_frames >= _READY_THRESHOLD:
-            self.visual_sm.trigger(VSM.Events.TARGET_FOUND)
-            self._ready_frames += 1
-
-        elif self.visual_sm.is_tracking() and ctx.consecutive_lost_frames >= 5:
-            self.visual_sm.trigger(VSM.Events.TARGET_LOST)
-            self._ready_frames = 0
-
-        # ready-to-pick / ready-to-place
-        if self.visual_sm.is_tracking() and ctx.consecutive_detected_frames > 0:
-            self._ready_frames += 1
-        else:
-            self._ready_frames = max(0, self._ready_frames - 1)
-
-        if self._ready_frames >= _READY_THRESHOLD:
-            flags = 0
-            from modules.zw_uart_module.protocol import VisualFlags
+        flags = 0
+        if target_found:
             flags |= VisualFlags.TARGET_FOUND
-            state = self.mission_sm.current_state
-            picking = self.mission_sm.context.picking_from_rough
-            if state in ("ALIGN_RAW",) or (state == "ALIGN_ROUGH" and picking):
-                flags |= VisualFlags.READY_TO_PICK
-            elif state in ("ALIGN_ROUGH", "ALIGN_TEMP") and not (state == "ALIGN_ROUGH" and picking):
-                flags |= VisualFlags.READY_TO_PLACE
-            self.mission_sm.on_visual_status(self._visual_state_int(), flags)
-            self.mission_sm.update()
-            self._send(build_status_from_vision_frame(
-                self.mission_sm.current_state_id,
-                self._visual_state_int(),
-                flags,
-                self.mission_sm.context.cargo_count,
-            ))
-            self._ready_frames = 0
+
+        if not self._ready_latched:
+            if self.visual_sm.is_tracking() and target_found:
+                self._ready_frames += 1
+            else:
+                self._ready_frames = max(0, self._ready_frames - 1)
+
+            if self._ready_frames >= _READY_THRESHOLD:
+                self._ready_latched = True
+                self._ready_flag = 0
+                state = self.mission_sm.current_state
+                picking = self.mission_sm.context.picking_from_rough
+                if state in ("ALIGN_RAW",) or (state == "ALIGN_ROUGH" and picking):
+                    self._ready_flag = VisualFlags.READY_TO_PICK
+                elif state in ("ALIGN_ROUGH", "ALIGN_TEMP") and not (state == "ALIGN_ROUGH" and picking):
+                    self._ready_flag = VisualFlags.READY_TO_PLACE
+                flags |= self._ready_flag
+                self.mission_sm.on_visual_status(self._visual_state_int(), flags)
+                self.mission_sm.update()
+                self._ready_frames = 0
+        else:
+            flags |= self._ready_flag
+
+        self._send(build_visual_servo_data_frame(
+            ctx.percent_error_x,
+            ctx.percent_error_y,
+            flags,
+            self._visual_state_int(),
+        ))
 
     def _visual_state_int(self) -> int:
         return _VISUAL_STATE_TO_INT.get(self.visual_sm.current_state, 0)
