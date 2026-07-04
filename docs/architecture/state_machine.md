@@ -71,6 +71,10 @@ OP 从 batch_order[current_step] 获取颜色 → 传给 processor
 | `ALIGN_TEMP` | `ring_track` | `batch_order[current_step]` | 暂存区对齐色环 |
 | 其他状态 | 无（关闭所有视觉任务） | - | - |
 
+> **第二批处理**：`NAV_TO_RAW_SECOND` / `NAV_TO_ROUGH_SECOND` / `NAV_TO_TEMP_SECOND`
+> 仅用于区分导航路径（回程路线不同于首批起点）。`ALIGN_*` / `PICK_*` / `PLACE_*` / `CHECK_LOAD`
+> 在两批次间复用，行为由 `current_batch_order`（颜色顺序）和 `current_batch`（平放/码垛）参数化驱动。
+
 ### 对 MCU 的电控对接约定
 
 > **MCU 不需要发送任何 CMD 来开启或关闭视觉任务。**
@@ -122,7 +126,7 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 | 10 | `NAV_TO_TEMP` | 前往暂存区 |
 | 11 | `ALIGN_TEMP` | 暂存区对准色环 |
 | 12 | `PLACE_TEMP` | 放置/码垛物料 |
-| 13~22 | 第二批状态 | 参数化处理，见批次逻辑 |
+| 13~22 | 第二批状态 | NAV_*_SECOND 独立（导航路径不同），ALIGN/PICK/PLACE/CHECK 复用首批 |
 | 23 | `RETURN_HOME` | 返回启停区 |
 | 24 | `FINISHED` | 任务完成 |
 | 25 | `ERROR` | 异常 |
@@ -197,6 +201,10 @@ stateDiagram-v2
     RETURN_HOME --> ERROR: ERROR
 ```
 
+> **第二批流程**：`_PlaceTempState` 后若 `current_batch == 1` 返回 `NAV_TO_RAW`。
+> MCU 侧通过 `NAV_TO_RAW_SECOND` / `NAV_TO_ROUGH_SECOND` / `NAV_TO_TEMP_SECOND`
+> 区分第二批导航路径。ALIGN/PICK/PLACE/CHECK 复用首批状态节点。
+
 ### 批次逻辑与混合事件模型
 
 状态机采用**混合模型**：MCU 触发的事件（`ARRIVED_*`、`ACTION_DONE`）使用事件驱动即时转换；
@@ -243,6 +251,42 @@ TEMP 区:
 | `_PlaceTempState` | `place_action_done && cargo>0` | `ALIGN_TEMP` |
 | `_PlaceTempState` | `place_action_done && cargo==0` | `RETURN_HOME` |
 
+#### 批次二处理策略
+
+第一批结束后，`_PlaceTempState.on_execute` 检测 `cargo_count == 0`：
+- `current_batch == 1 && second_batch_order` → 切换 `current_batch = 2`，`current_batch_order = second_batch_order`，返回 `NAV_TO_RAW`
+- `current_batch == 2` → `RETURN_HOME`
+
+**第二批完整状态链**：
+
+```
+TEMP 放完第一批最后一个
+  → NAV_TO_RAW（MCU 侧用 NAV_TO_RAW_SECOND 区分回程路径）
+  → ALIGN_RAW（复用，batch_order 已切换为第二批颜色顺序）
+  → PICK_RAW → CHECK_LOAD [×3]
+  → NAV_TO_ROUGH（MCU 侧用 NAV_TO_ROUGH_SECOND）
+  → ALIGN_ROUGH 放料 [×3] → ALIGN_ROUGH 取回 [×3]
+  → NAV_TO_TEMP（MCU 侧用 NAV_TO_TEMP_SECOND）
+  → ALIGN_TEMP 码垛 [×3]
+  → RETURN_HOME → FINISHED
+```
+
+**状态复用 vs 独立决策**：
+
+| 首批状态 | 是否有 _SECOND？ | 原因 |
+|---|---|---|
+| `NAV_TO_RAW` | **是** (`NAV_TO_RAW_SECOND`) | 回程路径 TEMP→RAW 不同于 START→RAW |
+| `NAV_TO_ROUGH` | **是** (`NAV_TO_ROUGH_SECOND`) | 第二批 ROUGH 路径可能不同 |
+| `NAV_TO_TEMP` | **是** (`NAV_TO_TEMP_SECOND`) | 第二批 TEMP 路径可能不同 |
+| `ALIGN_RAW` | 否（复用） | `current_batch_order` 参数化颜色顺序 |
+| `PICK_RAW` | 否（复用） | 抓取动作无差异 |
+| `ALIGN_ROUGH` | 否（复用） | `current_batch` 区分放料/取回阶段 |
+| `PLACE_ROUGH` | 否（复用） | 无差异 |
+| `ALIGN_TEMP` | 否（复用） | `current_batch` 区分平放/码垛 |
+| `PLACE_TEMP` | 否（复用） | `current_batch=2` 时走码垛逻辑 |
+| `CHECK_LOAD` | 否（复用） | `current_zone + current_step` 路由 |
+| `PICK_ROUGH` | 否（复用） | 第一批 ROUGH 取回已有此状态 |
+
 **`update()` 调用时机**（在 `MissionCoordinator` 中）：
 
 每次外部事件处理后立即调 `mission_sm.update()`，确保 `on_execute` 及时检查状态。
@@ -274,9 +318,8 @@ self.mission_sm.update()
 
 ```
 IDLE → SEARCH: START
-SEARCH → TRACKING: TARGET_FOUND（连续 10 帧检测到）
-SEARCH → FAIL: SEARCH_TIMEOUT
-TRACKING → SEARCH: TARGET_LOST（连续 5 帧丢失）
+SEARCH → TRACKING: 由 on_execute 自动转换（consecutive_detected_frames >= 10）
+TRACKING → SEARCH: 由 on_execute 自动转换（consecutive_lost_frames >= 5）
 任意 → IDLE: STOP
 FAIL → IDLE: RESET
 ```
