@@ -89,14 +89,14 @@ bit 7: 保留
 
 ## 6. action_id 映射（TYPE_ACTION_DONE）
 
-每完成一个动作，MCU 发一次 `ACTION_DONE`，`action_id` 标识动作类型：
+每完成一个动作，MCU 发一次 `ACTION_DONE`，`action_id` 标识动作类型（代码层使用 `ActionId` 枚举，见 `protocol.py`）：
 
-| action_id | 对应动作 | 触发事件 | 每批次循环次数 |
-|:---|:---|:---|:---|
-| 1 | `PICK_RAW` — 原料区取料 | `PICK_DONE` | 3（每次取 1 个物料） |
-| 2 | `PLACE_ROUGH` — 粗加工区放料 | `place_action_done` 标志 | 3（每次放 1 个物料） |
-| 3 | `PLACE_TEMP` — 暂存区放料/码垛 | `place_action_done` 标志 | 3（每次放 1 个物料） |
-| 4 | `PICK_ROUGH` — 粗加工区取料（回收入机器人） | `PICK_DONE` | 3（每次取 1 个物料） |
+| action_id | 枚举名 | 对应动作 | 触发事件 | 每批次循环次数 |
+|:---|:---|:---|:---|:---|
+| 1 | `ActionId.PICK_RAW` | `PICK_RAW` — 原料区取料 | `PICK_DONE` | 3（每次取 1 个物料） |
+| 2 | `ActionId.PLACE_ROUGH` | `PLACE_ROUGH` — 粗加工区放料 | `place_action_done` 标志 | 3（每次放 1 个物料） |
+| 3 | `ActionId.PLACE_TEMP` | `PLACE_TEMP` — 暂存区放料/码垛 | `place_action_done` 标志 | 3（每次放 1 个物料） |
+| 4 | `ActionId.PICK_ROUGH` | `PICK_ROUGH` — 粗加工区取料（回收入机器人） | `PICK_DONE` | 3（每次取 1 个物料） |
 
 > **注意**：`action_id=2/3`（PLACE）不触发事件转换，而是通过 `place_action_done` 标志让状态机的 `on_execute` 决定下一步。详见 `docs/architecture/state_machine.md` §2 混合模型。
 
@@ -129,28 +129,28 @@ OP 切换到 ALIGN_RAW
 OP 自动开启 track_cargo
   → VISUAL_SERVO_DATA (持续发送，MCU PID 微调)
   → STATUS_FROM_VISION flags=ready_to_pick
-MCU 抓取 → ACTION_DONE action_id=1, result=OK
+MCU 抓取 → ACTION_DONE action_id=ActionId.PICK_RAW (1), result=OK
 OP 推进 step，继续下一轮 ...
 
 MCU 到达 ROUGH → TYPE_ARRIVED zone=3
 OP 自动切换到 ring_track
   → VISUAL_SERVO_DATA
   → STATUS_FROM_VISION flags=ready_to_place
-MCU 放置 → ACTION_DONE action_id=2, result=OK
+MCU 放置 → ACTION_DONE action_id=ActionId.PLACE_ROUGH (2), result=OK
 OP 重复 ALIGN+PLACE 直到 cargo_count=0
 OP 切换到 PICK 阶段（picking_from_rough=True）
 
 MCU 到达 ROUGH 色环前（取回阶段）
 OP ALIGN_ROUGH → VISUAL_SERVO_DATA
   → STATUS_FROM_VISION flags=ready_to_pick
-MCU 取回 → ACTION_DONE action_id=4, result=OK
+MCU 取回 → ACTION_DONE action_id=ActionId.PICK_ROUGH (4), result=OK
 OP 重复 ALIGN+PICK 直到 cargo_count=3
 
 MCU 到达 TEMP → TYPE_ARRIVED zone=4
 OP 自动切换到 ring_track
   → VISUAL_SERVO_DATA
   → STATUS_FROM_VISION flags=ready_to_place
-MCU 放置 → ACTION_DONE action_id=3, result=OK
+MCU 放置 → ACTION_DONE action_id=ActionId.PLACE_TEMP (3), result=OK
 OP 重复 ALIGN+PLACE 直到 cargo_count=0
 
 OP → RETURN_HOME → FINISHED
