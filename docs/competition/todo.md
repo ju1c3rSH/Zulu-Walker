@@ -100,7 +100,7 @@
   - `_CheckLoadState.on_execute` 根据 zone+step 路由（RAW→RAW 循环 / ROUGH→ROUGH 循环 / 去下一站）
   - `_PlaceRoughState.on_execute` 循环放料 → 切换 `picking_from_rough` 进入取料阶段
   - `_PlaceTempState.on_execute` 循环放料 → `cargo_count==0` 回家 ✅ 修死锁
-- [x] 新增 `PICK_ROUGH` 状态（MissionState=26）+ `_PickRoughState` 类 + 事件转换
+- [x] 新增 `PICK_ROUGH` 状态（MissionState=10）+ `_PickRoughState` 类 + 事件转换
 - [x] 混合事件模型：视觉决策改用 `on_execute`（6 个视觉事件转换删除），MCU 事件保留事件驱动
 - [x] `place_action_done` 标志解决 PLACE 状态不等 ACTION_DONE 就跳走的问题
 - [x] `mission_context.py` 5 处事件处理器后加 `mission_sm.update()`

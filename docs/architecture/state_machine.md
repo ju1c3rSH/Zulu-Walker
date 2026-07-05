@@ -121,16 +121,18 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 | 5 | `PICK_RAW` | 抓取物料 |
 | 6 | `CHECK_LOAD` | 确认已装载 |
 | 7 | `NAV_TO_ROUGH` | 前往粗加工区 |
-| 8 | `ALIGN_ROUGH` | 粗加工区对准色环 |
+| 8 | `ALIGN_ROUGH` | 粗加工区对准色环（放料/取回复用） |
 | 9 | `PLACE_ROUGH` | 放置物料 |
-| 10 | `NAV_TO_TEMP` | 前往暂存区 |
-| 11 | `ALIGN_TEMP` | 暂存区对准色环 |
-| 12 | `PLACE_TEMP` | 放置/码垛物料 |
-| 13~22 | 第二批状态 | NAV_*_SECOND 独立（导航路径不同），ALIGN/PICK/PLACE/CHECK 复用首批 |
-| 23 | `RETURN_HOME` | 返回启停区 |
-| 24 | `FINISHED` | 任务完成 |
-| 25 | `ERROR` | 异常 |
-| **26** | **`PICK_ROUGH`** | **粗加工区取回物料（放完后重新捡起）** |
+| 10 | `PICK_ROUGH` | 粗加工区取回物料（放完后重新捡起） |
+| 11 | `NAV_TO_TEMP` | 前往暂存区 |
+| 12 | `ALIGN_TEMP` | 暂存区对准色环 |
+| 13 | `PLACE_TEMP` | 放置/码垛物料 |
+| 14 | `NAV_TO_RAW_SECOND` | 第二批前往原料区 |
+| 15 | `NAV_TO_TEMP_SECOND` | 第二批前往暂存区 |
+| 16 | `PLACE_TEMP_STACK` | 第二批码垛 |
+| 17 | `RETURN_HOME` | 返回启停区 |
+| 18 | `FINISHED` | 任务完成 |
+| 19 | `ERROR` | 异常 |
 
 ### 事件列表
 
