@@ -20,7 +20,7 @@ from time import time
 from utils.state_machine.base import BaseStateMachine, State
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.cargo import CargoSet
-from modules.zw_uart_module.protocol import VisualFlags
+from modules.zw_uart_module.protocol import ActionId, VisualFlags
 
 
 # ===== Shared constants (must match STM32 firmware) =====
@@ -655,7 +655,7 @@ class MissionStateMachine(BaseStateMachine):
                 return self.trigger(self.Events.RETURNED_HOME)
         return False
 
-    def on_action_done(self, action_id: int, result: int) -> bool:
+    def on_action_done(self, action_id: ActionId, result: int) -> bool:
         """Handle ACTION_DONE from STM32."""
         if result != 0:  # not OK
             self.context.error_code = action_id
@@ -663,15 +663,15 @@ class MissionStateMachine(BaseStateMachine):
             return self.trigger(self.Events.ERROR)
 
         state = self.current_state
-        if state == MissionStateNames[MissionState.PICK_RAW] and action_id == 1:
+        if state == MissionStateNames[MissionState.PICK_RAW] and action_id == ActionId.PICK_RAW:
             return self.trigger(self.Events.PICK_DONE)
-        if state == MissionStateNames[MissionState.PLACE_ROUGH] and action_id == 2:
+        if state == MissionStateNames[MissionState.PLACE_ROUGH] and action_id == ActionId.PLACE_ROUGH:
             self.context.cargo_count -= 1
             self.context.place_action_done = True
             return False
-        if state == MissionStateNames[MissionState.PICK_ROUGH] and action_id == 4:
+        if state == MissionStateNames[MissionState.PICK_ROUGH] and action_id == ActionId.PICK_ROUGH:
             return self.trigger(self.Events.PICK_DONE)
-        if state == MissionStateNames[MissionState.PLACE_TEMP] and action_id == 3:
+        if state == MissionStateNames[MissionState.PLACE_TEMP] and action_id == ActionId.PLACE_TEMP:
             self.context.cargo_count -= 1
             self.context.place_action_done = True
             return False

@@ -17,6 +17,7 @@ Protocol Frame Structure:
 """
 
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import Optional
 
 
@@ -60,6 +61,15 @@ ACTION_BUSY = 0x01
 ACTION_TIMEOUT = 0x02
 ACTION_FAIL = 0x03
 ACTION_NO_CARGO = 0x04
+
+
+class ActionId(IntEnum):
+    """Action identifiers for TYPE_ACTION_DONE."""
+    PICK_RAW = 1      # 原料区取料
+    PLACE_ROUGH = 2   # 粗加工区放料
+    PLACE_TEMP = 3    # 暂存区放料/码垛
+    PICK_ROUGH = 4    # 粗加工区取料（回收）
+
 
 # Error types for TYPE_ERROR
 ERROR_TYPE_X = 0            # X direction error
@@ -259,16 +269,16 @@ def parse_color_result_payload(payload: bytes) -> Optional[tuple]:
     return payload[0], payload[1]
 
 
-def build_action_done_frame(action_id: int, result: int) -> bytes:
+def build_action_done_frame(action_id: ActionId, result: int) -> bytes:
     """Build TYPE_ACTION_DONE frame."""
     return _build_frame(TYPE_ACTION_DONE, bytes([action_id, result]))
 
 
-def parse_action_done_payload(payload: bytes) -> Optional[tuple]:
+def parse_action_done_payload(payload: bytes) -> Optional[tuple[ActionId, int]]:
     """Parse TYPE_ACTION_DONE payload -> (action_id, result)."""
     if len(payload) != 2:
         return None
-    return payload[0], payload[1]
+    return ActionId(payload[0]), payload[1]
 
 
 def build_heartbeat_frame(seq: int, mission_state: int, visual_state: int) -> bytes:

@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
+from modules.zw_uart_module.protocol import ActionId
+
 
 @dataclass
 class McuCmdReceived:
@@ -15,7 +17,7 @@ class ArrivedEvent:
 
 @dataclass
 class ActionDoneEvent:
-    action_id: int
+    action_id: ActionId
     result: int
 
 
