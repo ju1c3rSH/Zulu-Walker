@@ -37,17 +37,16 @@ class MissionState:
     NAV_TO_ROUGH = 7
     ALIGN_ROUGH = 8
     PLACE_ROUGH = 9
-    # 这里可能要加中间State
-    NAV_TO_TEMP = 10
-    ALIGN_TEMP = 11
-    PLACE_TEMP = 12
-    NAV_TO_RAW_SECOND = 13
-    NAV_TO_TEMP_SECOND = 20
-    PLACE_TEMP_STACK = 22
-    RETURN_HOME = 23
-    FINISHED = 24
-    ERROR = 25
-    PICK_ROUGH = 26
+    PICK_ROUGH = 10
+    NAV_TO_TEMP = 11
+    ALIGN_TEMP = 12
+    PLACE_TEMP = 13
+    NAV_TO_RAW_SECOND = 14
+    NAV_TO_TEMP_SECOND = 15
+    PLACE_TEMP_STACK = 16
+    RETURN_HOME = 17
+    FINISHED = 18
+    ERROR = 19
 
 
 class VisualState:
@@ -329,10 +328,12 @@ class _NavToRoughState(State):
 
 
 class _AlignRoughState(State):
+    ## 放要对准一次，收也要对准一次！
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         print("[MissionSM] Enter ALIGN_ROUGH")
         ctx.state_entry_time = time()
         ctx.ready_to_place = False
+        ctx.ready_to_pick = False
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         if ctx.picking_from_rough and ctx.ready_to_pick and not ctx.color_mismatch:
@@ -466,14 +467,7 @@ MissionStateNames = {
     MissionState.ALIGN_TEMP: "ALIGN_TEMP",
     MissionState.PLACE_TEMP: "PLACE_TEMP",
     MissionState.NAV_TO_RAW_SECOND: "NAV_TO_RAW_SECOND",
-    MissionState.ALIGN_RAW_SECOND: "ALIGN_RAW_SECOND",
-    MissionState.PICK_RAW_SECOND: "PICK_RAW_SECOND",
-    MissionState.CHECK_LOAD_SECOND: "CHECK_LOAD_SECOND",
-    MissionState.NAV_TO_ROUGH_SECOND: "NAV_TO_ROUGH_SECOND",
-    MissionState.ALIGN_ROUGH_SECOND: "ALIGN_ROUGH_SECOND",
-    MissionState.PLACE_ROUGH_SECOND: "PLACE_ROUGH_SECOND",
     MissionState.NAV_TO_TEMP_SECOND: "NAV_TO_TEMP_SECOND",
-    MissionState.ALIGN_TEMP_SECOND: "ALIGN_TEMP_SECOND",
     MissionState.PLACE_TEMP_STACK: "PLACE_TEMP_STACK",
     MissionState.RETURN_HOME: "RETURN_HOME",
     MissionState.FINISHED: "FINISHED",
