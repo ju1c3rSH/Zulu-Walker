@@ -42,14 +42,7 @@ class MissionState:
     ALIGN_TEMP = 11
     PLACE_TEMP = 12
     NAV_TO_RAW_SECOND = 13
-    ALIGN_RAW_SECOND = 14
-    PICK_RAW_SECOND = 15
-    CHECK_LOAD_SECOND = 16
-    NAV_TO_ROUGH_SECOND = 17
-    ALIGN_ROUGH_SECOND = 18
-    PLACE_ROUGH_SECOND = 19
     NAV_TO_TEMP_SECOND = 20
-    ALIGN_TEMP_SECOND = 21
     PLACE_TEMP_STACK = 22
     RETURN_HOME = 23
     FINISHED = 24
@@ -529,13 +522,16 @@ class MissionStateMachine(BaseStateMachine):
         self.register_state(MissionStateNames[MissionState.NAV_TO_ROUGH], _NavToRoughState())
         self.register_state(MissionStateNames[MissionState.ALIGN_ROUGH], _AlignRoughState())
         self.register_state(MissionStateNames[MissionState.PLACE_ROUGH], _PlaceRoughState())
+        self.register_state(MissionStateNames[MissionState.PICK_ROUGH], _PickRoughState())
         self.register_state(MissionStateNames[MissionState.NAV_TO_TEMP], _NavToTempState())
         self.register_state(MissionStateNames[MissionState.ALIGN_TEMP], _AlignTempState())
         self.register_state(MissionStateNames[MissionState.PLACE_TEMP], _PlaceTempState())
+        self.register_state(MissionStateNames[MissionState.NAV_TO_RAW_SECOND], _NavToRawState())
+        self.register_state(MissionStateNames[MissionState.NAV_TO_TEMP_SECOND], _NavToTempState())
+        self.register_state(MissionStateNames[MissionState.PLACE_TEMP_STACK], _PlaceTempState())
         self.register_state(MissionStateNames[MissionState.RETURN_HOME], _ReturnHomeState())
         self.register_state(MissionStateNames[MissionState.FINISHED], _FinishedState())
         self.register_state(MissionStateNames[MissionState.ERROR], _ErrorState())
-        self.register_state(MissionStateNames[MissionState.PICK_ROUGH], _PickRoughState())
 
     def _setup_transitions(self) -> None:
         # WAIT_START -> READ_QR
