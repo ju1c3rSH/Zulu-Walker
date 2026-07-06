@@ -42,11 +42,9 @@ class MissionState:
     ALIGN_TEMP = 12
     PLACE_TEMP = 13
     NAV_TO_RAW_SECOND = 14
-    NAV_TO_TEMP_SECOND = 15
-    PLACE_TEMP_STACK = 16
-    RETURN_HOME = 17
-    FINISHED = 18
-    ERROR = 19
+    RETURN_HOME = 15
+    FINISHED = 16
+    ERROR = 17
 
 
 class VisualState:
@@ -304,6 +302,7 @@ class _CheckLoadState(State):
                 if ctx.current_zone == Zone.RAW:
                     return MissionStateNames.NAV_TO_ROUGH
                 else:
+                    # ROUGH抓取结束，清空标志位，然后导航到TEMP
                     ctx.picking_from_rough = False
                     return MissionStateNames.NAV_TO_TEMP
         if ctx.state_entry_time + 3.0 < time() and not ctx.cargo_confirmed:
@@ -408,6 +407,15 @@ class _PlaceTempState(State):
         ctx.place_action_done = False
         if ctx.cargo_count > 0:
             return MissionStateNames.ALIGN_TEMP
+        if ctx.cargo_count < 0:
+            print(f"[MissionSM] ERROR: cargo_count={ctx.cargo_count} negative")
+            return MissionStateNames.RETURN_HOME
+        # cargo_count == 0
+        if ctx.current_batch == 1:
+            ctx.current_batch = 2
+            ctx.current_batch_order = list(ctx.second_batch_order)
+            ctx.current_step = 0
+            return MissionStateNames.NAV_TO_RAW_SECOND
         return MissionStateNames.RETURN_HOME
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
@@ -467,8 +475,6 @@ MissionStateNames = {
     MissionState.ALIGN_TEMP: "ALIGN_TEMP",
     MissionState.PLACE_TEMP: "PLACE_TEMP",
     MissionState.NAV_TO_RAW_SECOND: "NAV_TO_RAW_SECOND",
-    MissionState.NAV_TO_TEMP_SECOND: "NAV_TO_TEMP_SECOND",
-    MissionState.PLACE_TEMP_STACK: "PLACE_TEMP_STACK",
     MissionState.RETURN_HOME: "RETURN_HOME",
     MissionState.FINISHED: "FINISHED",
     MissionState.ERROR: "ERROR",
@@ -521,8 +527,6 @@ class MissionStateMachine(BaseStateMachine):
         self.register_state(MissionStateNames[MissionState.ALIGN_TEMP], _AlignTempState())
         self.register_state(MissionStateNames[MissionState.PLACE_TEMP], _PlaceTempState())
         self.register_state(MissionStateNames[MissionState.NAV_TO_RAW_SECOND], _NavToRawState())
-        self.register_state(MissionStateNames[MissionState.NAV_TO_TEMP_SECOND], _NavToTempState())
-        self.register_state(MissionStateNames[MissionState.PLACE_TEMP_STACK], _PlaceTempState())
         self.register_state(MissionStateNames[MissionState.RETURN_HOME], _ReturnHomeState())
         self.register_state(MissionStateNames[MissionState.FINISHED], _FinishedState())
         self.register_state(MissionStateNames[MissionState.ERROR], _ErrorState())
@@ -570,6 +574,13 @@ class MissionStateMachine(BaseStateMachine):
             event=self.Events.ARRIVED_TEMP
         )
 
+        # NAV_TO_RAW_SECOND -> ALIGN_RAW (second batch)
+        self.register_transition(
+            MissionStateNames[MissionState.NAV_TO_RAW_SECOND],
+            MissionStateNames[MissionState.ALIGN_RAW],
+            event=self.Events.ARRIVED_RAW
+        )
+
         # PICK_ROUGH -> CHECK_LOAD
         self.register_transition(
             MissionStateNames[MissionState.PICK_ROUGH],
@@ -605,7 +616,8 @@ class MissionStateMachine(BaseStateMachine):
             MissionState.CHECK_LOAD, MissionState.NAV_TO_ROUGH,
             MissionState.ALIGN_ROUGH, MissionState.PLACE_ROUGH,
             MissionState.NAV_TO_TEMP, MissionState.ALIGN_TEMP,
-            MissionState.PLACE_TEMP, MissionState.PICK_ROUGH, MissionState.RETURN_HOME,
+            MissionState.PLACE_TEMP, MissionState.PICK_ROUGH,
+            MissionState.NAV_TO_RAW_SECOND, MissionState.RETURN_HOME,
         ]:
             self.register_transition(
                 MissionStateNames[sid],
@@ -639,10 +651,10 @@ class MissionStateMachine(BaseStateMachine):
             if state in (MissionStateNames[MissionState.NAV_TO_RAW], MissionStateNames[MissionState.NAV_TO_RAW_SECOND]):
                 return self.trigger(self.Events.ARRIVED_RAW)
         elif zone_id == Zone.ROUGH:
-            if state in (MissionStateNames[MissionState.NAV_TO_ROUGH], MissionStateNames[MissionState.NAV_TO_ROUGH_SECOND]):
+            if state == MissionStateNames[MissionState.NAV_TO_ROUGH]:
                 return self.trigger(self.Events.ARRIVED_ROUGH)
         elif zone_id == Zone.TEMP:
-            if state in (MissionStateNames[MissionState.NAV_TO_TEMP], MissionStateNames[MissionState.NAV_TO_TEMP_SECOND]):
+            if state == MissionStateNames[MissionState.NAV_TO_TEMP]:
                 return self.trigger(self.Events.ARRIVED_TEMP)
         elif zone_id == Zone.START:
             if state == MissionStateNames[MissionState.RETURN_HOME]:

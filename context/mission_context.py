@@ -117,7 +117,7 @@ class MissionCoordinator:
 
         bridge.when_enter({
             "NAV_TO_RAW", "NAV_TO_ROUGH", "NAV_TO_TEMP",
-            "NAV_TO_RAW_SECOND", "NAV_TO_ROUGH_SECOND", "NAV_TO_TEMP_SECOND",
+            "NAV_TO_RAW_SECOND",
             "RETURN_HOME", "WAIT_START", "FINISHED", "ERROR", "IDLE",
         }, self._deactivate_all_visual)
 
