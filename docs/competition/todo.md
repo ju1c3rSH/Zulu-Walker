@@ -117,6 +117,18 @@
 - [ ] `CargoSet` / `CargoItem` 状态联动（pick/place 时自动更新 zone/available）
 - [ ] `ColorResult` 事件 — 确认是否仍需保留（颜色现从 `batch_order` 获取）
 
+### P4 — 防御性编程（代码审查发现，正常流程不会触发）
+- [ ] `_CheckLoadState.on_execute` 加 `current_batch_order` 长度防御（`IndexError` 风险）：
+  - 现状：`ctx.target_color = ctx.current_batch_order[ctx.current_step] if ctx.current_step < 3 else Color.RED`
+  - 风险：若 `current_batch_order` 元素 < 3 而 `current_step < 3` 会越界
+  - 来源：`parse_qr()` 当前保证 3 元素，正常流程不会触发
+  - 修复方向：可改用 `ctx.current_target_color()` 或显式长度检查
+- [ ] `_PlaceRoughState.on_execute` 硬编码 `[0]` 索引：
+  - 现状：`ctx.target_color = ctx.current_batch_order[0]`
+  - 问题：`ctx.target_color` 字段被显式赋值，但视觉实际用 `_current_target_color()`（动态计算）— 此处赋值冗余
+  - 影响：无功能 bug，仅冗余
+  - 修复方向：删除冗余赋值，统一从 `current_target_color()` 读取
+
 ### AGENTS.md 更新
 - [x] cargo_detector 架构说明
 - [ ] 本轮架构变更同步（任务系统、Protocol、文档结构）

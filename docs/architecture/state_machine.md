@@ -13,7 +13,7 @@
 │                                                         │
 │  ┌────────────────┐     ┌───────────────────────────┐  │
 │  │ MissionSM (镜像) │◄───►│      VisualSM (主控)      │  │
-│  │  27 states      │     │  IDLE/SEARCH/TRACKING/    │  │
+│  │  18 states      │     │  IDLE/SEARCH/TRACKING/    │  │
 │  │                 │     │  RECOVERY/FAIL            │  │
 │  └───────┬─────────┘     └───────────────────────────┘  │
 │          │                                                │
@@ -25,7 +25,7 @@
 │                   STM32 (MCU)                             │
 │  ┌────────────────┐     ┌───────────────────────────┐  │
 │  │ MissionSM (主控) │     │    VisualSM (镜像)         │  │
-│  │  27 states      │     │   (心跳中的 visual_state)  │  │
+│  │  18 states      │     │   (心跳中的 visual_state)  │  │
 │  └────────────────┘     └───────────────────────────┘  │
 │                                                         │
 └───────────────────────────────────────────────────────┘
@@ -71,9 +71,9 @@ OP 从 batch_order[current_step] 获取颜色 → 传给 processor
 | `ALIGN_TEMP` | `ring_track` | `batch_order[current_step]` | 暂存区对齐色环 |
 | 其他状态 | 无（关闭所有视觉任务） | - | - |
 
-> **第二批处理**：`NAV_TO_RAW_SECOND` / `NAV_TO_ROUGH_SECOND` / `NAV_TO_TEMP_SECOND`
-> 仅用于区分导航路径（回程路线不同于首批起点）。`ALIGN_*` / `PICK_*` / `PLACE_*` / `CHECK_LOAD`
-> 在两批次间复用，行为由 `current_batch_order`（颜色顺序）和 `current_batch`（平放/码垛）参数化驱动。
+> **第二批处理**：仅 `NAV_TO_RAW_SECOND` 是独立状态（用于区分 TEMP→RAW 回程路径）。
+> `ALIGN_*` / `PICK_*` / `PLACE_*` / `CHECK_LOAD` / `NAV_TO_ROUGH` / `NAV_TO_TEMP` 在两批次间复用，
+> 行为由 `current_batch_order`（颜色顺序）和 `current_batch`（平放/码垛）参数化驱动。
 
 ### 对 MCU 的电控对接约定
 
@@ -109,7 +109,7 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 
 ## 3. MissionStateMachine
 
-### 状态列表（27 状态，须与 STM32 固件同步）
+### 状态列表（18 状态，0~17 连续，须与 STM32 固件同步）
 
 | ID | 名称 | 含义 |
 |----|------|------|
@@ -126,13 +126,13 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 | 10 | `PICK_ROUGH` | 粗加工区取回物料（放完后重新捡起） |
 | 11 | `NAV_TO_TEMP` | 前往暂存区 |
 | 12 | `ALIGN_TEMP` | 暂存区对准色环 |
-| 13 | `PLACE_TEMP` | 放置/码垛物料 |
-| 14 | `NAV_TO_RAW_SECOND` | 第二批前往原料区 |
-| 15 | `NAV_TO_TEMP_SECOND` | 第二批前往暂存区 |
-| 16 | `PLACE_TEMP_STACK` | 第二批码垛 |
-| 17 | `RETURN_HOME` | 返回启停区 |
-| 18 | `FINISHED` | 任务完成 |
-| 19 | `ERROR` | 异常 |
+| 13 | `PLACE_TEMP` | 放置/码垛物料（两批次复用） |
+| 14 | `NAV_TO_RAW_SECOND` | 第二批前往原料区（TEMP→RAW 路径不同于首批） |
+| 15 | `RETURN_HOME` | 返回启停区 |
+| 16 | `FINISHED` | 任务完成 |
+| 17 | `ERROR` | 异常 |
+
+> **第二批策略**：仅 `NAV_TO_RAW_SECOND` 是独立状态。第二批的 ROUGH/TEMP 导航仍使用 `NAV_TO_ROUGH` / `NAV_TO_TEMP`，由 MCU 自行通过 `current_batch` 同步区分回程路径；`ALIGN_*` / `PICK_*` / `PLACE_*` / `CHECK_LOAD` 全部复用首批状态，行为由 `current_batch_order`（颜色顺序）和 `current_batch`（平放/码垛）参数化驱动。
 
 ### 事件列表
 
@@ -153,59 +153,98 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 | `RESET` | MCU/OP | ERROR → WAIT_START |
 | `ERROR` | MCU/OP | 任何状态 → ERROR |
 
+> **`PLACE_DONE` 机制说明**：`PLACE_DONE` 事件不通过事件总线直接触发，而是通过 `place_action_done` 标志间接驱动：
+> 1. `on_action_done()` 收到 `ACTION_DONE action_id=PLACE_ROUGH/PLACE_TEMP` 后，**仅设置** `ctx.cargo_count -= 1` 和 `ctx.place_action_done = True`，**不触发**任何状态转换（`return False`）
+> 2. PLACE 状态的 `on_execute()` 在下一轮 `update()` 中检测到 `place_action_done == True`，清除该标志并根据 `cargo_count` 决定下一步跳转
+>
+> 这种"标志驱动 + on_execute 决策"的混合模型避免了 PLACE 状态在 MCU 动作完成瞬间立刻跳走、导致视觉伺服与机械动作脱节的问题。详见 §3 "批次逻辑与混合事件模型"。
+
 ### 转换图
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> IDLE
     IDLE --> WAIT_START: START
     WAIT_START --> READ_QR: START
     READ_QR --> NAV_TO_RAW: QR_OK
-    
+
+    %% ===== 第一批：取料 (RAW) =====
     NAV_TO_RAW --> ALIGN_RAW: ARRIVED_RAW
-    ALIGN_RAW --> PICK_RAW: on_execute
+    ALIGN_RAW --> PICK_RAW: ready_to_pick
     PICK_RAW --> CHECK_LOAD: PICK_DONE
-    
-    CHECK_LOAD --> ALIGN_RAW: on_execute (step<3, RAW)
-    CHECK_LOAD --> NAV_TO_ROUGH: on_execute (step>=3, RAW)
-    
+    CHECK_LOAD --> ALIGN_RAW: step<3
+    CHECK_LOAD --> NAV_TO_ROUGH: step>=3
+
+    %% ===== 第一批：粗加工 (放 → 取) =====
     NAV_TO_ROUGH --> ALIGN_ROUGH: ARRIVED_ROUGH
-    ALIGN_ROUGH --> PLACE_ROUGH: on_execute (!picking)
-    ALIGN_ROUGH --> PICK_ROUGH: on_execute (picking)
-    PLACE_ROUGH --> ALIGN_ROUGH: on_execute (cargo>0)
-    PLACE_ROUGH --> ALIGN_ROUGH: on_execute (cargo=0 → picking phase)
-    
+    ALIGN_ROUGH --> PLACE_ROUGH: ready_to_place
+    PLACE_ROUGH --> ALIGN_ROUGH: cargo>0
+    PLACE_ROUGH --> ALIGN_ROUGH: cargo=0 / picking=True
+    ALIGN_ROUGH --> PICK_ROUGH: ready_to_pick (picking)
     PICK_ROUGH --> CHECK_LOAD: PICK_DONE
-    CHECK_LOAD --> ALIGN_ROUGH: on_execute (step<3, ROUGH)
-    CHECK_LOAD --> NAV_TO_TEMP: on_execute (step>=3, ROUGH)
-    
+    CHECK_LOAD --> ALIGN_ROUGH: step<3
+    CHECK_LOAD --> NAV_TO_TEMP: step>=3
+
+    %% ===== 第一批：暂存 =====
     NAV_TO_TEMP --> ALIGN_TEMP: ARRIVED_TEMP
-    ALIGN_TEMP --> PLACE_TEMP: on_execute
-    PLACE_TEMP --> ALIGN_TEMP: on_execute (cargo>0)
-    PLACE_TEMP --> RETURN_HOME: on_execute (cargo=0)
-    
+    ALIGN_TEMP --> PLACE_TEMP: ready_to_place
+    PLACE_TEMP --> ALIGN_TEMP: cargo>0
+    PLACE_TEMP --> NAV_TO_RAW_SECOND: cargo=0 / batch=1 → 切 batch=2
+
+    %% ===== 第二批：回程取料 (TEMP→RAW) =====
+    NAV_TO_RAW_SECOND --> ALIGN_RAW: ARRIVED_RAW
+    ALIGN_RAW --> PICK_RAW: ready_to_pick
+    PICK_RAW --> CHECK_LOAD: PICK_DONE
+    CHECK_LOAD --> ALIGN_RAW: step<3
+    CHECK_LOAD --> NAV_TO_ROUGH: step>=3
+
+    %% ===== 第二批：粗加工 (复用) =====
+    NAV_TO_ROUGH --> ALIGN_ROUGH: ARRIVED_ROUGH
+    ALIGN_ROUGH --> PLACE_ROUGH: ready_to_place
+    PLACE_ROUGH --> ALIGN_ROUGH: cargo>0
+    PLACE_ROUGH --> ALIGN_ROUGH: cargo=0 / picking=True
+    ALIGN_ROUGH --> PICK_ROUGH: ready_to_pick (picking)
+    PICK_ROUGH --> CHECK_LOAD: PICK_DONE
+    CHECK_LOAD --> ALIGN_ROUGH: step<3
+    CHECK_LOAD --> NAV_TO_TEMP: step>=3
+
+    %% ===== 第二批：暂存 (复用 PLACE_TEMP) =====
+    NAV_TO_TEMP --> ALIGN_TEMP: ARRIVED_TEMP
+    ALIGN_TEMP --> PLACE_TEMP: ready_to_place
+    PLACE_TEMP --> ALIGN_TEMP: cargo>0
+    PLACE_TEMP --> RETURN_HOME: cargo=0 / batch=2
+
+    %% ===== 终态 =====
     RETURN_HOME --> FINISHED: RETURNED_HOME
-    
     ERROR --> WAIT_START: RESET
-    
-    WAIT_START --> ERROR: ERROR
-    READ_QR --> ERROR: ERROR
-    NAV_TO_RAW --> ERROR: ERROR
-    ALIGN_RAW --> ERROR: ERROR
-    PICK_RAW --> ERROR: ERROR
-    CHECK_LOAD --> ERROR: ERROR
-    NAV_TO_ROUGH --> ERROR: ERROR
-    ALIGN_ROUGH --> ERROR: ERROR
-    PLACE_ROUGH --> ERROR: ERROR
-    NAV_TO_TEMP --> ERROR: ERROR
-    ALIGN_TEMP --> ERROR: ERROR
-    PLACE_TEMP --> ERROR: ERROR
-    RETURN_HOME --> ERROR: ERROR
+
+    %% ===== 异常分支（简化） =====
+    WAIT_START --> ERROR
+    READ_QR --> ERROR
+    NAV_TO_RAW --> ERROR
+    ALIGN_RAW --> ERROR
+    PICK_RAW --> ERROR
+    CHECK_LOAD --> ERROR
+    NAV_TO_ROUGH --> ERROR
+    ALIGN_ROUGH --> ERROR
+    PLACE_ROUGH --> ERROR
+    PICK_ROUGH --> ERROR
+    NAV_TO_TEMP --> ERROR
+    ALIGN_TEMP --> ERROR
+    PLACE_TEMP --> ERROR
+    NAV_TO_RAW_SECOND --> ERROR
+    RETURN_HOME --> ERROR
 ```
 
-> **第二批流程**：`_PlaceTempState` 后若 `current_batch == 1` 返回 `NAV_TO_RAW`。
-> MCU 侧通过 `NAV_TO_RAW_SECOND` / `NAV_TO_ROUGH_SECOND` / `NAV_TO_TEMP_SECOND`
-> 区分第二批导航路径。ALIGN/PICK/PLACE/CHECK 复用首批状态节点。
+> **图例**：
+> - 实线箭头：状态转换
+> - 标签：触发条件（`ARRIVED_xxx` = MCU 事件；其他 = `on_execute` 决策）
+> - 圆角矩形（默认）：MissionState 状态
+
+> **第二批流程**：`_PlaceTempState` 后若 `current_batch == 1` 返回 `NAV_TO_RAW_SECOND`，
+> 切 `current_batch = 2`、`current_batch_order = second_batch_order`。
+> ALIGN/PICK/PLACE/CHECK 复用首批状态节点。
 
 ### 批次逻辑与混合事件模型
 
@@ -251,25 +290,28 @@ TEMP 区:
 | `_PlaceRoughState` | `place_action_done && cargo>0` | `ALIGN_ROUGH` |
 | `_PlaceRoughState` | `place_action_done && cargo==0` | `ALIGN_ROUGH (picking=True)` |
 | `_PlaceTempState` | `place_action_done && cargo>0` | `ALIGN_TEMP` |
-| `_PlaceTempState` | `place_action_done && cargo==0` | `RETURN_HOME` |
+| `_PlaceTempState` | `place_action_done && cargo<0` | `RETURN_HOME` (打印异常) |
+| `_PlaceTempState` | `place_action_done && cargo==0 && batch==1` | `NAV_TO_RAW_SECOND` (切 batch=2) |
+| `_PlaceTempState` | `place_action_done && cargo==0 && batch==2` | `RETURN_HOME` |
 
 #### 批次二处理策略
 
 第一批结束后，`_PlaceTempState.on_execute` 检测 `cargo_count == 0`：
-- `current_batch == 1 && second_batch_order` → 切换 `current_batch = 2`，`current_batch_order = second_batch_order`，返回 `NAV_TO_RAW`
+- `current_batch == 1 && second_batch_order` → 切换 `current_batch = 2`，`current_batch_order = second_batch_order`，`current_step = 0`，返回 `NAV_TO_RAW_SECOND`
 - `current_batch == 2` → `RETURN_HOME`
+- `cargo_count < 0`（异常）→ 打印错误日志，返回 `RETURN_HOME`
 
 **第二批完整状态链**：
 
 ```
-TEMP 放完第一批最后一个
-  → NAV_TO_RAW（MCU 侧用 NAV_TO_RAW_SECOND 区分回程路径）
-  → ALIGN_RAW（复用，batch_order 已切换为第二批颜色顺序）
+TEMP 放完第一批最后一个（_PlaceTempState，batch=1→2）
+  → NAV_TO_RAW_SECOND
+  → ALIGN_RAW（复用，current_batch_order 已切换为第二批颜色顺序）
   → PICK_RAW → CHECK_LOAD [×3]
-  → NAV_TO_ROUGH（MCU 侧用 NAV_TO_ROUGH_SECOND）
+  → NAV_TO_ROUGH（复用，MCU 自行根据 current_batch 区分路径）
   → ALIGN_ROUGH 放料 [×3] → ALIGN_ROUGH 取回 [×3]
-  → NAV_TO_TEMP（MCU 侧用 NAV_TO_TEMP_SECOND）
-  → ALIGN_TEMP 码垛 [×3]
+  → NAV_TO_TEMP（复用，MCU 自行根据 current_batch 区分路径）
+  → ALIGN_TEMP 对准 → PLACE_TEMP [×3]（复用，batch=2 时由 _PlaceTempState 决定终态）
   → RETURN_HOME → FINISHED
 ```
 
@@ -278,14 +320,14 @@ TEMP 放完第一批最后一个
 | 首批状态 | 是否有 _SECOND？ | 原因 |
 |---|---|---|
 | `NAV_TO_RAW` | **是** (`NAV_TO_RAW_SECOND`) | 回程路径 TEMP→RAW 不同于 START→RAW |
-| `NAV_TO_ROUGH` | **是** (`NAV_TO_ROUGH_SECOND`) | 第二批 ROUGH 路径可能不同 |
-| `NAV_TO_TEMP` | **是** (`NAV_TO_TEMP_SECOND`) | 第二批 TEMP 路径可能不同 |
+| `NAV_TO_ROUGH` | 否（复用） | 路径差异由 MCU 通过 `current_batch` 自行处理 |
+| `NAV_TO_TEMP` | 否（复用） | 路径差异由 MCU 通过 `current_batch` 自行处理 |
 | `ALIGN_RAW` | 否（复用） | `current_batch_order` 参数化颜色顺序 |
 | `PICK_RAW` | 否（复用） | 抓取动作无差异 |
-| `ALIGN_ROUGH` | 否（复用） | `current_batch` 区分放料/取回阶段 |
+| `ALIGN_ROUGH` | 否（复用） | `picking_from_rough` 区分放料/取回阶段 |
 | `PLACE_ROUGH` | 否（复用） | 无差异 |
-| `ALIGN_TEMP` | 否（复用） | `current_batch` 区分平放/码垛 |
-| `PLACE_TEMP` | 否（复用） | `current_batch=2` 时走码垛逻辑 |
+| `ALIGN_TEMP` | 否（复用） | 无差异 |
+| `PLACE_TEMP` | 否（复用） | `current_batch=2` 时由 `_PlaceTempState.on_execute` 决定下一状态 |
 | `CHECK_LOAD` | 否（复用） | `current_zone + current_step` 路由 |
 | `PICK_ROUGH` | 否（复用） | 第一批 ROUGH 取回已有此状态 |
 
@@ -380,3 +422,4 @@ PLACE 成功
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | **v1.0** | 2026-07-04 | 初始化：确定区域自动控制设计，定义状态↔任务映射表 |
+| **v1.1** | 2026-07-06 | 18 状态连续编号 0~17；删除 `NAV_TO_TEMP_SECOND` / `PLACE_TEMP_STACK`，仅保留 `NAV_TO_RAW_SECOND` 作为第二批独立状态；`_PlaceTempState.on_execute` 实现批次切换 + `cargo_count<0` 保护；mermaid 图重绘显示双批次流程；新增 `place_action_done` 机制说明 |
