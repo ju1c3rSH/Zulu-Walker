@@ -18,18 +18,19 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         super().__init__(name=name, detector=detector)
 
     def detect(self, frame: np.ndarray, target_color: Color) -> Optional[CargoItem]:
+        ts = self.detector._get_tracking(target_color)
         small, scale = self._scale_frame(frame)
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
 
-        result = self._try_roi(small, hsv, target_color, scale)
+        result = self._try_roi(small, hsv, ts, target_color, scale)
         if result is not None:
             return result
 
-        result = self._try_global(small, hsv, target_color, scale)
+        result = self._try_global(small, hsv, ts, target_color, scale)
         if result is not None:
             return result
 
-        return self._fallback_predict(target_color, scale)
+        return self._fallback_predict(ts, target_color, scale)
 
     def _scale_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, float]:
         h, w = frame.shape[:2]
@@ -43,12 +44,14 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
             ), s
         return frame, 1.0
 
-    def _decide_roi(self, frame: np.ndarray) -> Optional[Tuple[np.ndarray, Tuple[int, int]]]:
-        if self.detector.last_center is None:
+    def _decide_roi(self, frame: np.ndarray, ts, scale: float
+                    ) -> Optional[Tuple[np.ndarray, Tuple[int, int]]]:
+        if ts.last_center is None:
             return None
-        if self.detector.roi_miss_count >= self.detector.max_roi_miss:
+        if ts.roi_miss_count >= self.detector.max_roi_miss:
             return None
-        cx, cy = int(self.detector.last_center[0]), int(self.detector.last_center[1])
+        cx = int(ts.last_center[0] * scale)
+        cy = int(ts.last_center[1] * scale)
         half = self.detector.roi_size // 2
         h, w = frame.shape[:2]
         x1 = max(cx - half, 0)
@@ -60,31 +63,31 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         return frame[y1:y2, x1:x2], (x1, y1)
 
     def _try_roi(self, full_frame: np.ndarray, full_hsv: np.ndarray,
-                 target_color: Color, scale: float) -> Optional[CargoItem]:
-        roi = self._decide_roi(full_frame)
+                 ts, target_color: Color, scale: float) -> Optional[CargoItem]:
+        roi = self._decide_roi(full_frame, ts, scale)
         if roi is None:
             return None
         sub_img, offset = roi
         sub_hsv = cv2.cvtColor(sub_img, cv2.COLOR_BGR2HSV)
 
-        mask = self._adaptive_color_segment(sub_hsv, target_color)
+        mask = self._adaptive_color_segment(sub_hsv, ts, target_color)
         if mask is None:
-            self.detector.roi_miss_count += 1
+            ts.roi_miss_count += 1
             return None
 
         morphed = self._morph_process(mask)
         result = self._find_best_contour(morphed)
         if result is None:
-            self.detector.roi_miss_count += 1
+            ts.roi_miss_count += 1
             return None
 
         center, radius = result
         center = (center[0] + offset[0], center[1] + offset[1])
-        return self._finalize(center, radius, target_color, scale)
+        return self._finalize(center, radius, ts, target_color, scale)
 
     def _try_global(self, frame: np.ndarray, hsv: np.ndarray,
-                    target_color: Color, scale: float) -> Optional[CargoItem]:
-        mask = self._adaptive_color_segment(hsv, target_color)
+                    ts, target_color: Color, scale: float) -> Optional[CargoItem]:
+        mask = self._adaptive_color_segment(hsv, ts, target_color)
         if mask is None:
             return None
 
@@ -97,9 +100,10 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
             return None
 
         center, radius = result
-        return self._finalize(center, radius, target_color, scale)
+        return self._finalize(center, radius, ts, target_color, scale)
 
-    def _adaptive_color_segment(self, hsv: np.ndarray, target_color: Color) -> Optional[np.ndarray]:
+    def _adaptive_color_segment(self, hsv: np.ndarray, ts,
+                                target_color: Color) -> Optional[np.ndarray]:
         if target_color not in self.detector.color_ranges:
             return None
 
@@ -115,7 +119,7 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         if mask_coarse is None or cv2.countNonZero(mask_coarse) < 50:
             return None
 
-        s_low, v_low = self._compute_adaptive_sv(hsv, mask_coarse)
+        s_low, v_low = self._compute_adaptive_sv(hsv, ts, mask_coarse)
 
         mask_fine = None
         for lower, upper in ranges:
@@ -126,7 +130,8 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
 
         return mask_fine
 
-    def _compute_adaptive_sv(self, hsv: np.ndarray, mask: np.ndarray) -> Tuple[int, int]:
+    def _compute_adaptive_sv(self, hsv: np.ndarray, ts,
+                             mask: np.ndarray) -> Tuple[int, int]:
         s_channel = hsv[:, :, 1][mask > 0]
         v_channel = hsv[:, :, 2][mask > 0]
 
@@ -136,14 +141,14 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         s_low = int(np.percentile(s_channel, self.SV_PERCENTILE))
         v_low = int(np.percentile(v_channel, self.SV_PERCENTILE))
 
-        if not hasattr(self.detector, "_ema_s"):
-            self.detector._ema_s = s_low
-            self.detector._ema_v = v_low
+        if ts._ema_s is None:
+            ts._ema_s = s_low
+            ts._ema_v = v_low
         else:
-            self.detector._ema_s = int(self.EMA_ALPHA * s_low + (1 - self.EMA_ALPHA) * self.detector._ema_s)
-            self.detector._ema_v = int(self.EMA_ALPHA * v_low + (1 - self.EMA_ALPHA) * self.detector._ema_v)
+            ts._ema_s = int(self.EMA_ALPHA * s_low + (1 - self.EMA_ALPHA) * ts._ema_s)
+            ts._ema_v = int(self.EMA_ALPHA * v_low + (1 - self.EMA_ALPHA) * ts._ema_v)
 
-        return (self.detector._ema_s, self.detector._ema_v)
+        return (ts._ema_s, ts._ema_v)
 
     def _morph_process(self, mask: np.ndarray) -> np.ndarray:
         k_open = self.detector.kernel_open
@@ -193,47 +198,48 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         return ((float(cx), float(cy)), float(radius))
 
     def _finalize(self, center: Tuple[float, float], radius: float,
-                  target_color: Color, scale: float) -> Optional[CargoItem]:
+                  ts, target_color: Color, scale: float) -> Optional[CargoItem]:
         if scale < 1.0:
             center = (center[0] / scale, center[1] / scale)
             radius = radius / scale
 
-        smoothed = self._kalman_predict(center)
+        smoothed = self._kalman_predict(ts, center)
 
-        self.detector.last_center = center
-        self.detector.roi_miss_count = 0
+        ts.last_center = center
+        ts.roi_miss_count = 0
 
-        self.detector._center_history.append(center)
-        self.detector._radius_history.append(radius)
+        ts._center_history.append(center)
+        ts._radius_history.append(radius)
 
         final_center = smoothed if smoothed is not None else center
         return self._build_cargo_item(final_center, target_color)
 
-    def _kalman_predict(self, measurement: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
-        result, self.detector.tracking_initialized, self.detector.lost_frames, self.detector._last_predict_time = (
+    def _kalman_predict(self, ts,
+                        measurement: Optional[Tuple[float, float]]
+                        ) -> Optional[Tuple[float, float]]:
+        result, ts.tracking_initialized, ts.lost_frames, ts._last_predict_time = (
             kalman_filter.kalman_update(
-                self.detector.kf, measurement,
-                self.detector.tracking_initialized,
-                self.detector.lost_frames,
+                ts.kf, measurement,
+                ts.tracking_initialized,
+                ts.lost_frames,
                 self.detector.max_lost_frames,
                 self.detector._kf_q_base,
                 self.detector._kf_q_vel_base,
-                self.detector._last_predict_time,
+                ts._last_predict_time,
             )
         )
         return result
 
-    def _fallback_predict(self, target_color: Color, scale: float) -> Optional[CargoItem]:
-        center = self._kalman_predict(None)
+    def _fallback_predict(self, ts, target_color: Color,
+                          scale: float) -> Optional[CargoItem]:
+        center = self._kalman_predict(ts, None)
         if center is not None:
-            if scale < 1.0:
-                center = (center[0] / scale, center[1] / scale)
             return self._build_cargo_item(center, target_color)
 
-        if len(self.detector._center_history) > 0:
+        if len(ts._center_history) > 0:
             avg = (
-                sum(c[0] for c in self.detector._center_history) / len(self.detector._center_history),
-                sum(c[1] for c in self.detector._center_history) / len(self.detector._center_history),
+                sum(c[0] for c in ts._center_history) / len(ts._center_history),
+                sum(c[1] for c in ts._center_history) / len(ts._center_history),
             )
             return self._build_cargo_item(avg, target_color)
 

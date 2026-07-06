@@ -19,13 +19,16 @@ class CargoDebugWindow:
         title: str = "Cargo Debug",
         param_defs: Optional[List[ParamDef]] = None,
         on_change: Optional[Callable[[str, int], None]] = None,
+        on_method_change: Optional[Callable[[int], None]] = None,
     ):
         self.title = title
         self.param_defs = param_defs or []
         self.on_change = on_change
+        self.on_method_change = on_method_change
 
         self.preview_mode = PreviewMode.RESULT
         self.enabled = True
+        self.method_index = 1  # 默认 EDGE_DRAWING_CIRCLE
         self._window_created = False
 
         self._raw_params: Dict[str, int] = {}
@@ -50,6 +53,10 @@ class CargoDebugWindow:
             "Enable", self.title, 1 if self.enabled else 0, 1,
             lambda v: self._set_enabled(v),
         )
+        cv2.createTrackbar(
+            "Method", self.title, self.method_index, 1,
+            lambda v: self._set_method(v),
+        )
 
         for p in self.param_defs:
             cv2.createTrackbar(
@@ -66,6 +73,13 @@ class CargoDebugWindow:
 
     def _set_enabled(self, value: int):
         self.enabled = bool(value)
+
+    def _set_method(self, value: int):
+        if value == self.method_index:
+            return
+        self.method_index = value
+        if self.on_method_change:
+            self.on_method_change(value)
 
     def _on_trackbar(self, pdef: ParamDef, raw_value: int):
         if pdef.odd and raw_value % 2 == 0:
@@ -112,6 +126,11 @@ class CargoDebugWindow:
                     if p.name == name:
                         cv2.setTrackbarPos(p.display, self.title, raw_value)
                         break
+
+    def set_method_index(self, index: int):
+        self.method_index = index
+        if self._window_created:
+            cv2.setTrackbarPos("Method", self.title, index)
 
     def get_raw_params(self) -> Dict[str, int]:
         return self._raw_params.copy()
