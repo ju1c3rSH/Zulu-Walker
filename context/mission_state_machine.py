@@ -688,7 +688,15 @@ class MissionStateMachine(BaseStateMachine):
         return False
 
     def on_action_done(self, action_id: ActionId, result: int) -> bool:
-        """Handle ACTION_DONE from STM32."""
+        """Handle ACTION_DONE from STM32.
+
+        Return True if an event was triggered and the state transition happened
+        immediately (PICK actions: PICK_RAW → PICK_DONE → CHECK_LOAD).
+        Return False if only a flag was set (PLACE actions: place_action_done = True)
+        and the actual transition is deferred to the next update() call.
+
+        Note: the return value is informational only — MissionCoordinator always
+        calls update() after on_action_done regardless of True/False."""
         if result != 0:  # not OK
             self.context.error_code = action_id
             self.context.error_msg = f"Action {action_id} failed with {result}"
