@@ -25,6 +25,14 @@ CARGO_PARAM_DEFS: List[ParamDef] = [
     ParamDef("kernel_open",    "Kernel Open",       5,    1,   31,   2,  odd=True),
     ParamDef("kernel_close",   "Kernel Close",      7,    1,   31,   2,  odd=True),
     ParamDef("smooth_window",  "Smooth Win",        5,    1,   20,   1),
+    # EdgeDrawing 圆检测参数
+    ParamDef("blur_kernel",    "Blur Kernel",       5,    1,   31,   2,  odd=True),
+    ParamDef("blur_sigma",     "Blur Sigma",      150,    5,  500,   5,  scale=0.01),
+    ParamDef("ed_min_path_length", "ED MinPath",   50,   10,  300,  10),
+    ParamDef("ed_gradient_threshold", "ED Grad",    36,    5,  200,   1),
+    ParamDef("edge_morph_kernel", "ED Close K",      3,    1,   15,   2,  odd=True),
+    ParamDef("edge_morph_iterations", "ED Close Iter", 1, 1,    5,   1),
+    ParamDef("color_match_threshold", "Color Match", 60, 10,  100,   1,  scale=0.01),
 ]
 
 
