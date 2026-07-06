@@ -158,17 +158,24 @@ class MissionContext:
         return True
 
     def current_target_color(self) -> Optional[Color]:
-        """Return the color that should be picked/placed now."""
+        """当前 step 对应的目标颜色，用于传给视觉 processor。"""
         if not self.current_batch_order or self.current_step >= len(self.current_batch_order):
             return None
         return self.current_batch_order[self.current_step]
 
-    def advance_target(self):
-        """Move to next target in current batch."""
+    def advance_target(self) -> bool:
+        """推进到当前 batch 的下一个 step。
+
+        返回 True 表示当前 batch 的 3 轮循环已全部完成（从末尾绕回 0），
+        调用方应进行 zone 转场。
+        返回 False 表示仍在当前 batch 内，应继续进行同一 zone 的下一轮操作。
+        """
         if self.current_step < len(self.current_batch_order) - 1:
             self.current_step += 1
+            return False
         else:
             self.current_step = 0
+            return True
 
     def is_batch_complete(self) -> bool:
         """True when all 3 materials in current batch are handled."""
@@ -290,15 +297,15 @@ class _CheckLoadState(State):
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         if ctx.cargo_confirmed:
             ctx.cargo_count += 1
-            ctx.current_step += 1
-            ctx.target_color = ctx.current_batch_order[ctx.current_step] if ctx.current_step < 3 else Color.RED
-            if ctx.current_step < 3:
+            
+            batch_done = ctx.advance_target()
+            ctx.target_color = ctx.current_target_color() or Color.RED
+            if not batch_done:
                 if ctx.current_zone == Zone.RAW:
                     return MissionStateNames.ALIGN_RAW
                 else:
                     return MissionStateNames.ALIGN_ROUGH
             else:
-                ctx.current_step = 0
                 if ctx.current_zone == Zone.RAW:
                     return MissionStateNames.NAV_TO_ROUGH
                 else:
@@ -337,6 +344,10 @@ class _AlignRoughState(State):
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         if ctx.picking_from_rough and ctx.ready_to_pick and not ctx.color_mismatch:
             return MissionStateNames.PICK_ROUGH
+        elif ctx.color_mismatch:
+            print(f"[MissionSM] ERROR: color mismatch for target {ctx.target_color}")
+            return MissionStateNames.ERROR
+        
         if not ctx.picking_from_rough and ctx.ready_to_place:
             return MissionStateNames.PLACE_ROUGH
         if ctx.visual_fail:
@@ -360,7 +371,8 @@ class _PlaceRoughState(State):
             return MissionStateNames.ALIGN_ROUGH
         ctx.picking_from_rough = True
         ctx.current_step = 0
-        ctx.target_color = ctx.current_batch_order[0] if ctx.current_batch_order else Color.RED
+        # 这里摆放完当前批次的3个物料后，就进行物料的顺序回收，故把current_step重置为0，方便后续在ROUGH区进行顺序抓取
+        ctx.target_color = ctx.current_target_color() or Color.RED
         return MissionStateNames.ALIGN_ROUGH
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
