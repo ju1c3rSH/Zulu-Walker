@@ -6,7 +6,7 @@ from .event_bus import EventBus
 from .events import (
     McuCmdReceived, ArrivedEvent, ActionDoneEvent,
     HeartbeatEvent, EmergencyStopEvent, RequestSyncEvent,
-    FrameResult, QRResult, ColorResult,
+    FrameResult, QRResult,
 )
 from .mission_state_machine import (
     MissionStateMachine, MissionContext,
@@ -16,8 +16,7 @@ from .visual_state_machine import VisualStateMachine
 from utils.state_machine.bridge import StateActionBridge
 from modules.zw_uart_module.protocol import (
     build_status_from_vision_frame, build_visual_servo_data_frame,
-    build_qr_result_frame, build_color_result_frame,
-    build_heartbeat_frame,
+    build_qr_result_frame, build_heartbeat_frame,
     CMD_START_QR, CMD_STOP_VISUAL,
     VisualFlags,
 )
@@ -101,7 +100,6 @@ class MissionCoordinator:
         self.event_bus.subscribe(RequestSyncEvent, self._on_request_sync)
         self.event_bus.subscribe(FrameResult, self._on_vision_results)
         self.event_bus.subscribe(QRResult, self._on_qr_result_event)
-        self.event_bus.subscribe(ColorResult, self._on_color_result_event)
 
     def _wire_state_actions(self) -> None:
         bridge = StateActionBridge(self.mission_sm)
@@ -237,9 +235,6 @@ class MissionCoordinator:
                 self.mission_sm.context.cargo_count,
             ))
             self.mission_sm.update()
-
-    def _on_color_result_event(self, event: ColorResult) -> None:
-        self._send(build_color_result_frame(event.color_id, event.confidence))
 
     def _on_vision_results(self, event: FrameResult) -> None:
         for camera_id, results in event.all_results.items():
