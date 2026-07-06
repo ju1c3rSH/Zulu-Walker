@@ -6,6 +6,7 @@ import numpy as np
 
 from ....models.color import Color
 from .. import CargoDetector
+from ..detection import DetectMethod
 from .config import CargoConfig, CARGO_PARAM_DEFS
 from .window import CargoDebugWindow
 
@@ -25,6 +26,7 @@ class CargoDebugRunner:
             title="Cargo Debug",
             param_defs=CARGO_PARAM_DEFS,
             on_change=self._on_param_changed,
+            on_method_change=self._on_method_changed,
         )
         self.stream: Optional["CameraStream"] = None
 
@@ -36,6 +38,8 @@ class CargoDebugRunner:
 
     def _load_config(self):
         params = self.config.load()
+        method_idx = params.pop("method_index", 1)
+
         for pdef in CARGO_PARAM_DEFS:
             if pdef.name in params:
                 raw = params[pdef.name]
@@ -45,6 +49,12 @@ class CargoDebugRunner:
                 setattr(self.detector, pdef.name, actual)
                 self.window.set_param(pdef.name, raw)
 
+        self.detector._update_ed_params()
+
+        ok = self._apply_method_index(method_idx)
+        actual_index = method_idx if ok else 0
+        self.window.set_method_index(actual_index)
+
     def _on_param_changed(self, name: str, raw_value: int):
         for p in CARGO_PARAM_DEFS:
             if p.name == name:
@@ -53,7 +63,21 @@ class CargoDebugRunner:
                     actual = int(actual)
                 setattr(self.detector, name, actual)
                 break
+        self.detector._update_ed_params()
         self._save_pending = True
+
+    def _on_method_changed(self, raw_value: int):
+        ok = self._apply_method_index(raw_value)
+        if not ok:
+            # EdgeDrawing 不可用，UI 回退到 FAST_CIRCLE
+            self.window.set_method_index(0)
+        self._save_pending = True
+
+    def _apply_method_index(self, index: int) -> bool:
+        methods = self.detector.get_supported_methods()
+        if 0 <= index < len(methods):
+            return self.detector.set_detect_method(methods[index])
+        return False
 
     def run(self):
         from ....camera_stream import CameraStream
@@ -69,15 +93,18 @@ class CargoDebugRunner:
                 continue
 
             result = self._process_frame(frame)
+            preview_mask = self._choose_preview_mask()
             self.window.update(
                 frame=frame,
-                mask=self.detector._last_morphed,
+                mask=preview_mask,
                 result=result,
             )
             self.window.refresh()
 
             if self._save_pending and time.time() - self._last_save_time > 0.5:
-                self.config.save(self.window.get_raw_params())
+                params = self.window.get_raw_params()
+                params["method_index"] = self.window.method_index
+                self.config.save(params)
                 self._save_pending = False
                 self._last_save_time = time.time()
 
@@ -86,6 +113,11 @@ class CargoDebugRunner:
                 break
 
         self._cleanup()
+
+    def _choose_preview_mask(self) -> Optional[np.ndarray]:
+        if self.detector.get_detect_method() == DetectMethod.EDGE_DRAWING_CIRCLE:
+            return self.detector._last_edge_preview
+        return self.detector._last_morphed
 
     def _process_frame(self, frame: np.ndarray) -> np.ndarray:
         display = frame.copy()
