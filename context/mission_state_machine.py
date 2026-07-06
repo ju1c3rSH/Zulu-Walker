@@ -254,9 +254,10 @@ class _AlignRawState(State):
 
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
-        # Transition to PICK_RAW when visual reports READY_TO_PICK
         if ctx.ready_to_pick and not ctx.color_mismatch:
             return MissionStateNames.PICK_RAW
+        if ctx.color_mismatch:
+            return MissionStateNames.ERROR
         if ctx.visual_fail:
             return MissionStateNames.ERROR
         return None
