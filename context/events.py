@@ -82,11 +82,5 @@ class QRResult:
 
 
 @dataclass
-class ColorResult:
-    color_id: int
-    confidence: int
-
-
-@dataclass
 class FrameResult:
     all_results: dict     # {camera_id: {task_name: VisionResult}}

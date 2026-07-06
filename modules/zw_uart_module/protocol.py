@@ -34,7 +34,6 @@ TYPE_SET = 0x04             # STM32 -> Orange Pi: zone_id(1B)
 TYPE_CMD_FROM_MCU = 0x10        # MCU -> Orange Pi: cmd_id(1B) + args
 TYPE_STATUS_FROM_VISION = 0x11  # Orange Pi -> MCU: mission_state + visual_state + flags + cargo_count
 TYPE_QR_RESULT = 0x12           # Orange Pi -> MCU: len(1B) + ascii QR string
-TYPE_COLOR_RESULT = 0x13        # Orange Pi -> MCU: color_id(1B) + confidence(1B)
 TYPE_ACTION_DONE = 0x14         # MCU -> Orange Pi: action_id + result
 TYPE_HEARTBEAT = 0x15           # Bidirectional: seq + mission_state + visual_state
 TYPE_REQUEST_SYNC = 0x16        # Bidirectional: requested_state
@@ -255,18 +254,6 @@ def parse_qr_result_payload(payload: bytes) -> Optional[str]:
     if len(payload) != 1 + length:
         return None
     return payload[1:].decode('ascii', errors='ignore')
-
-
-def build_color_result_frame(color_id: int, confidence: int) -> bytes:
-    """Build TYPE_COLOR_RESULT frame."""
-    return _build_frame(TYPE_COLOR_RESULT, bytes([color_id, confidence]))
-
-
-def parse_color_result_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_COLOR_RESULT payload -> (color_id, confidence)."""
-    if len(payload) != 2:
-        return None
-    return payload[0], payload[1]
 
 
 def build_action_done_frame(action_id: ActionId, result: int) -> bytes:
