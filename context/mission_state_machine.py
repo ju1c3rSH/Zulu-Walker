@@ -139,7 +139,7 @@ class MissionContext:
         self.error_msg = ""
 
     def parse_qr(self, qr_str: str) -> bool:
-        """Parse QR string like '123+231' into batches. (Stub — full impl TBD)"""
+        """Parse QR string like '123+231' into first_batch_order and second_batch_order."""
         parts = qr_str.strip().split('+')
         if len(parts) != 2:
             return False
@@ -180,8 +180,8 @@ class MissionContext:
             return True
 
     def is_batch_complete(self) -> bool:
-        """True when all 3 materials in current batch are handled."""
-        return self.current_step >= len(self.current_batch_order) - 1 and self.cargo_count == 0
+        """当前 batch 的完整流程（RAW → ROUGH → TEMP）是否全部结束：车上无货 + step 已归零。"""
+        return self.cargo_count == 0 and self.current_step == 0
 
     def update_visual_flags(self, flags: int):
         self.visual_flags = flags
@@ -438,6 +438,8 @@ class _PlaceTempState(State):
             print(f"[MissionSM] ERROR: cargo_count={ctx.cargo_count} negative")
             return MissionStateNames.RETURN_HOME
         # cargo_count == 0
+        if not ctx.is_batch_complete():
+            print(f"[MissionSM] WARNING: cargo_count=0 but step={ctx.current_step} != 0")
         if ctx.current_batch == 1:
             ctx.current_batch = 2
             ctx.current_batch_order = list(ctx.second_batch_order)
