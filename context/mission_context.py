@@ -23,6 +23,7 @@ from modules.zw_uart_module.protocol import (
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.cargo import CargoSet
 from modules.zw_opencv_module.processors.base import ColorTrackable
+from modules.zw_opencv_module.processors.cargo_processor import TrackCargoProcessor
 
 
 _VISUAL_STATE_TO_INT = {
@@ -117,6 +118,7 @@ class MissionCoordinator:
             "NAV_TO_RAW", "NAV_TO_ROUGH", "NAV_TO_TEMP",
             "NAV_TO_RAW_SECOND",
             "RETURN_HOME", "WAIT_START", "FINISHED", "ERROR", "IDLE",
+            "PICK_RAW", "PICK_ROUGH", "PLACE_ROUGH", "PLACE_TEMP", "CHECK_LOAD",
         }, self._deactivate_all_visual)
 
     def _current_target_color(self) -> Optional[Color]:
@@ -173,6 +175,12 @@ class MissionCoordinator:
                     t = cam.get_task(task_name)
                     if t and isinstance(t.processor, ColorTrackable):
                         t.processor.set_target_color(color)
+                    if t and isinstance(t.processor, TrackCargoProcessor):
+                        t.processor.register_getter("mission_ctx", lambda: (
+                            self.mission_sm.context.cargo_set,
+                            self.mission_sm.context.current_batch,
+                            self.mission_sm.context.current_target_color(),
+                        ))
                 self.visual_sm.start()
                 self._active_task = task_name
                 self._ready_frames = 0
@@ -187,6 +195,10 @@ class MissionCoordinator:
         for cam in self._camera_manager.cameras.values():
             for name in all_tasks:
                 cam.disable_task(name)
+            for name in all_tasks:
+                t = cam.get_task(name)
+                if t and hasattr(t.processor, "clear_getters"):
+                    t.processor.clear_getters()
         self.visual_sm.stop()
         self._active_task = None
         self._ready_frames = 0
@@ -266,6 +278,9 @@ class MissionCoordinator:
             ctx.percent_error_y = data.get("percent_error_y", 0)
             ctx.consecutive_detected_frames += 1
             ctx.consecutive_lost_frames = 0
+            coord = data.get("coordinate")
+            if coord:
+                ctx.target_center = coord
         else:
             ctx.target_found = False
             ctx.percent_error_x = 0
