@@ -19,7 +19,7 @@ from time import time
 
 from utils.state_machine.base import BaseStateMachine, State
 from modules.zw_opencv_module.models.color import Color
-from modules.zw_opencv_module.models.cargo import CargoSet
+from modules.zw_opencv_module.models.cargo import CargoSet, CargoZone
 from modules.zw_uart_module.protocol import ActionId, VisualFlags
 
 
@@ -85,6 +85,7 @@ class MissionContext:
     # Progress
     current_batch: int = 0          # 1=first, 2=second
     current_step: int = 0           # 0→1→2 within current batch
+    cargo_pick_stack: List[int] = field(default_factory=list)  # item indices in pick order, LIFO for place
     cargo_count: int = 0            # materials currently on robot (0..3)
     picking_from_rough: bool = False  # ROUGH 区处于取料阶段(True)还是放料阶段(False)
     place_action_done: bool = False   # PLACE 状态下 MCU 动作完成
@@ -118,6 +119,7 @@ class MissionContext:
         self.current_batch = 0
         self.current_step = 0
         self.cargo_count = 0
+        self.cargo_pick_stack.clear()
         self.picking_from_rough = False
         self.place_action_done = False
         if self.cargo_set:
@@ -297,7 +299,19 @@ class _CheckLoadState(State):
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         if ctx.cargo_confirmed:
             ctx.cargo_count += 1
-            
+
+            target = ctx.current_target_color()
+            if target and ctx.cargo_set:
+                matched = False
+                for item in ctx.cargo_set.items:
+                    if item.color == target and item.batch == ctx.current_batch and not item.is_on_robot:
+                        item.pick()
+                        ctx.cargo_pick_stack.append(item.index)
+                        matched = True
+                        break
+                if not matched:
+                    print(f"[CHECK_LOAD] WARNING: no CargoSet item found for color={target} batch={ctx.current_batch}")
+
             batch_done = ctx.advance_target()
             ctx.target_color = ctx.current_target_color() or Color.RED
             if not batch_done:
@@ -686,12 +700,22 @@ class MissionStateMachine(BaseStateMachine):
         if state == MissionStateNames[MissionState.PLACE_ROUGH] and action_id == ActionId.PLACE_ROUGH:
             self.context.cargo_count -= 1
             self.context.place_action_done = True
+            if self.context.cargo_set and self.context.cargo_pick_stack:
+                idx = self.context.cargo_pick_stack.pop()
+                item = self.context.cargo_set.get_by_index(idx)
+                if item:
+                    item.place(CargoZone.ROUGH)
             return False
         if state == MissionStateNames[MissionState.PICK_ROUGH] and action_id == ActionId.PICK_ROUGH:
             return self.trigger(self.Events.PICK_DONE)
         if state == MissionStateNames[MissionState.PLACE_TEMP] and action_id == ActionId.PLACE_TEMP:
             self.context.cargo_count -= 1
             self.context.place_action_done = True
+            if self.context.cargo_set and self.context.cargo_pick_stack:
+                idx = self.context.cargo_pick_stack.pop()
+                item = self.context.cargo_set.get_by_index(idx)
+                if item:
+                    item.place(CargoZone.TEMP)
             return False
         return False
 
