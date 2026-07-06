@@ -93,6 +93,12 @@ class CargoSet:
     def get_detected(self) -> List[CargoItem]:
         return [item for item in self.items if item.is_detected]
 
+    def get_available_by_color_batch(self, color: Color, batch: int) -> Optional[CargoItem]:
+        for item in self.items:
+            if item.color == color and item.batch == batch and item.available:
+                return item
+        return None
+
     def get_by_zone(self, zone: int) -> List[CargoItem]:
         return [item for item in self.items if item.zone == zone]
 

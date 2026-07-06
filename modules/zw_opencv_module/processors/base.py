@@ -9,7 +9,7 @@ Protocol 规范：
     注意：Protocol 不检查方法签名，请确保实现正确。
 """
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Protocol,runtime_checkable
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 from ..models.color import Color
 import numpy as np
 
@@ -38,6 +38,7 @@ class Processor(ABC):
 
     def __init__(self, name: str = ""):
         self.name = name or self.__class__.__name__
+        self._getters: dict[str, Callable[[], Any]] = {}
 
     @abstractmethod
     def process(self, frame: np.ndarray, context: dict = None) -> VisionResult:
@@ -67,6 +68,16 @@ class Processor(ABC):
             np.ndarray: 绘制后的帧
         """
         return frame
+
+    def register_getter(self, key: str, getter: Callable[[], Any]) -> None:
+        self._getters[key] = getter
+
+    def get(self, key: str) -> Any:
+        getter = self._getters.get(key)
+        return getter() if getter else None
+
+    def clear_getters(self) -> None:
+        self._getters.clear()
 
 @runtime_checkable
 class ColorTrackable(Protocol):
