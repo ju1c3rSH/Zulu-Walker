@@ -13,8 +13,9 @@ Synchronization rules:
 - On state conflict or lost heartbeat, both sides enter ERROR.
 """
 
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Deque
 from time import time
 
 from utils.state_machine.base import BaseStateMachine, State
@@ -85,7 +86,7 @@ class MissionContext:
     # Progress
     current_batch: int = 0          # 1=first, 2=second
     current_step: int = 0           # 0→1→2 within current batch
-    cargo_pick_stack: List[int] = field(default_factory=list)  # item indices in pick order, LIFO for place
+    cargo_pick_stack: Deque[int] = field(default_factory=deque)  # item indices in pick order, FIFO for place
     cargo_count: int = 0            # materials currently on robot (0..3)
     picking_from_rough: bool = False  # ROUGH 区处于取料阶段(True)还是放料阶段(False)
     place_action_done: bool = False   # PLACE 状态下 MCU 动作完成
@@ -712,7 +713,7 @@ class MissionStateMachine(BaseStateMachine):
             self.context.cargo_count -= 1
             self.context.place_action_done = True
             if self.context.cargo_set and self.context.cargo_pick_stack:
-                idx = self.context.cargo_pick_stack.pop()
+                idx = self.context.cargo_pick_stack.popleft()
                 item = self.context.cargo_set.get_by_index(idx)
                 if item:
                     item.place(CargoZone.ROUGH)
@@ -723,7 +724,7 @@ class MissionStateMachine(BaseStateMachine):
             self.context.cargo_count -= 1
             self.context.place_action_done = True
             if self.context.cargo_set and self.context.cargo_pick_stack:
-                idx = self.context.cargo_pick_stack.pop()
+                idx = self.context.cargo_pick_stack.popleft()
                 item = self.context.cargo_set.get_by_index(idx)
                 if item:
                     item.place(CargoZone.TEMP)
