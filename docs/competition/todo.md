@@ -111,8 +111,8 @@
 
 ### CargoSet 运行时接入
 - [x] `_CheckLoadState.on_execute`：pick 确认后按 `color + batch + !is_on_robot` 匹配 CargoItem，调 `pick()`
-- [x] `on_action_done` PLACE_ROUGH/TEMP：从 `cargo_pick_stack` pop 出最后 pick 的 item，调 `place()`
-- [x] `cargo_pick_stack`（LIFO）保证非标准色序下 place 匹配正确
+- [x] `on_action_done` PLACE_ROUGH/TEMP：从 `cargo_pick_stack` popleft 出最先 pick 的 item，调 `place()`
+- [x] `cargo_pick_stack`（FIFO）保证非标准色序下 place 匹配正确
 - [x] 无匹配时打 WARNING 日志，不阻塞状态机
 
 ### 代码清理 & 注释
