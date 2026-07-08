@@ -109,7 +109,7 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 
 ## 3. MissionStateMachine
 
-### 状态列表（18 状态，0~17 连续，须与 STM32 固件同步）
+### 状态列表（19 状态，0~18 连续，须与 STM32 固件同步）
 
 | ID | 名称 | 含义 |
 |----|------|------|
@@ -121,16 +121,17 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 | 5 | `PICK_RAW` | 抓取物料 |
 | 6 | `CHECK_LOAD` | 确认已装载 |
 | 7 | `NAV_TO_ROUGH` | 前往粗加工区 |
-| 8 | `ALIGN_ROUGH` | 粗加工区对准色环（放料/取回复用） |
+| 8 | `ALIGN_ROUGH` | 粗加工区对准色环（放料/取回复用，无视觉伺服） |
 | 9 | `PLACE_ROUGH` | 放置物料 |
 | 10 | `PICK_ROUGH` | 粗加工区取回物料（放完后重新捡起） |
 | 11 | `NAV_TO_TEMP` | 前往暂存区 |
-| 12 | `ALIGN_TEMP` | 暂存区对准色环 |
+| 12 | `ALIGN_TEMP` | 暂存区对准色环（无视觉伺服） |
 | 13 | `PLACE_TEMP` | 放置/码垛物料（两批次复用） |
 | 14 | `NAV_TO_RAW_SECOND` | 第二批前往原料区（TEMP→RAW 路径不同于首批） |
 | 15 | `RETURN_HOME` | 返回启停区 |
 | 16 | `FINISHED` | 任务完成 |
 | 17 | `ERROR` | 异常 |
+| 18 | `RING_DISCOVERY` | 色环发现：建立颜色→坐标映射 |
 
 > **第二批策略**：仅 `NAV_TO_RAW_SECOND` 是独立状态。第二批的 ROUGH/TEMP 导航仍使用 `NAV_TO_ROUGH` / `NAV_TO_TEMP`，由 MCU 自行通过 `current_batch` 同步区分回程路径；`ALIGN_*` / `PICK_*` / `PLACE_*` / `CHECK_LOAD` 全部复用首批状态，行为由 `current_batch_order`（颜色顺序）和 `current_batch`（平放/码垛）参数化驱动。
 
@@ -144,10 +145,10 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 | `READY_TO_PICK` | OP (`STATUS_FROM_VISION flags`) | ALIGN_RAW → PICK_RAW |
 | `PICK_DONE` | MCU (`ACTION_DONE action_id=ActionId.PICK_RAW`) | PICK_RAW → CHECK_LOAD |
 | `LOAD_CONFIRMED` | OP/传感器 | CHECK_LOAD → NAV_TO_ROUGH |
-| `ARRIVED_ROUGH` | MCU (`TYPE_ARRIVED zone=ROUGH`) | NAV_TO_ROUGH → ALIGN_ROUGH |
-| `READY_TO_PLACE` | OP (`STATUS_FROM_VISION flags`) | ALIGN_ROUGH → PLACE_ROUGH |
+| `ARRIVED_ROUGH` | MCU (`TYPE_ARRIVED zone=ROUGH`) | NAV_TO_ROUGH → RING_DISCOVERY |
+| `DISCOVERY_DONE` | OP (on_execute 内部决策) | RING_DISCOVERY → ALIGN_ROUGH / ALIGN_TEMP |
 | `PLACE_DONE` | MCU (`ACTION_DONE action_id=ActionId.PLACE_ROUGH / ActionId.PLACE_TEMP`) | PLACE_* → 下一状态 |
-| `ARRIVED_TEMP` | MCU (`TYPE_ARRIVED zone=TEMP`) | NAV_TO_TEMP → ALIGN_TEMP |
+| `ARRIVED_TEMP` | MCU (`TYPE_ARRIVED zone=TEMP`) | NAV_TO_TEMP → RING_DISCOVERY |
 | `ALL_PLACED` | OP/Coordinator | 批次完成 |
 | `RETURNED_HOME` | MCU (`TYPE_ARRIVED zone=START`) | RETURN_HOME → FINISHED |
 | `RESET` | MCU/OP | ERROR → WAIT_START |
@@ -177,18 +178,20 @@ stateDiagram-v2
     CHECK_LOAD --> NAV_TO_ROUGH: step>=3
 
     %% ===== 第一批：粗加工 (放 → 取) =====
-    NAV_TO_ROUGH --> ALIGN_ROUGH: ARRIVED_ROUGH
-    ALIGN_ROUGH --> PLACE_ROUGH: ready_to_place
+    NAV_TO_ROUGH --> RING_DISCOVERY: ARRIVED_ROUGH
+    RING_DISCOVERY --> ALIGN_ROUGH: DISCOVERY_DONE
+    ALIGN_ROUGH --> PLACE_ROUGH: on_execute (picking=False)
     PLACE_ROUGH --> ALIGN_ROUGH: cargo>0
     PLACE_ROUGH --> ALIGN_ROUGH: cargo=0 / picking=True
-    ALIGN_ROUGH --> PICK_ROUGH: ready_to_pick (picking)
+    ALIGN_ROUGH --> PICK_ROUGH: on_execute (picking=True)
     PICK_ROUGH --> CHECK_LOAD: PICK_DONE
     CHECK_LOAD --> ALIGN_ROUGH: step<3
     CHECK_LOAD --> NAV_TO_TEMP: step>=3
 
     %% ===== 第一批：暂存 =====
-    NAV_TO_TEMP --> ALIGN_TEMP: ARRIVED_TEMP
-    ALIGN_TEMP --> PLACE_TEMP: ready_to_place
+    NAV_TO_TEMP --> RING_DISCOVERY: ARRIVED_TEMP
+    RING_DISCOVERY --> ALIGN_TEMP: DISCOVERY_DONE
+    ALIGN_TEMP --> PLACE_TEMP: on_execute
     PLACE_TEMP --> ALIGN_TEMP: cargo>0
     PLACE_TEMP --> NAV_TO_RAW_SECOND: cargo=0 / batch=1 → 切 batch=2
 
@@ -200,18 +203,20 @@ stateDiagram-v2
     CHECK_LOAD --> NAV_TO_ROUGH: step>=3
 
     %% ===== 第二批：粗加工 (复用) =====
-    NAV_TO_ROUGH --> ALIGN_ROUGH: ARRIVED_ROUGH
-    ALIGN_ROUGH --> PLACE_ROUGH: ready_to_place
+    NAV_TO_ROUGH --> RING_DISCOVERY: ARRIVED_ROUGH
+    RING_DISCOVERY --> ALIGN_ROUGH: DISCOVERY_DONE
+    ALIGN_ROUGH --> PLACE_ROUGH: on_execute (picking=False)
     PLACE_ROUGH --> ALIGN_ROUGH: cargo>0
     PLACE_ROUGH --> ALIGN_ROUGH: cargo=0 / picking=True
-    ALIGN_ROUGH --> PICK_ROUGH: ready_to_pick (picking)
+    ALIGN_ROUGH --> PICK_ROUGH: on_execute (picking=True)
     PICK_ROUGH --> CHECK_LOAD: PICK_DONE
     CHECK_LOAD --> ALIGN_ROUGH: step<3
     CHECK_LOAD --> NAV_TO_TEMP: step>=3
 
     %% ===== 第二批：暂存 (复用 PLACE_TEMP) =====
-    NAV_TO_TEMP --> ALIGN_TEMP: ARRIVED_TEMP
-    ALIGN_TEMP --> PLACE_TEMP: ready_to_place
+    NAV_TO_TEMP --> RING_DISCOVERY: ARRIVED_TEMP
+    RING_DISCOVERY --> ALIGN_TEMP: DISCOVERY_DONE
+    ALIGN_TEMP --> PLACE_TEMP: on_execute
     PLACE_TEMP --> ALIGN_TEMP: cargo>0
     PLACE_TEMP --> RETURN_HOME: cargo=0 / batch=2
 
@@ -234,6 +239,7 @@ stateDiagram-v2
     ALIGN_TEMP --> ERROR
     PLACE_TEMP --> ERROR
     NAV_TO_RAW_SECOND --> ERROR
+    RING_DISCOVERY --> ERROR
     RETURN_HOME --> ERROR
 ```
 
@@ -259,6 +265,9 @@ RAW 区:
   cargo_count: 0→1→2→3, current_step: 0→1→2
   → NAV_TO_ROUGH (step=0 重置)
 
+ROUGH 区 — 发现阶段:
+  NAV_TO_ROUGH → RING_DISCOVERY → ALIGN_ROUGH
+
 ROUGH 区 — 放料阶段 (picking_from_rough=False):
   ALIGN_ROUGH → PLACE_ROUGH [×3]
   cargo_count: 3→2→1→0
@@ -269,7 +278,10 @@ ROUGH 区 — 取料阶段 (picking_from_rough=True):
   cargo_count: 0→1→2→3, current_step: 0→1→2
   取完后 → NAV_TO_TEMP (picking_from_rough=False, step=0 重置)
 
-TEMP 区:
+TEMP 区 — 发现阶段:
+  NAV_TO_TEMP → RING_DISCOVERY → ALIGN_TEMP
+
+TEMP 区 — 放置阶段:
   ALIGN_TEMP → PLACE_TEMP [×3]
   cargo_count: 3→2→1→0
   → RETURN_HOME → FINISHED
@@ -280,9 +292,12 @@ TEMP 区:
 | State | 条件 | 下一步 |
 |---|---|---|
 | `_AlignRawState` | `ready_to_pick && !color_mismatch` | `PICK_RAW` |
-| `_AlignRoughState` | `picking_from_rough && ready_to_pick` | `PICK_ROUGH` |
-| `_AlignRoughState` | `!picking_from_rough && ready_to_place` | `PLACE_ROUGH` |
-| `_AlignTempState` | `ready_to_place` | `PLACE_TEMP` |
+| `_AlignRoughState` | `picking_from_rough` | `PICK_ROUGH` |
+| `_AlignRoughState` | `!picking_from_rough` | `PLACE_ROUGH` |
+| `_AlignTempState` | (无条件) | `PLACE_TEMP` |
+| `_RingDiscoveryState` | `discovery_done && zone=ROUGH` | `ALIGN_ROUGH` |
+| `_RingDiscoveryState` | `discovery_done && zone=TEMP` | `ALIGN_TEMP` |
+| `_RingDiscoveryState` | `timeout 30s` | `ERROR` |
 | `_CheckLoadState` | `zone=RAW, step<3` | `ALIGN_RAW` |
 | `_CheckLoadState` | `zone=RAW, step>=3` | `NAV_TO_ROUGH` |
 | `_CheckLoadState` | `zone=ROUGH, step<3` | `ALIGN_ROUGH` |
@@ -308,10 +323,10 @@ TEMP 放完第一批最后一个（_PlaceTempState，batch=1→2）
   → NAV_TO_RAW_SECOND
   → ALIGN_RAW（复用，current_batch_order 已切换为第二批颜色顺序）
   → PICK_RAW → CHECK_LOAD [×3]
-  → NAV_TO_ROUGH（复用，MCU 自行根据 current_batch 区分路径）
-  → ALIGN_ROUGH 放料 [×3] → ALIGN_ROUGH 取回 [×3]
-  → NAV_TO_TEMP（复用，MCU 自行根据 current_batch 区分路径）
-  → ALIGN_TEMP 对准 → PLACE_TEMP [×3]（复用，batch=2 时由 _PlaceTempState 决定终态）
+   → NAV_TO_ROUGH（复用，MCU 自行根据 current_batch 区分路径）
+   → RING_DISCOVERY → ALIGN_ROUGH 放料 [×3] → ALIGN_ROUGH 取回 [×3]
+   → NAV_TO_TEMP（复用，MCU 自行根据 current_batch 区分路径）
+   → RING_DISCOVERY → ALIGN_TEMP → PLACE_TEMP [×3]（复用，batch=2 时由 _PlaceTempState 决定终态）
   → RETURN_HOME → FINISHED
 ```
 
@@ -333,15 +348,15 @@ TEMP 放完第一批最后一个（_PlaceTempState，batch=1→2）
 
 **`update()` 调用时机**（在 `MissionCoordinator` 中）：
 
-每次外部事件处理后立即调 `mission_sm.update()`，确保 `on_execute` 及时检查状态。
+每次外部事件处理后立即调用 `mission_sm.run_to_completion()`，确保 `on_execute` 及时检查状态并完成级联转换。
 
 ```python
 # 每个事件处理器末尾
 self.mission_sm.on_arrived(zone_id)
-self.mission_sm.update()
+self.mission_sm.run_to_completion()
 
 self.mission_sm.on_action_done(action_id, result)
-self.mission_sm.update()
+self.mission_sm.run_to_completion()
 ```
 
 ---
@@ -423,3 +438,4 @@ PLACE 成功
 |---|---|---|
 | **v1.0** | 2026-07-04 | 初始化：确定区域自动控制设计，定义状态↔任务映射表 |
 | **v1.1** | 2026-07-06 | 18 状态连续编号 0~17；删除 `NAV_TO_TEMP_SECOND` / `PLACE_TEMP_STACK`，仅保留 `NAV_TO_RAW_SECOND` 作为第二批独立状态；`_PlaceTempState.on_execute` 实现批次切换 + `cargo_count<0` 保护；mermaid 图重绘显示双批次流程；新增 `place_action_done` 机制说明 |
+| **v1.2** | 2026-07-08 | 新增 `RING_DISCOVERY(18)` 状态；NAV_TO_ROUGH/TEMP → RING_DISCOVERY；ALIGN_ROUGH/TEMP 改为无视觉伺服（camera 被 cargo 遮挡，靠 mapping+惯导）；新增 `run_to_completion()` 级联；on_execute 简化；事件列表移除 `READY_TO_PLACE`、新增 `DISCOVERY_DONE` |
