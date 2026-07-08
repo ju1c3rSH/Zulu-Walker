@@ -135,24 +135,26 @@ MCU 抓取 → ACTION_DONE action_id=ActionId.PICK_RAW (1), result=OK
 OP 推进 step，继续下一轮 ...
 
 MCU 到达 ROUGH → TYPE_ARRIVED zone=3
-OP 自动切换到 ring_track
-  → VISUAL_SERVO_DATA
-  → STATUS_FROM_VISION flags=ready_to_place
-MCU 放置 → ACTION_DONE action_id=ActionId.PLACE_ROUGH (2), result=OK
+OP 自动进入 RING_DISCOVERY
+  → MCU 移动爪到中央参考位置
+  → 对 R/G/B 各发一次 CMD_START_RING_DISCOVERY
+  → OP 输出 VISUAL_SERVO_DATA，MCU PID 微调
+  → 环居中后 OP 发送 TYPE_COLOR_RESULT，MCU 记录电机位置
+  → MCU 完成三色映射 → CMD_DISCOVERY_DONE
+OP: RING_DISCOVERY → ALIGN_ROUGH → PLACE_ROUGH（瞬时级联，无视觉伺服）
+MCU 靠 mapping + 惯导到达目标位置 → ACTION_DONE action_id=ActionId.PLACE_ROUGH (2), result=OK
 OP 重复 ALIGN+PLACE 直到 cargo_count=0
 OP 切换到 PICK 阶段（picking_from_rough=True）
 
-MCU 到达 ROUGH 色环前（取回阶段）
-OP ALIGN_ROUGH → VISUAL_SERVO_DATA
-  → STATUS_FROM_VISION flags=ready_to_pick
-MCU 取回 → ACTION_DONE action_id=ActionId.PICK_ROUGH (4), result=OK
+MCU 到达 ROUGH 色环前（取回阶段，空载 crane）
+OP ALIGN_ROUGH → PICK_ROUGH（瞬时级联，无视觉伺服）
+MCU 靠 mapping + 惯导到达目标位置 → ACTION_DONE action_id=ActionId.PICK_ROUGH (4), result=OK
 OP 重复 ALIGN+PICK 直到 cargo_count=3
 
 MCU 到达 TEMP → TYPE_ARRIVED zone=4
-OP 自动切换到 ring_track
-  → VISUAL_SERVO_DATA
-  → STATUS_FROM_VISION flags=ready_to_place
-MCU 放置 → ACTION_DONE action_id=ActionId.PLACE_TEMP (3), result=OK
+OP 自动进入 RING_DISCOVERY（流程同 ROUGH）
+  → 发现完成 → ALIGN_TEMP → PLACE_TEMP（瞬时级联，无视觉伺服）
+MCU 靠 mapping + 惯导到达目标位置 → ACTION_DONE action_id=ActionId.PLACE_TEMP (3), result=OK
 OP 重复 ALIGN+PLACE 直到 cargo_count=0
 
 OP → RETURN_HOME → FINISHED
