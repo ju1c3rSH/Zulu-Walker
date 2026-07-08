@@ -2,6 +2,8 @@ import threading
 import time
 from typing import Optional
 
+from modules.zw_opencv_module.camera_manager import CameraManager
+
 from .event_bus import EventBus
 from .events import (
     McuCmdReceived, ArrivedEvent, ActionDoneEvent,
@@ -17,7 +19,9 @@ from utils.state_machine.bridge import StateActionBridge
 from modules.zw_uart_module.protocol import (
     build_status_from_vision_frame, build_visual_servo_data_frame,
     build_qr_result_frame, build_heartbeat_frame,
+    build_color_result_frame,
     CMD_START_QR, CMD_STOP_VISUAL,
+    CMD_START_RING_DISCOVERY, CMD_DISCOVERY_DONE,
     VisualFlags,
 )
 from modules.zw_opencv_module.models.color import Color
@@ -48,19 +52,22 @@ class MissionCoordinator:
         self.mission_sm.context.cargo_set = CargoSet.create_standard()
 
         self._uart_sender: Optional[callable] = None
-        self._camera_manager = None
+        self._camera_manager: Optional[CameraManager] = None
         self._qr_decoded = False
         self._active_task: Optional[str] = None
 
         self._ready_frames = 0
         self._ready_latched = False
         self._ready_flag = 0
+        self._discovery_ready_frames = 0
+        self._discovery_ready_latched = False
+        self._discovery_color_sent = False
         self._heartbeat_seq = 0
         self._last_mcu_heartbeat = 0.0
         self._running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
 
-    def connect_camera(self, camera_manager) -> None:
+    def connect_camera(self, camera_manager: CameraManager) -> None:
         self._camera_manager = camera_manager
 
     def set_uart_sender(self, sender: callable) -> None:
@@ -111,14 +118,15 @@ class MissionCoordinator:
         bridge.when_enter({"ALIGN_RAW"},
             lambda: self._activate_task("track_cargo", self._current_target_color()))
 
-        bridge.when_enter({"ALIGN_ROUGH", "ALIGN_TEMP"},
-            lambda: self._activate_task("ring_track", self._current_target_color()))
+        bridge.when_enter("RING_DISCOVERY",
+            self._deactivate_all_visual)
 
         bridge.when_enter({
             "NAV_TO_RAW", "NAV_TO_ROUGH", "NAV_TO_TEMP",
             "NAV_TO_RAW_SECOND",
             "RETURN_HOME", "WAIT_START", "FINISHED", "ERROR", "IDLE",
             "PICK_RAW", "PICK_ROUGH", "PLACE_ROUGH", "PLACE_TEMP", "CHECK_LOAD",
+            "ALIGN_ROUGH", "ALIGN_TEMP",
         }, self._deactivate_all_visual)
 
     def _current_target_color(self) -> Optional[Color]:
@@ -142,7 +150,7 @@ class MissionCoordinator:
         if cmd == CMD_START_QR:
             self._qr_decoded = False
             self.mission_sm.start()
-            self.mission_sm.update()
+            self.mission_sm.run_to_completion()
 
         elif not self._qr_decoded:
             return
@@ -150,12 +158,34 @@ class MissionCoordinator:
         elif cmd == CMD_STOP_VISUAL:
             self._deactivate_all_visual()
 
+        elif cmd == CMD_START_RING_DISCOVERY:
+            if self.mission_sm.current_state != "RING_DISCOVERY":
+                return
+            try:
+                color_id = args[0] if len(args) >= 1 else 0
+                color = Color(color_id)
+            except (ValueError, KeyError):
+                return
+            self.mission_sm.context.discovery_color = color
+            self.mission_sm.context.discovery_active = True
+            self.visual_sm.stop()
+            self.visual_sm.start()
+            self._discovery_ready_frames = 0
+            self._discovery_ready_latched = False
+            self._discovery_color_sent = False
+            self._activate_task("ring_discovery", color)
+            self.mission_sm.run_to_completion()
+
+        elif cmd == CMD_DISCOVERY_DONE:
+            self.mission_sm.on_discovery_done()
+            self.mission_sm.run_to_completion()
+
     def _activate_task(self, task_name: str, color: Optional[Color] = None) -> None:
         if not self._camera_manager:
             return
 
         cm = self._camera_manager
-        all_tasks = ["qr_detect", "track_cargo", "ring_track"]
+        all_tasks = ["qr_detect", "track_cargo", "ring_track", "ring_discovery"]
 
         for cam in cm.cameras.values():
             for name in all_tasks:
@@ -169,7 +199,7 @@ class MissionCoordinator:
                 cam.enable_task(task_name)
                 self._active_task = task_name
                 break
-            elif task_name in ("track_cargo", "ring_track") and is_cargo:
+            elif task_name in ("track_cargo", "ring_track", "ring_discovery") and is_cargo:
                 cam.enable_task(task_name)
                 if color is not None:
                     t = cam.get_task(task_name)
@@ -186,12 +216,19 @@ class MissionCoordinator:
                 self._ready_frames = 0
                 self._ready_latched = False
                 self._ready_flag = 0
+                self._discovery_ready_frames = 0
+                self._discovery_ready_latched = False
                 break
 
     def _deactivate_all_visual(self) -> None:
+        # run_to_completion() 级联多个状态时, bridge 回调可能在同一调用栈中
+        # 对 _deactivate_all_visual 多次调用。第一次将 _active_task 置 None,
+        # 后续调用检测到已停用则跳过, 避免重复发送 STATUS_FROM_VISION 帧。
+        if self._active_task is None:
+            return
         if not self._camera_manager:
             return
-        all_tasks = ["qr_detect", "track_cargo", "ring_track"]
+        all_tasks = ["qr_detect", "track_cargo", "ring_track", "ring_discovery"]
         for cam in self._camera_manager.cameras.values():
             for name in all_tasks:
                 cam.disable_task(name)
@@ -204,6 +241,10 @@ class MissionCoordinator:
         self._ready_frames = 0
         self._ready_latched = False
         self._ready_flag = 0
+        self._discovery_ready_frames = 0
+        self._discovery_ready_latched = False
+        self._discovery_color_sent = False
+        self.mission_sm.context.discovery_active = False
 
         self._send(build_status_from_vision_frame(
             self.mission_sm.current_state_id,
@@ -216,11 +257,11 @@ class MissionCoordinator:
 
     def _on_arrived(self, event: ArrivedEvent) -> None:
         self.mission_sm.on_arrived(event.zone_id)
-        self.mission_sm.update()
+        self.mission_sm.run_to_completion()
 
     def _on_action_done(self, event: ActionDoneEvent) -> None:
         self.mission_sm.on_action_done(event.action_id, event.result)
-        self.mission_sm.update()
+        self.mission_sm.run_to_completion()
         if event.result == 0:
             self._ready_latched = False
             self._ready_flag = 0
@@ -246,7 +287,7 @@ class MissionCoordinator:
                 0, 0,
                 self.mission_sm.context.cargo_count,
             ))
-            self.mission_sm.update()
+            self.mission_sm.run_to_completion()
 
     def _on_vision_results(self, event: FrameResult) -> None:
         for camera_id, results in event.all_results.items():
@@ -259,7 +300,7 @@ class MissionCoordinator:
 
                 if task_name == "qr_detect":
                     self._handle_qr_result(data)
-                elif task_name in ("track_cargo", "ring_track"):
+                elif task_name in ("track_cargo", "ring_track", "ring_discovery"):
                     self._handle_track_result(data)
 
     def _handle_qr_result(self, data: dict) -> None:
@@ -290,6 +331,13 @@ class MissionCoordinator:
 
         self.visual_sm.update()
 
+        pe_x = int(ctx.percent_error_x * 5000)
+        pe_y = int(ctx.percent_error_y * 5000)
+
+        if self.mission_sm.context.discovery_active:
+            self._handle_discovery_result(target_found, pe_x, pe_y, data)
+            return
+
         flags = 0
         if target_found:
             flags |= VisualFlags.TARGET_FOUND
@@ -311,17 +359,38 @@ class MissionCoordinator:
                     self._ready_flag = VisualFlags.READY_TO_PLACE
                 flags |= self._ready_flag
                 self.mission_sm.on_visual_status(self._visual_state_int(), flags)
-                self.mission_sm.update()
+                self.mission_sm.run_to_completion()
                 self._ready_frames = 0
         else:
             flags |= self._ready_flag
 
-        self._send(build_visual_servo_data_frame(
-            ctx.percent_error_x,
-            ctx.percent_error_y,
-            flags,
-            self._visual_state_int(),
-        ))
+        self._send(build_visual_servo_data_frame(pe_x, pe_y, flags, self._visual_state_int()))
+
+    def _handle_discovery_result(self, target_found: bool, pe_x: int, pe_y: int, data: dict) -> None:
+        flags = 0
+        if target_found:
+            flags |= VisualFlags.TARGET_FOUND
+
+        if not self._discovery_ready_latched:
+            if self.visual_sm.is_tracking() and target_found:
+                self._discovery_ready_frames += 1
+            else:
+                self._discovery_ready_frames = max(0, self._discovery_ready_frames - 1)
+
+            if self._discovery_ready_frames >= _READY_THRESHOLD:
+                self._discovery_ready_latched = True
+        else:
+            flags |= VisualFlags.RING_CENTERED
+
+        if self._discovery_ready_latched:
+            flags |= VisualFlags.RING_CENTERED
+            color = self.mission_sm.context.discovery_color
+            if color and not self._discovery_color_sent:
+                conf = data.get("confidence", 100)
+                self._send(build_color_result_frame(color.value, int(conf)))
+                self._discovery_color_sent = True
+
+        self._send(build_visual_servo_data_frame(pe_x, pe_y, flags, self._visual_state_int()))
 
     def _visual_state_int(self) -> int:
         return _VISUAL_STATE_TO_INT.get(self.visual_sm.current_state, 0)
