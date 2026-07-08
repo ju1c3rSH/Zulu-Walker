@@ -213,6 +213,27 @@ class BaseStateMachine(ABC):
                     self._do_transition(transition.to_state, None)
                     return
 
+    def run_to_completion(self, max_steps: int = 10) -> int:
+        """持续调用 update() 直到状态不再变化。
+
+        当 on_execute 在一次 enter 后连级联触发多次自动转换时
+        (如 RING_DISCOVERY → ALIGN_ROUGH → PLACE_ROUGH),
+        外部不需要显式多次调用 update()。
+
+        有界循环 (max_steps) 防止无限级联, 死循环保护。
+        兼容 PLACE_*/CHECK_LOAD 等 on_execute 返回 None 的稳定状态。
+
+        Returns: 执行的转换次数。
+        """
+        steps = 0
+        for _ in range(max_steps):
+            prev = self._current_state
+            self.update()
+            if self._current_state == prev:
+                break
+            steps += 1
+        return steps
+
     def _do_transition(self, target_state: str, event: Optional[str]) -> bool:
         """执行状态转换"""
         if target_state not in self._states:
