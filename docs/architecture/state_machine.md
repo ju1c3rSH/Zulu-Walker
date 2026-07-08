@@ -63,12 +63,12 @@ OP 从 batch_order[current_step] 获取颜色 → 传给 processor
 ### 状态→视觉任务映射表
 
 | Mission 状态 | 自动启用的视觉任务 | 颜色来源 | 说明 |
-|---|---|---|---|
+|---|---|---|---|---|
 | `READ_QR` | `qr_detect` | 无 | 二维码解码 |
 | `ALIGN_RAW` | `track_cargo` | `batch_order[current_step]` | 取料时追踪货物 |
-| `PICK_RAW` | `track_cargo`（保留） | 同上 | 确认货物在夹爪中心 |
-| `ALIGN_ROUGH` | `ring_track` | `batch_order[current_step]` | 放料时对齐色环 |
-| `ALIGN_TEMP` | `ring_track` | `batch_order[current_step]` | 暂存区对齐色环 |
+| `RING_DISCOVERY` | `ring_discovery` | MCU 指定（CMD） | 色环发现，建立颜色→坐标映射 |
+| `ALIGN_ROUGH` | 无 | - | 靠 mapping + 惯导（camera 被 cargo 遮挡） |
+| `ALIGN_TEMP` | 无 | - | 靠 mapping + 惯导（camera 被 cargo 遮挡） |
 | 其他状态 | 无（关闭所有视觉任务） | - | - |
 
 > **第二批处理**：仅 `NAV_TO_RAW_SECOND` 是独立状态（用于区分 TEMP→RAW 回程路径）。

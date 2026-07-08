@@ -127,10 +127,16 @@
 ## 待实现（按优先级排列）
 
 ### P0 — 核心链路（必须先完成）
-- [ ] `camera_manager.py:_create_processor()` 注册三种 Processor 类型（stub 文件已有定义但未测试）：
+- [x] `camera_manager.py:_create_processor()` 注册三种 Processor 类型（stub 文件已有定义但未测试）：
   - `QRCodeProcessor` / `TrackCargoProcessor` / `RingTrackProcessor`
-- [ ] `TrackCargoProcessor.process()` 和 `RingTrackProcessor.process()` 完整实现
-- [ ] `CircleTargetProcessor` 对齐新 `Color` 枚举和 `ColorTrackable` Protocol
+- [x] `TrackCargoProcessor.process()` 完整实现
+- [x] `RingDiscoveryProcessor.process()` 完整实现（委托 RingDetector + FastRingMethod）
+- [ ] `RingTrackProcessor.process()` 使用 RingDetector 重写（stub，当前 mission flow 未激活）
+- [x] `CircleTargetProcessor` 对齐新 `Color` 枚举和 `ColorTrackable` Protocol
+- [x] 色环发现协议层：`CMD_START_RING_DISCOVERY(0x07)`、`CMD_DISCOVERY_DONE(0x08)`、`TYPE_COLOR_RESULT(0x13)` 恢复、`RING_CENTERED=0x80`
+- [x] 状态机：`RING_DISCOVERY(18)` 状态 + `_RingDiscoveryState` + `run_to_completion()` 级联
+- [x] 检测器架构：`RingDetector` + `RingDetectMethod` + `FastRingMethod` + `EdgeDrawingRingMethod`（参考 CargoDetector）
+- [x] 共享卡尔曼：`detectors/_shared/kalman_utils.py`
 
 ### P1 — 功能补全
 - [ ] 所有状态加超时保护（ALIGN_*/PLACE_*/NAV_* 等 — 当前仅 `_CheckLoadState` 有 3s 超时）
