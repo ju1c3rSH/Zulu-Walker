@@ -24,6 +24,7 @@ from .processors.circle_target_processor import CircleTargetProcessor
 from .processors.qr_processor import QRCodeProcessor
 from .processors.cargo_processor import TrackCargoProcessor
 from .processors.ring_track_processor import RingTrackProcessor
+from .processors.ring_discovery_processor import RingDiscoveryProcessor
 from .performance import profiler
 from .param_utils import (
     load_camera_params, apply_camera_params_to_capture
@@ -118,6 +119,7 @@ class Camera:
             "QRCodeProcessor": QRCodeProcessor,
             "TrackCargoProcessor": TrackCargoProcessor,
             "RingTrackProcessor": RingTrackProcessor,
+            "RingDiscoveryProcessor": RingDiscoveryProcessor,
         }
         cls = registry.get(task_type)
         return cls(name) if cls else None

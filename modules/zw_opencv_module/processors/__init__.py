@@ -4,6 +4,7 @@ from .circle_target_processor import CircleTargetProcessor
 from .qr_processor import QRCodeProcessor
 from .cargo_processor import TrackCargoProcessor
 from .ring_track_processor import RingTrackProcessor
+from .ring_discovery_processor import RingDiscoveryProcessor
 
 __all__ = [
     "Processor", "VisionResult", "ColorTrackable",
@@ -11,4 +12,5 @@ __all__ = [
     "QRCodeProcessor",
     "TrackCargoProcessor",
     "RingTrackProcessor",
+    "RingDiscoveryProcessor",
 ]
