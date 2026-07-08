@@ -46,6 +46,7 @@ class MissionState:
     RETURN_HOME = 15
     FINISHED = 16
     ERROR = 17
+    RING_DISCOVERY = 18
 
 
 class VisualState:
@@ -91,6 +92,11 @@ class MissionContext:
     picking_from_rough: bool = False  # ROUGH 区处于取料阶段(True)还是放料阶段(False)
     place_action_done: bool = False   # PLACE 状态下 MCU 动作完成
 
+    # Ring discovery
+    discovery_active: bool = False    # 色环发现进行中
+    discovery_done: bool = False      # 三色全部映射完成
+    discovery_color: Optional[Color] = None  # 当前正在发现的目标颜色
+
     # Visual feedback
     visual_state: int = VisualState.IDLE
     visual_flags: int = 0
@@ -123,6 +129,9 @@ class MissionContext:
         self.cargo_pick_stack.clear()
         self.picking_from_rough = False
         self.place_action_done = False
+        self.discovery_active = False
+        self.discovery_done = False
+        self.discovery_color = None
         if self.cargo_set:
             self.cargo_set.reset_all()
         self.visual_state = VisualState.IDLE
@@ -337,6 +346,29 @@ class _CheckLoadState(State):
         pass
 
 
+class _RingDiscoveryState(State):
+    def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        print("[MissionSM] Enter RING_DISCOVERY")
+        ctx.discovery_done = False
+        ctx.discovery_active = False
+        ctx.state_entry_time = time()
+
+    def on_execute(self, ctx: MissionContext) -> Optional[str]:
+        if ctx.discovery_done:
+            if ctx.current_zone == Zone.ROUGH:
+                return MissionStateNames.ALIGN_ROUGH
+            elif ctx.current_zone == Zone.TEMP:
+                return MissionStateNames.ALIGN_TEMP
+        if ctx.state_entry_time + 30.0 < time():
+            ctx.error_code = 50
+            return MissionStateNames.ERROR
+        return None
+
+    def on_exit(self, ctx: MissionContext, to_state: str) -> None:
+        ctx.discovery_active = False
+        pass
+
+
 class _NavToRoughState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         print("[MissionSM] Enter NAV_TO_ROUGH")
@@ -358,17 +390,9 @@ class _AlignRoughState(State):
         ctx.ready_to_pick = False
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
-        if ctx.picking_from_rough and ctx.ready_to_pick and not ctx.color_mismatch:
+        if ctx.picking_from_rough:
             return MissionStateNames.PICK_ROUGH
-        elif ctx.color_mismatch:
-            print(f"[MissionSM] ERROR: color mismatch for target {ctx.target_color}")
-            return MissionStateNames.ERROR
-        
-        if not ctx.picking_from_rough and ctx.ready_to_place:
-            return MissionStateNames.PLACE_ROUGH
-        if ctx.visual_fail:
-            return MissionStateNames.ERROR
-        return None
+        return MissionStateNames.PLACE_ROUGH
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
         pass
@@ -414,11 +438,7 @@ class _AlignTempState(State):
         ctx.ready_to_place = False
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
-        if ctx.ready_to_place:
-            return MissionStateNames.PLACE_TEMP
-        if ctx.visual_fail:
-            return MissionStateNames.ERROR
-        return None
+        return MissionStateNames.PLACE_TEMP
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
         pass
@@ -508,6 +528,7 @@ MissionStateNames = {
     MissionState.RETURN_HOME: "RETURN_HOME",
     MissionState.FINISHED: "FINISHED",
     MissionState.ERROR: "ERROR",
+    MissionState.RING_DISCOVERY: "RING_DISCOVERY",
     MissionState.PICK_ROUGH: "PICK_ROUGH",
 }
 
@@ -549,6 +570,7 @@ class MissionStateMachine(BaseStateMachine):
         self.register_state(MissionStateNames[MissionState.ALIGN_RAW], _AlignRawState())
         self.register_state(MissionStateNames[MissionState.PICK_RAW], _PickRawState())
         self.register_state(MissionStateNames[MissionState.CHECK_LOAD], _CheckLoadState())
+        self.register_state(MissionStateNames[MissionState.RING_DISCOVERY], _RingDiscoveryState())
         self.register_state(MissionStateNames[MissionState.NAV_TO_ROUGH], _NavToRoughState())
         self.register_state(MissionStateNames[MissionState.ALIGN_ROUGH], _AlignRoughState())
         self.register_state(MissionStateNames[MissionState.PLACE_ROUGH], _PlaceRoughState())
@@ -590,17 +612,17 @@ class MissionStateMachine(BaseStateMachine):
             event=self.Events.PICK_DONE
         )
 
-        # NAV_TO_ROUGH -> ALIGN_ROUGH
+        # NAV_TO_ROUGH -> RING_DISCOVERY
         self.register_transition(
             MissionStateNames[MissionState.NAV_TO_ROUGH],
-            MissionStateNames[MissionState.ALIGN_ROUGH],
+            MissionStateNames[MissionState.RING_DISCOVERY],
             event=self.Events.ARRIVED_ROUGH
         )
 
-        # NAV_TO_TEMP -> ALIGN_TEMP
+        # NAV_TO_TEMP -> RING_DISCOVERY
         self.register_transition(
             MissionStateNames[MissionState.NAV_TO_TEMP],
-            MissionStateNames[MissionState.ALIGN_TEMP],
+            MissionStateNames[MissionState.RING_DISCOVERY],
             event=self.Events.ARRIVED_TEMP
         )
 
@@ -648,6 +670,7 @@ class MissionStateMachine(BaseStateMachine):
             MissionState.NAV_TO_TEMP, MissionState.ALIGN_TEMP,
             MissionState.PLACE_TEMP, MissionState.PICK_ROUGH,
             MissionState.NAV_TO_RAW_SECOND, MissionState.RETURN_HOME,
+            MissionState.RING_DISCOVERY,
         ]:
             self.register_transition(
                 MissionStateNames[sid],
@@ -670,6 +693,10 @@ class MissionStateMachine(BaseStateMachine):
         self.context.current_batch = 1
         self.context.current_step = 0
         return self.trigger(self.Events.QR_OK)
+
+    def on_discovery_done(self) -> None:
+        """MCU 通知三色色环映射完成。"""
+        self.context.discovery_done = True
 
     def on_arrived(self, zone_id: int) -> bool:
         """Handle ARRIVED_AT_ZONE from STM32."""
