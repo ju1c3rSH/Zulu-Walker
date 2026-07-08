@@ -46,6 +46,9 @@ cameras:
       - name: "ring_track"
         type: "RingTrackProcessor"
         enabled: false
+      - name: "ring_discovery"
+        type: "RingDiscoveryProcessor"
+        enabled: false
 
 
     #   1/4": 3.2mm x 2.4mm (网络摄像头)
