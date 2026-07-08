@@ -67,6 +67,8 @@ Checksum  = Type 到 Payload 所有字节的异或（XOR）
 |:---|:---|:---|:---|
 | 0x01 | `CMD_START_QR` | 无 | 一键启动，开启 QR 检测 |
 | 0x06 | `CMD_STOP_VISUAL` | 无 | 紧急停止所有视觉任务 |
+| 0x07 | `CMD_START_RING_DISCOVERY` | `color_id(1B)` | 启动色环发现，指定目标颜色 |
+| 0x08 | `CMD_DISCOVERY_DONE` | 无 | 三色映射完成，退出发现阶段 |
 
 > **注意**：视觉任务的日常启停由 Orange Pi 根据 MissionSM 状态变化自动管理，MCU 不需要发送 CMD 来开关任务。详见 `docs/architecture/state_machine.md` §2 区域自动控制。
 
@@ -82,7 +84,7 @@ bit 3: VISUAL_FAIL       视觉异常（超时/丢失）
 bit 4: QR_OK             二维码已识别
 bit 5: CARGO_CONFIRMED   视觉确认载台有物料
 bit 6: COLOR_MISMATCH    检测到的颜色与预期不符
-bit 7: 保留
+bit 7: RING_CENTERED      色环已居中（发现阶段使用）
 ```
 
 ---
@@ -217,8 +219,40 @@ MCU/OP 发现异常 → 切 ERROR
 对方收到后也切 ERROR
 
 人工修复后 → 发 RESET（或 CMD_STOP_VISUAL 后重新 CMD_START_QR）
-  → 状态机回到 WAIT_START
+   → 状态机回到 WAIT_START
 ```
+
+### 9.5 色环发现流程（RING_DISCOVERY）
+
+到达 ROUGH/TEMP 区后执行，用于建立颜色→世界坐标映射。
+
+```
+MCU 到达 ROUGH/TEMP 区 → TYPE_ARRIVED zone=ROUGH/TEMP
+OP 自动进入 RING_DISCOVERY 状态
+
+MCU 移动爪到中央参考位置（该位置 camera 画面中可见全部三个色环）
+
+FOR each color (R → G → B):
+  MCU → OP: CMD_START_RING_DISCOVERY color=X
+  OP 激活 ring_discovery 任务，锁定 target_color=X
+  OP 每帧 VISUAL_SERVO_DATA(error_x, error_y, TARGET_FOUND)
+  MCU PID 微调爪位置，error → 0
+  OP 连续 10 帧稳定 → RING_CENTERED flag
+  OP → MCU: TYPE_COLOR_RESULT(color_id=X, confidence)
+  MCU 记录 mapping[X] = 当前电机位置
+  MCU 回到中央参考位置  ← 必须回参考位置后换下一颜色
+
+MCU → OP: CMD_DISCOVERY_DONE
+OP: RING_DISCOVERY → ALIGN_ROUGH/TEMP → PLACE_ROUGH/TEMP（瞬时级联）
+
+后续 PLACE/PICK 全部靠 MCU mapping + 惯导，OP 不做视觉伺服。
+```
+
+> **约束**：
+> - 每次进入 ROUGH 或 TEMP 区（包括 Batch 2）都必须重新发现。同一个 batch/zone 内不需要重复。
+> - 换颜色前 MCU 必须回到中央参考位置。
+> - TEMP Batch 2：色环被 Batch 1 货物遮挡，OP 检测货物底部轮廓（与色环中心同位置）。
+> - 发现超时 30s → ERROR(50)。
 
 ---
 
