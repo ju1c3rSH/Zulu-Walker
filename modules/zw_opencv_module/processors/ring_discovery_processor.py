@@ -7,6 +7,14 @@ from ..detectors.ring_detector import RingDetector
 
 
 class RingDiscoveryProcessor(Processor):
+    """色环发现处理器。
+
+    输出 result_data:
+      percent_error_x: int, [-5000, 5000], 0=画面中心, 负=偏左, 正=偏右
+      percent_error_y: int, [-5000, 5000], 0=画面中心, 负=偏上, 正=偏下
+      coordinate: 色环中心像素坐标
+      confidence: float 置信度
+    """
 
     def __init__(self, name: str = "ring_discovery"):
         super().__init__(name)
@@ -27,8 +35,8 @@ class RingDiscoveryProcessor(Processor):
 
         cx, cy = ring.coordinate
         h, w = frame.shape[:2]
-        pe_x = (cx - w / 2.0) / (w / 2.0)
-        pe_y = (cy - h / 2.0) / (h / 2.0)
+        pe_x = int(((cx - w / 2.0) / (w / 2.0)) * 5000.0)
+        pe_y = int(((cy - h / 2.0) / (h / 2.0)) * 5000.0)
 
         return VisionResult(
             task_name=self.name,
@@ -48,8 +56,8 @@ class RingDiscoveryProcessor(Processor):
             success=True,
             result_data={
                 "target_found": False,
-                "percent_error_x": 0.0,
-                "percent_error_y": 0.0,
+                "percent_error_x": 0,
+                "percent_error_y": 0,
                 "coordinate": None,
                 "confidence": 0.0,
             },

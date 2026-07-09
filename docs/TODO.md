@@ -22,10 +22,9 @@
 - **现象**: `VisualFlags.CARGO_CONFIRMED (0x20)` 从未被 vision pipeline 或 MCU 帧设置。`CHECK_LOAD.on_enter` 重置 `cargo_confirmed = False`，当前唯二设置路径 (`PICK_RAW.on_exit` / `PICK_ROUGH.on_exit`) 在进入 CHECK_LOAD 前已被覆盖。结果：CHECK_LOAD 3 秒后必定超时进 ERROR。
 - **可能原因**: 本应由 MCU 通过 UART 帧设置此 flag，对应帧类型尚未实现；或是 vision 处理器应返回此 flag 但未实现。
 
-### `build_visual_servo_data_frame` 期望 int 但收到 float
-- **严重度**: 中
-- **现象**: `TrackCargoProcessor.process()` 返回 `float` 类型 `percent_error_x/y`（[-1.0, 1.0]），但 `build_visual_servo_data_frame(error_x: int, error_y: int)` 调用 `.to_bytes()`。float 类型无此方法，会触发 `AttributeError`。
-- **修复方向**: 在 `_handle_track_result` 中转换为定点整数后传入，或修改 `build_visual_servo_data_frame` 接受 float 并用 `struct.pack` 处理。
+### ~~`build_visual_servo_data_frame` 期望 int 但收到 float~~ 已修复
+- **状态**: ✅ 已修复（2026-07-09）
+- **修复方式**: 三个处理器（cargo / ring_discovery / circle_target）统一输出 `int[-5000, 5000]`，`_handle_track_result` 移除 `int(x*5000)` 转换，直接传递。
 
 ### `cv2.ocl.setUseOpenCL(True)` 分散在多处构造函数
 - **严重度**: 低
