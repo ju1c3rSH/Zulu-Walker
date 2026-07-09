@@ -23,7 +23,6 @@ from .processors.base import VisionResult
 from .processors.circle_target_processor import CircleTargetProcessor
 from .processors.qr_processor import QRCodeProcessor
 from .processors.cargo_processor import TrackCargoProcessor
-from .processors.ring_track_processor import RingTrackProcessor
 from .processors.ring_discovery_processor import RingDiscoveryProcessor
 from .performance import profiler
 from .param_utils import (
@@ -118,7 +117,6 @@ class Camera:
             "CircleTargetProcessor": CircleTargetProcessor,
             "QRCodeProcessor": QRCodeProcessor,
             "TrackCargoProcessor": TrackCargoProcessor,
-            "RingTrackProcessor": RingTrackProcessor,
             "RingDiscoveryProcessor": RingDiscoveryProcessor,
         }
         cls = registry.get(task_type)
