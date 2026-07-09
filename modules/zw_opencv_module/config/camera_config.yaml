@@ -43,9 +43,6 @@ cameras:
       - name: "track_cargo"
         type: "TrackCargoProcessor"
         enabled: false
-      - name: "ring_track"
-        type: "RingTrackProcessor"
-        enabled: false
       - name: "ring_discovery"
         type: "RingDiscoveryProcessor"
         enabled: false

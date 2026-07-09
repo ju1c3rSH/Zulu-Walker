@@ -102,8 +102,8 @@
 - [x] `_wire_state_actions()` 注册状态 enter 回调：
   - `READ_QR` → `qr_detect`
   - `ALIGN_RAW` → `track_cargo`
-  - `ALIGN_ROUGH` / `ALIGN_TEMP` → `ring_track`
   - 导航/等待/结束状态 → `_deactivate_all_visual`
+  - `ALIGN_ROUGH` / `ALIGN_TEMP` → `_deactivate_all_visual`（v1.2：camera 被 cargo 遮挡，无视觉伺服）
 
 ### 配色不匹配防御
 - [x] `_AlignRawState`：`color_mismatch` → ERROR
@@ -128,10 +128,10 @@
 
 ### P0 — 核心链路（必须先完成）
 - [x] `camera_manager.py:_create_processor()` 注册三种 Processor 类型（stub 文件已有定义但未测试）：
-  - `QRCodeProcessor` / `TrackCargoProcessor` / `RingTrackProcessor`
+  - `QRCodeProcessor` / `TrackCargoProcessor` / `RingDiscoveryProcessor`
 - [x] `TrackCargoProcessor.process()` 完整实现
 - [x] `RingDiscoveryProcessor.process()` 完整实现（委托 RingDetector + FastRingMethod）
-- [ ] `RingTrackProcessor.process()` 使用 RingDetector 重写（stub，当前 mission flow 未激活）
+- [x] `RingTrackProcessor.process()` 使用 RingDetector 重写（已废弃——v1.2 架构 ALIGN_ROUGH/TEMP 无视觉伺服，processor 已删除）
 - [x] `CircleTargetProcessor` 对齐新 `Color` 枚举和 `ColorTrackable` Protocol
 - [x] 色环发现协议层：`CMD_START_RING_DISCOVERY(0x07)`、`CMD_DISCOVERY_DONE(0x08)`、`TYPE_COLOR_RESULT(0x13)` 恢复、`RING_CENTERED=0x80`
 - [x] 状态机：`RING_DISCOVERY(18)` 状态 + `_RingDiscoveryState` + `run_to_completion()` 级联

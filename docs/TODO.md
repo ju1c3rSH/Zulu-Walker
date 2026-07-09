@@ -2,11 +2,6 @@
 
 ## Processor 层
 
-### RingTrackProcessor — 色环对准（ALIGN_ROUGH / ALIGN_TEMP）
-- **当前状态**: stub，`process()` 返回 `success=False`
-- **依赖**: 比赛场地粗加工区/暂存区顶面有色环标记（`GongChuang2026.md:55`），用于测量物料摆放准确程度
-- **待定**: 色环检测方案（复用 circle_target 检测器？新建 ring 专用方法？）
-
 ### pick_watch — 转盘守株待兔（PICK_RAW）
 - **当前状态**: 未开始；团队讨论中
 - **场景**: 原料区转盘 6-10s/圈，物料 120° 间隔，平移式机械臂无法横向避让
