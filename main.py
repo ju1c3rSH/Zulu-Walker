@@ -3,6 +3,7 @@ import gc
 import os
 import sys
 import time
+import select
 import importlib
 from typing import Dict, Any
 # 添加项目根目录到 sys.path，确保模块只被加载一次
@@ -75,7 +76,10 @@ class ModuleManager:
                     if coordinator:
                         coordinator.loop()
 
-                    time.sleep(SystemConfig.MAIN_LOOP_DELAY)
+                    # 使用 select.select 而非 time.sleep 以实现更高精度的定时。
+                    # select.select 利用 ppoll/nanosleep 系统调用，在 HZ=1000
+                    # 内核下可提供 ~1ms 精度；time.sleep 可能被调度 tick 截断。
+                    select.select([], [], [], SystemConfig.MAIN_LOOP_DELAY)
                 except KeyboardInterrupt:
                     print("Program interrupted")
                     break
@@ -90,7 +94,7 @@ class SystemConfig:
     
     WATCHDOG_TIMEOUT = 60
     
-    MAIN_LOOP_DELAY = 0.01
+    MAIN_LOOP_DELAY = 0.001  # 1ms tick，对应 1000Hz 主循环（依赖内核 HZ=1000 + HIGH_RES_TIMERS）
     AUTO_START_MODULES = [
         #'uart_test',
         'zw_opencv_module',
