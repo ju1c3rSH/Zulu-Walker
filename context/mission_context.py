@@ -199,7 +199,7 @@ class MissionCoordinator:
             return
 
         cm = self._camera_manager
-        all_tasks = ["qr_detect", "track_cargo", "ring_track", "ring_discovery"]
+        all_tasks = ["qr_detect", "track_cargo", "ring_discovery"]
 
         for cam in cm.cameras.values():
             for name in all_tasks:
@@ -213,7 +213,7 @@ class MissionCoordinator:
                 cam.enable_task(task_name)
                 self._active_task = task_name
                 break
-            elif task_name in ("track_cargo", "ring_track", "ring_discovery") and is_cargo:
+            elif task_name in ("track_cargo", "ring_discovery") and is_cargo:
                 cam.enable_task(task_name)
                 if color is not None:
                     t = cam.get_task(task_name)
@@ -242,7 +242,7 @@ class MissionCoordinator:
             return
         if not self._camera_manager:
             return
-        all_tasks = ["qr_detect", "track_cargo", "ring_track", "ring_discovery"]
+        all_tasks = ["qr_detect", "track_cargo", "ring_discovery"]
         for cam in self._camera_manager.cameras.values():
             for name in all_tasks:
                 cam.disable_task(name)
@@ -320,7 +320,7 @@ class MissionCoordinator:
 
                 if task_name == "qr_detect":
                     self._handle_qr_result(data)
-                elif task_name in ("track_cargo", "ring_track", "ring_discovery"):
+                elif task_name in ("track_cargo", "ring_discovery"):
                     self._handle_track_result(data)
 
     def _handle_qr_result(self, data: dict) -> None:
