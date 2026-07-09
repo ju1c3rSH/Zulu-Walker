@@ -351,8 +351,8 @@ class MissionCoordinator:
 
         self.visual_sm.update()
 
-        pe_x = int(ctx.percent_error_x * 5000)
-        pe_y = int(ctx.percent_error_y * 5000)
+        pe_x = ctx.percent_error_x
+        pe_y = ctx.percent_error_y
 
         if self.mission_sm.context.discovery_active:
             self._handle_discovery_result(target_found, pe_x, pe_y, data)
