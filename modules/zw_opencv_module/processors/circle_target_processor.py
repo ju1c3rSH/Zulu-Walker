@@ -212,9 +212,11 @@ class CircleTargetProcessor(Processor):
         pixel_error_x = target_x - center_x
         pixel_error_y = target_y - center_y
 
-        # 归一化到 [-5000, 5000]，精度 ~0.06px (640x480)
-        percent_error_x = int((pixel_error_x * 1000) / self._frame_width)
-        percent_error_y = int((pixel_error_y * 1000) / self._frame_height)
+        # 归一化到 [-5000, 5000]（与 cargo/ring discovery 量纲统一）
+        pe_x = int((pixel_error_x * 5000.0) / (self._frame_width / 2.0))
+        pe_y = int((pixel_error_y * 5000.0) / (self._frame_height / 2.0))
+        percent_error_x = max(-5000, min(5000, pe_x))
+        percent_error_y = max(-5000, min(5000, pe_y))
 
         return percent_error_x, percent_error_y
 
