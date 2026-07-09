@@ -91,6 +91,7 @@ class MissionContext:
     cargo_count: int = 0            # materials currently on robot (0..3)
     picking_from_rough: bool = False  # ROUGH 区处于取料阶段(True)还是放料阶段(False)
     place_action_done: bool = False   # PLACE 状态下 MCU 动作完成
+    place_cycle_wait_start: float = 0.0  # PLACE_ROUGH 1s 同步延时计时起点
 
     # Ring discovery
     discovery_active: bool = False    # 色环发现进行中
@@ -129,6 +130,7 @@ class MissionContext:
         self.cargo_pick_stack.clear()
         self.picking_from_rough = False
         self.place_action_done = False
+        self.place_cycle_wait_start = 0.0
         self.discovery_active = False
         self.discovery_done = False
         self.discovery_color = None
@@ -305,7 +307,7 @@ class _CheckLoadState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         print("[MissionSM] Enter CHECK_LOAD")
         ctx.state_entry_time = time()
-        ctx.cargo_confirmed = False
+        ctx.cargo_confirmed = True  # 信任 MCU: ACTION_DONE=OK 即确认抓取成功，无需视觉确认
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         if ctx.cargo_confirmed:
@@ -404,16 +406,24 @@ class _PlaceRoughState(State):
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
+        if ctx.place_cycle_wait_start != 0:
+            # 等待 MCU 侧 MSM_PLACE_WAIT (1s cooldown)，保持状态同步
+            if time() - ctx.place_cycle_wait_start < 1.0:
+                return None
+            ctx.place_cycle_wait_start = 0.0
+            ctx.picking_from_rough = True
+            ctx.current_step = 0
+            ctx.target_color = ctx.current_target_color() or Color.RED
+            return MissionStateNames.ALIGN_ROUGH
+
         if not ctx.place_action_done:
             return None
         ctx.place_action_done = False
         if ctx.cargo_count > 0:
             return MissionStateNames.ALIGN_ROUGH
-        ctx.picking_from_rough = True
-        ctx.current_step = 0
-        # 这里摆放完当前批次的3个物料后，就进行物料的顺序回收，故把current_step重置为0，方便后续在ROUGH区进行顺序抓取
-        ctx.target_color = ctx.current_target_color() or Color.RED
-        return MissionStateNames.ALIGN_ROUGH
+        # cargo_count == 0: 3 个物料全部放完，启动 1s 同步延时
+        ctx.place_cycle_wait_start = time()
+        return None
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
         pass
