@@ -8,6 +8,13 @@ from ..models import Color
 
 
 class TrackCargoProcessor(Processor):
+    """物料跟踪处理器。
+
+    输出 result_data:
+      percent_error_x: int, [-5000, 5000], 0=画面中心, 负=偏左, 正=偏右
+      percent_error_y: int, [-5000, 5000], 0=画面中心, 负=偏上, 正=偏下
+      coordinate: (cx, cy) 像素坐标
+    """
 
     def __init__(self, name: str = "cargo_detect"):
         super().__init__(name)
@@ -37,8 +44,8 @@ class TrackCargoProcessor(Processor):
                 matched.update_position((cx, cy))
 
         frame_h, frame_w = frame.shape[:2]
-        pe_x = (cx - frame_w / 2.0) / (frame_w / 2.0)
-        pe_y = (cy - frame_h / 2.0) / (frame_h / 2.0)
+        pe_x = int(((cx - frame_w / 2.0) / (frame_w / 2.0)) * 5000.0)
+        pe_y = int(((cy - frame_h / 2.0) / (frame_h / 2.0)) * 5000.0)
 
         return VisionResult(
             task_name=self.name,
