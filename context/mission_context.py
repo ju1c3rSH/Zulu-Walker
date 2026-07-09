@@ -436,7 +436,8 @@ class MissionCoordinator:
             ))
 
             if time.monotonic() - self._last_mcu_heartbeat > _HEARTBEAT_TIMEOUT:
-                self.mission_sm.set_error(40, "MCU heartbeat lost")
+                self._enqueue_sm(lambda: self.mission_sm.set_error(
+                    40, "MCU heartbeat lost"))
 
     # ===== debug =====
 
