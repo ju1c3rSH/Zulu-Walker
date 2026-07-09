@@ -30,8 +30,8 @@ class VisualContext:
     consecutive_lost_frames: int = 0
 
     state_entry_time: float = 0.0
-    percent_error_x: float = 0.0
-    percent_error_y: float = 0.0
+    percent_error_x: int = 0
+    percent_error_y: int = 0
 
     custom: Dict[str, Any] = field(default_factory=dict)
 

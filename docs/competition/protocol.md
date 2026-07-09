@@ -172,6 +172,7 @@ OP → RETURN_HOME → FINISHED
 ```
 OP 每帧发送 VISUAL_SERVO_DATA（无论是否检测到目标）：
   error_x: int16 LE（归一化 -5000~5000，0=画面中心。未检出时为 0）
+    └─ OP 内部: 处理器直接输出 int[-5000, 5000]，不经转换直接编码发送
   error_y: int16 LE（同上）
   flags: 1B（同 VisualFlags 位定义，包含 TARGET_FOUND / READY_TO_PICK / READY_TO_PLACE 等）
   state: 1B（当前 visual_state: 0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL）
