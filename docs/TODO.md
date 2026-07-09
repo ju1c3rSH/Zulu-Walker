@@ -31,3 +31,15 @@
 - **严重度**: 低
 - **现象**: 全局副作用调用分散在 `TrackCargoProcessor.__init__`（已删除）和 `CircleTargetProcessor.__init__` 中。
 - **修复方向**: 集中到 `CameraManager.__init__` 或专用初始化函数，只调用一次。
+
+---
+
+## 需要运维确认
+
+### 内核 HZ 配置检查（主循环 1ms tick 依赖）
+- **背景**: `main.py` 主循环使用 `select.select` 提供高精度定时，但实际精度取决于内核配置
+- **检查方法**:
+  - 查看 `/proc/timer_list` 或执行 `getconf CLK_TCK`，确认 `HZ >= 1000`
+  - 确认内核启用了 `CONFIG_HIGH_RES_TIMERS=y`
+  - 如果实际 tick 精度不足，在 Orange Pi 5B 上重新编译内核或调整内核参数
+- **风险**: 如果 HZ=100，`select.select` 的精度会退化到 ~4-6ms
