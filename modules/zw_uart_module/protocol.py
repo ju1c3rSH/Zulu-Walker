@@ -70,8 +70,8 @@ class ActionId(IntEnum):
     """Action identifiers for TYPE_ACTION_DONE."""
     PICK_RAW = 1      # 原料区取料
     PLACE_ROUGH = 2   # 粗加工区放料
-    PLACE_TEMP = 3    # 暂存区放料/码垛
-    PICK_ROUGH = 4    # 粗加工区取料（回收）
+    PICK_ROUGH = 3    # 粗加工区取料（回收）
+    PLACE_TEMP = 4    # 暂存区放料/码垛
 
 
 # Error types for TYPE_ERROR
