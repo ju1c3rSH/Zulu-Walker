@@ -57,7 +57,7 @@ class ModuleManager:
                     print(f"Failed to stop {module_name}: {e}")
         self._loop_methods.clear()
 
-    def run_main_loop(self):
+    def run_main_loop(self, coordinator=None):
         """主循环，定期调用模块的loop方法"""
 
         print("Entering main loop...")
@@ -71,7 +71,10 @@ class ModuleManager:
                             loop_method()
                         except Exception as e:
                             print(f"Error in {module_name} loop: {e}")
-                            
+
+                    if coordinator:
+                        coordinator.loop()
+
                     time.sleep(SystemConfig.MAIN_LOOP_DELAY)
                 except KeyboardInterrupt:
                     print("Program interrupted")
@@ -129,7 +132,7 @@ def main():
         coordinator.set_uart_sender(uart.send_raw)
 
     coordinator.start()
-    manager.run_main_loop()
+    manager.run_main_loop(coordinator)
     
     
 if __name__ == "__main__":
