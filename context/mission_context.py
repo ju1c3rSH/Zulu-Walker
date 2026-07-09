@@ -1,6 +1,7 @@
 import threading
 import time
-from typing import Optional
+from collections import deque
+from typing import Optional, Callable
 
 from modules.zw_opencv_module.camera_manager import CameraManager
 
@@ -62,6 +63,8 @@ class MissionCoordinator:
         self._discovery_ready_frames = 0
         self._discovery_ready_latched = False
         self._discovery_color_sent = False
+        self._sm_queue: Deque[Callable] = deque()
+        self._sm_lock = threading.Lock()
         self._heartbeat_seq = 0
         self._last_mcu_heartbeat = 0.0
         self._running = False
@@ -80,6 +83,16 @@ class MissionCoordinator:
             except Exception:
                 return False
         return False
+
+    def _enqueue_sm(self, fn: Callable) -> None:
+        with self._sm_lock:
+            self._sm_queue.append(fn)
+
+    def loop(self) -> None:
+        with self._sm_lock:
+            while self._sm_queue:
+                self._sm_queue.popleft()()
+        self.mission_sm.run_to_completion()
 
     # ===== lifecycle =====
 
@@ -149,8 +162,7 @@ class MissionCoordinator:
 
         if cmd == CMD_START_QR:
             self._qr_decoded = False
-            self.mission_sm.start()
-            self.mission_sm.run_to_completion()
+            self._enqueue_sm(lambda: self.mission_sm.start())
 
         elif not self._qr_decoded:
             return
@@ -166,19 +178,21 @@ class MissionCoordinator:
                 color = Color(color_id)
             except (ValueError, KeyError):
                 return
-            self.mission_sm.context.discovery_color = color
-            self.mission_sm.context.discovery_active = True
             self.visual_sm.stop()
             self.visual_sm.start()
             self._discovery_ready_frames = 0
             self._discovery_ready_latched = False
             self._discovery_color_sent = False
             self._activate_task("ring_discovery", color)
-            self.mission_sm.run_to_completion()
+            self._enqueue_sm(lambda: self._apply_ring_discovery_start(color))
 
         elif cmd == CMD_DISCOVERY_DONE:
-            self.mission_sm.on_discovery_done()
-            self.mission_sm.run_to_completion()
+            self._enqueue_sm(lambda: self.mission_sm.on_discovery_done())
+
+    def _apply_ring_discovery_start(self, color: Color) -> None:
+        self.mission_sm.context.discovery_color = color
+        self.mission_sm.context.discovery_active = True
+        self.mission_sm.run_to_completion()
 
     def _activate_task(self, task_name: str, color: Optional[Color] = None) -> None:
         if not self._camera_manager:
@@ -256,21 +270,24 @@ class MissionCoordinator:
     # ===== MCU events =====
 
     def _on_arrived(self, event: ArrivedEvent) -> None:
-        self.mission_sm.on_arrived(event.zone_id)
-        self.mission_sm.run_to_completion()
+        captured_zone_id = event.zone_id
+        self._enqueue_sm(lambda: self.mission_sm.on_arrived(captured_zone_id))
 
     def _on_action_done(self, event: ActionDoneEvent) -> None:
-        self.mission_sm.on_action_done(event.action_id, event.result)
-        self.mission_sm.run_to_completion()
-        if event.result == 0:
+        captured_id = event.action_id
+        captured_result = event.result
+        if captured_result == 0:
             self._ready_latched = False
             self._ready_flag = 0
+        self._enqueue_sm(lambda: self.mission_sm.on_action_done(captured_id, captured_result))
 
     def _on_heartbeat(self, event: HeartbeatEvent) -> None:
         self._last_mcu_heartbeat = time.monotonic()
 
     def _on_emergency(self, event: EmergencyStopEvent) -> None:
-        self.mission_sm.set_error(99, f"Emergency stop: reason={event.reason}")
+        captured_reason = event.reason
+        self._enqueue_sm(lambda: self.mission_sm.set_error(
+            99, f"Emergency stop: reason={captured_reason}"))
 
     def _on_request_sync(self, event: RequestSyncEvent) -> None:
         pass
@@ -278,16 +295,19 @@ class MissionCoordinator:
     # ===== vision results =====
 
     def _on_qr_result_event(self, event: QRResult) -> None:
-        success = self.mission_sm.on_qr_result(event.qr_str)
+        captured_qr = event.qr_str
+        self._enqueue_sm(lambda: self._apply_qr_result(captured_qr))
+
+    def _apply_qr_result(self, qr_str: str) -> None:
+        success = self.mission_sm.on_qr_result(qr_str)
         if success:
             self._qr_decoded = True
-            self._send(build_qr_result_frame(event.qr_str))
+            self._send(build_qr_result_frame(qr_str))
             self._send(build_status_from_vision_frame(
                 self.mission_sm.current_state_id,
                 0, 0,
                 self.mission_sm.context.cargo_count,
             ))
-            self.mission_sm.run_to_completion()
 
     def _on_vision_results(self, event: FrameResult) -> None:
         for camera_id, results in event.all_results.items():
@@ -358,13 +378,19 @@ class MissionCoordinator:
                 elif state in ("ALIGN_ROUGH", "ALIGN_TEMP") and not (state == "ALIGN_ROUGH" and picking):
                     self._ready_flag = VisualFlags.READY_TO_PLACE
                 flags |= self._ready_flag
-                self.mission_sm.on_visual_status(self._visual_state_int(), flags)
-                self.mission_sm.run_to_completion()
+                # 捕获当前值，入队推状态机
+                captured_flags = flags
+                captured_vis = self._visual_state_int()
+                self._enqueue_sm(lambda: self._apply_visual_status(captured_vis, captured_flags))
                 self._ready_frames = 0
         else:
             flags |= self._ready_flag
 
         self._send(build_visual_servo_data_frame(pe_x, pe_y, flags, self._visual_state_int()))
+
+    def _apply_visual_status(self, visual_state: int, flags: int) -> None:
+        self.mission_sm.on_visual_status(visual_state, flags)
+        self.mission_sm.run_to_completion()
 
     def _handle_discovery_result(self, target_found: bool, pe_x: int, pe_y: int, data: dict) -> None:
         flags = 0
@@ -410,7 +436,8 @@ class MissionCoordinator:
             ))
 
             if time.monotonic() - self._last_mcu_heartbeat > _HEARTBEAT_TIMEOUT:
-                self.mission_sm.set_error(40, "MCU heartbeat lost")
+                self._enqueue_sm(lambda: self.mission_sm.set_error(
+                    40, "MCU heartbeat lost"))
 
     # ===== debug =====
 

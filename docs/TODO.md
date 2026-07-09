@@ -31,3 +31,26 @@
 - **严重度**: 低
 - **现象**: 全局副作用调用分散在 `TrackCargoProcessor.__init__`（已删除）和 `CircleTargetProcessor.__init__` 中。
 - **修复方向**: 集中到 `CameraManager.__init__` 或专用初始化函数，只调用一次。
+
+### 多个 VisualFlags 位定义了但从未设置
+- **严重度**: 中
+- **涉及标志位**: `QR_OK(0x10)`、`VISUAL_FAIL(0x08)`、`COLOR_MISMATCH(0x40)`
+- **现象**: 三个位在 `protocol.py:VisualFlags` 中定义，`update_visual_flags()` 中解析，但没有任何代码在 flags 字节中设置它们。
+- **已知不影响功能**:
+  - `QR_OK` — MCU 实际使用 `TYPE_QR_RESULT` 专用帧获取二维码，不检查此位
+  - `VISUAL_FAIL` / `COLOR_MISMATCH` — C 侧没有对应的 `VISION_FLAG_IS_*` 宏调用
+- **建议**: 确认无使用计划后删除这些位的定义和解析逻辑，减少困惑
+
+### `_is_target_in_vision_range` 是 stub
+- **严重度**: 中
+- **文件**: `modules/zw_opencv_module/processors/circle_target_processor.py:378`
+- **现象**: 方法体只有 `pass`，隐式返回 `None`（falsy），调用方始终认为目标不在视野内
+- **修复方向**: 实现实际的范围检测逻辑，或明确标记为未使用并移除
+
+---
+
+## 需要运维确认
+
+### 内核 HZ 配置检查（主循环 1ms tick 依赖）
+- **当前平台**: ~300Hz（实测），`MAIN_LOOP_DELAY = 0.00333`，每 tick 最快 3.33ms
+- **目标**: 升级内核配置到 `HZ=1000` + `CONFIG_HIGH_RES_TIMERS=y` 后可将 `MAIN_LOOP_DELAY` 降到 `0.001`
