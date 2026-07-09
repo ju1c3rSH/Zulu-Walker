@@ -74,7 +74,7 @@ Checksum  = Type 到 Payload 所有字节的异或（XOR）
 
 ---
 
-## 5. VisualFlags（STATUS_FROM_VISION 的 flags 字节）
+## 5. VisualFlags（STATUS_FROM_VISION / VISUAL_SERVO_DATA 共用的 flags 字节）
 
 ```
 bit 0: TARGET_FOUND      当前帧检测到目标
@@ -97,8 +97,8 @@ bit 7: RING_CENTERED      色环已居中（发现阶段使用）
 |:---|:---|:---|:---|:---|
 | 1 | `ActionId.PICK_RAW` | `PICK_RAW` — 原料区取料 | `PICK_DONE` | 3（每次取 1 个物料） |
 | 2 | `ActionId.PLACE_ROUGH` | `PLACE_ROUGH` — 粗加工区放料 | `place_action_done` 标志 | 3（每次放 1 个物料） |
-| 3 | `ActionId.PLACE_TEMP` | `PLACE_TEMP` — 暂存区放料/码垛 | `place_action_done` 标志 | 3（每次放 1 个物料） |
-| 4 | `ActionId.PICK_ROUGH` | `PICK_ROUGH` — 粗加工区取料（回收入机器人） | `PICK_DONE` | 3（每次取 1 个物料） |
+| 3 | `ActionId.PICK_ROUGH` | `PICK_ROUGH` — 粗加工区取料（回收入机器人） | `PICK_DONE` | 3（每次取 1 个物料） |
+| 4 | `ActionId.PLACE_TEMP` | `PLACE_TEMP` — 暂存区放料/码垛 | `place_action_done` 标志 | 3（每次放 1 个物料） |
 
 > **注意**：`action_id=2/3`（PLACE）不触发事件转换，而是通过 `place_action_done` 标志让状态机的 `on_execute` 决定下一步。详见 `docs/architecture/state_machine.md` §2 混合模型。
 
@@ -130,7 +130,7 @@ MCU 到达 RAW → TYPE_ARRIVED zone=2
 OP 切换到 ALIGN_RAW
 OP 自动开启 track_cargo
   → VISUAL_SERVO_DATA (持续发送，MCU PID 微调)
-  → STATUS_FROM_VISION flags=ready_to_pick
+  → VISUAL_SERVO_DATA flags=ready_to_pick
 MCU 抓取 → ACTION_DONE action_id=ActionId.PICK_RAW (1), result=OK
 OP 推进 step，继续下一轮 ...
 
@@ -148,13 +148,13 @@ OP 切换到 PICK 阶段（picking_from_rough=True）
 
 MCU 到达 ROUGH 色环前（取回阶段，空载 crane）
 OP ALIGN_ROUGH → PICK_ROUGH（瞬时级联，无视觉伺服）
-MCU 靠 mapping + 惯导到达目标位置 → ACTION_DONE action_id=ActionId.PICK_ROUGH (4), result=OK
+MCU 靠 mapping + 惯导到达目标位置 → ACTION_DONE action_id=ActionId.PICK_ROUGH (3), result=OK
 OP 重复 ALIGN+PICK 直到 cargo_count=3
 
 MCU 到达 TEMP → TYPE_ARRIVED zone=4
 OP 自动进入 RING_DISCOVERY（流程同 ROUGH）
   → 发现完成 → ALIGN_TEMP → PLACE_TEMP（瞬时级联，无视觉伺服）
-MCU 靠 mapping + 惯导到达目标位置 → ACTION_DONE action_id=ActionId.PLACE_TEMP (3), result=OK
+MCU 靠 mapping + 惯导到达目标位置 → ACTION_DONE action_id=ActionId.PLACE_TEMP (4), result=OK
 OP 重复 ALIGN+PLACE 直到 cargo_count=0
 
 OP → RETURN_HOME → FINISHED
