@@ -3,6 +3,7 @@ import gc
 import os
 import sys
 import time
+import select
 import importlib
 from typing import Dict, Any
 # 添加项目根目录到 sys.path，确保模块只被加载一次
@@ -57,7 +58,7 @@ class ModuleManager:
                     print(f"Failed to stop {module_name}: {e}")
         self._loop_methods.clear()
 
-    def run_main_loop(self):
+    def run_main_loop(self, coordinator=None):
         """主循环，定期调用模块的loop方法"""
 
         print("Entering main loop...")
@@ -71,8 +72,15 @@ class ModuleManager:
                             loop_method()
                         except Exception as e:
                             print(f"Error in {module_name} loop: {e}")
-                            
-                    time.sleep(SystemConfig.MAIN_LOOP_DELAY)
+
+                    if coordinator:
+                        coordinator.loop()
+
+                    # 使用 select.select 而非 time.sleep 以实现更高精度的定时。
+                    # 当前平台 ~300Hz，每 tick 最快 3.33ms。
+                    # select.select 利用 ppoll/nanosleep 系统调用，在 HZ=1000
+                    # 内核下可提供 ~1ms 精度；time.sleep 可能被调度 tick 截断至 10ms。
+                    select.select([], [], [], SystemConfig.MAIN_LOOP_DELAY)
                 except KeyboardInterrupt:
                     print("Program interrupted")
                     break
@@ -87,7 +95,7 @@ class SystemConfig:
     
     WATCHDOG_TIMEOUT = 60
     
-    MAIN_LOOP_DELAY = 0.01
+    MAIN_LOOP_DELAY = 0.00333  # ~300Hz 主循环，每 tick 最快 3.33ms（受限于当前平台 HZ）
     AUTO_START_MODULES = [
         #'uart_test',
         'zw_opencv_module',
@@ -129,7 +137,7 @@ def main():
         coordinator.set_uart_sender(uart.send_raw)
 
     coordinator.start()
-    manager.run_main_loop()
+    manager.run_main_loop(coordinator)
     
     
 if __name__ == "__main__":
