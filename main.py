@@ -77,8 +77,9 @@ class ModuleManager:
                         coordinator.loop()
 
                     # 使用 select.select 而非 time.sleep 以实现更高精度的定时。
+                    # 当前平台 ~300Hz，每 tick 最快 3.33ms。
                     # select.select 利用 ppoll/nanosleep 系统调用，在 HZ=1000
-                    # 内核下可提供 ~1ms 精度；time.sleep 可能被调度 tick 截断。
+                    # 内核下可提供 ~1ms 精度；time.sleep 可能被调度 tick 截断至 10ms。
                     select.select([], [], [], SystemConfig.MAIN_LOOP_DELAY)
                 except KeyboardInterrupt:
                     print("Program interrupted")
@@ -94,7 +95,7 @@ class SystemConfig:
     
     WATCHDOG_TIMEOUT = 60
     
-    MAIN_LOOP_DELAY = 0.001  # 1ms tick，对应 1000Hz 主循环（依赖内核 HZ=1000 + HIGH_RES_TIMERS）
+    MAIN_LOOP_DELAY = 0.00333  # ~300Hz 主循环，每 tick 最快 3.33ms（受限于当前平台 HZ）
     AUTO_START_MODULES = [
         #'uart_test',
         'zw_opencv_module',
