@@ -363,7 +363,8 @@ class MissionCoordinator:
             flags |= VisualFlags.TARGET_FOUND
 
         if not self._ready_latched:
-            if self.visual_sm.is_tracking() and target_found:
+            if self.visual_sm.is_tracking() and target_found \
+               and abs(ctx.percent_error_x) <= 500 and abs(ctx.percent_error_y) <= 500:
                 self._ready_frames += 1
             else:
                 self._ready_frames = max(0, self._ready_frames - 1)
