@@ -199,7 +199,7 @@ OP 进入 stable tracking（连续 N 帧稳定检测到目标）后，锁存 `RE
 
 > **RAW 原料区风险**：圆盘旋转供料，MCU 收到 READY 后若机械臂动作期间目标随圆盘转走，可能抓空。此时 MCU 应自行判断失败 → ERROR 恢复，或在下一次圆盘停顿时重新锁定。
 
-### 9.3 心跳与超时
+### 9.3 心跳（纯监控信号，不参与决策）
 
 ```
 双方每 100ms 互发 HEARTBEAT：
@@ -207,10 +207,13 @@ OP 进入 stable tracking（连续 N 帧稳定检测到目标）后，锁存 `RE
   mission_state: 1B（发送方的当前任务状态 ID）
   visual_state: 1B（发送方当前视觉状态 ID，MCU→OP 时恒为 0）
 
-如果一方连续 3 次（300ms）未收到对方心跳：
-  → 本地状态机切 ERROR
-  → 发 EMERGENCY_STOP reason=HEARTBEAT_LOST
-  → 停车，等待人工 RESET
+心跳仅用于维护 is_linked 标记（调试/日志用途）：
+  - 收到任何有效心跳 → is_linked = true
+  - 连续 3 次（300ms）未收到对方心跳 → is_linked = false
+  - 链路恢复后自动重置为 true
+  - 不会触发 EMERGENCY_STOP、切 ERROR 或任何业务动作
+
+两侧均提供 Vision_Protocol_IsLinkActive() 供调试面板使用。
 ```
 
 ### 9.4 错误恢复
