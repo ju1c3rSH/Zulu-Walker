@@ -2,6 +2,6 @@
 # Generated based on code analysis
 
 pyserial>=3.5
-opencv-python>=4.5
+opencv-contrib-python>=4.5
 numpy>=1.21
 pyyaml>=5.4
