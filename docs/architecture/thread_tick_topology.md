@@ -47,7 +47,7 @@ COORDINATOR.LOOP() 内部展开：
   │   ├─ mission_sm.on_arrived(zone_id)     ← 来自 ARRIVED 帧
   │   ├─ mission_sm.start()                 ← 来自 CMD_START_QR
   │   ├─ mission_sm.on_discovery_done()     ← 来自 CMD_DISCOVERY_DONE
-  │   ├─ mission_sm.set_error(...)          ← 来自 EMERGENCY_STOP 或心跳超时
+  │   ├─ mission_sm.set_error(...)          ← 来自 EMERGENCY_STOP
   │   ├─ mission_sm.on_qr_result(str)       ← 来自 QR 识别
   │   └─ _apply_visual_status(vis, flags)   ← 来自视觉 latch
   │
@@ -274,7 +274,7 @@ uart._write_lock:
 | **视觉 latch → SM 转场** | **~1.7ms + 0ms** | 入队等 tick + 出队后立即转场 |
 | **PLACE_ROUGH 1s 定时** | **±1.7ms**（半 tick） | 主循环 tick 3.33ms |
 | **心跳超时检测** | **~0.3s + ~1.7ms** | heartbeat_interval + tick |
-| **MCU 无响应 → ERROR 状态** | **~0.3s + ~5ms** | 超时检测 + 队列处理 |
+| **MCU 无响应 → is_linked=false** | **~0.3s** | 超时检测（不触发 SM 转场） |
 
 ### 各循环精度
 
