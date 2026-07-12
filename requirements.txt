@@ -2,17 +2,6 @@
 # Generated based on code analysis
 
 pyserial>=3.5
-# Standard Python libraries (included by default):
-# - logging
-# - threading
-# - queue
-# - time
-# - typing
-# - gc
-# - sys
-# - importlib
-# - traceback
-# - json
-# - os
-# - pathlib
-# - datetime
+opencv-python>=4.5
+numpy>=1.21
+pyyaml>=5.4
