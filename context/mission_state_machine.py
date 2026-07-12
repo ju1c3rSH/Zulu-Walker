@@ -10,7 +10,7 @@ Synchronization rules:
 - STM32 is the master of mission flow (odometry + actuators).
 - Orange Pi mirrors this state machine and updates it via UART frames.
 - Whoever triggers a transition must notify the other side.
-- On state conflict or lost heartbeat, both sides enter ERROR.
+- On state conflict, both sides enter ERROR.
 """
 
 from collections import deque
