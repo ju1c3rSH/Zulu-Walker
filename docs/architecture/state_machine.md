@@ -84,7 +84,7 @@ OP 从 batch_order[current_step] 获取颜色 → 传给 processor
 > MCU 只需做三件事：
 > 1. 到达区域后发 `TYPE_ARRIVED zone_id`
 > 2. 动作完成后发 `ACTION_DONE action_id`
-> 3. 定期发/收 `HEARTBEAT` 保持同步
+> 3. 定期发/收 `HEARTBEAT` 传递状态快照（纯监控，不参与决策）
 
 ### 颜色同步机制
 
@@ -427,7 +427,7 @@ PLACE 成功
 | 视觉连续丢失 5 帧 | TARGET_LOST → SEARCH，重置伺服数据 |
 | 视觉超时（3s 无检测结果） | VISUAL_FAIL → ERROR |
 | 颜色不匹配 | COLOR_MISMATCH 标志位上报，不切 ERROR |
-| 心跳丢失 3 次（300ms） | ERROR，停车 |
+| 心跳丢失 3 次（300ms） | 仅标记 is_linked=false，不切 ERROR |
 | CMD_STOP_VISUAL | 关闭所有视觉任务，VisualSM → IDLE |
 
 ---

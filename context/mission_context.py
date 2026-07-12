@@ -67,12 +67,16 @@ class MissionCoordinator:
         self._sm_lock = threading.Lock()
         self._heartbeat_seq = 0
         self._last_mcu_heartbeat = 0.0
+        self._is_linked = False
         self._running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
 
     def connect_camera(self, camera_manager: CameraManager) -> None:
         self._camera_manager = camera_manager
 
+    def is_link_active(self) -> bool:
+        return self._is_linked
+    
     def set_uart_sender(self, sender: callable) -> None:
         self._uart_sender = sender
 
@@ -283,6 +287,7 @@ class MissionCoordinator:
 
     def _on_heartbeat(self, event: HeartbeatEvent) -> None:
         self._last_mcu_heartbeat = time.monotonic()
+        self._is_linked = True
 
     def _on_emergency(self, event: EmergencyStopEvent) -> None:
         captured_reason = event.reason
@@ -437,8 +442,7 @@ class MissionCoordinator:
             ))
 
             if time.monotonic() - self._last_mcu_heartbeat > _HEARTBEAT_TIMEOUT:
-                self._enqueue_sm(lambda: self.mission_sm.set_error(
-                    40, "MCU heartbeat lost"))
+                self._is_linked = False
 
     # ===== debug =====
 
@@ -458,4 +462,5 @@ class MissionCoordinator:
                 {"index": i.index, "color": i.color.name, "available": i.available}
                 for i in cs.get_batch(2)
             ] if cs else [],
+            "link_active": self._is_linked,
         }
