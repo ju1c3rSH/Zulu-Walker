@@ -143,7 +143,7 @@ STM32 侧                    Orange Pi 侧
    - 电控触发的转换（到达区域、执行完成）→ 电控发 `STATUS_FROM_MCU`。
    - 视觉触发的转换（QR 识别成功、目标丢失、可放置）→ 视觉发 `STATUS_FROM_VISION`。
 2. **双方都维护一份 Mission SM**。收到对方的状态报文后，如果本地状态落后或冲突，以“更靠后”的状态为准（除非跳到 `ERROR`）。
-3. **定期心跳 `HEARTBEAT`**。丢失 3 个心跳（默认 300ms 周期）即认为通信中断，进入 `ERROR`。
+3. **定期心跳 `HEARTBEAT`**。仅用于维护 `is_linked` 调试标记，丢失 3 个心跳标记断连，收到后自动恢复。不参与决策，不触发 `ERROR`。
 4. **状态不一致时进入 `ERROR`**。例如电控在 `PICK_RAW`，视觉报告 `VISUAL_FAIL`，双方切 `ERROR` 并停车。
 
 ### 2.4 Visual Servo State（视觉子状态）
@@ -256,13 +256,12 @@ OP :  STATUS_FROM_VISION  flags=cargo_confirmed
 MCU:  HEARTBEAT  seq=..., mission_state=NAV_TO_ROUGH, visual_state=0
 ```
 
-#### 时序 C：心跳丢失 -> 错误恢复
+#### 时序 C：心跳丢失（纯监控，无业务影响）
 
 ```
-MCU 连续 3 次未收到 HEARTBEAT
-MCU -> 切 ERROR，停车、松开夹爪
-MCU 发送 REQUEST_SYNC state=ERROR
-OP  收到后切 ERROR，等待人工 RESET
+MCU 连续 3 次未收到 HEARTBEAT → is_linked = false
+（双方均不切 ERROR，不触发任何业务动作）
+链路恢复 → 收到下一个有效心跳 → is_linked = true
 ```
 
 ---
