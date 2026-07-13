@@ -102,52 +102,54 @@ class TaskManager:
             self.result_callbacks.remove(callback)
 
     def run_tasks_serial(
-        self, frame: np.ndarray, all_results: dict = None
+        self, frame: np.ndarray, context: dict = None
     ) -> Tuple[np.ndarray, Dict[str, VisionResult]]:
         """
-        串行执行所有启用的Task
+        串行执行所有启用的Task。
 
-        前一任务的结果可以传入一个可被包装的all_results变量供后续任务使用，虽然不传也没什么影响
+        每个 task 的 processor 收到该 task 独立的完整上下文（环境变量 + 前置 task 结果）。
+        task 输出的 VisionResult 存入独立的 task_results dict 返回，
+        不入参 context dict。
 
         Args:
             frame: 输入图像帧
-            all_results: 所有任务的结果，可包含 'fps'、'focal_calculator' 等
+            context: 只读环境上下文，如 {'fps': ..., 'focal_calculator': ...}
 
         Returns:
-            Tuple[np.ndarray, Dict[str, VisionResult]]: 处理后的帧和所有结果
+            Tuple[np.ndarray, Dict[str, VisionResult]]: 处理后的帧和 {task_name: VisionResult}
         """
         if frame is None:
             return None, {}
 
-        if all_results is None:
-            all_results = {}
-
-        processed_frame = frame  # 显示用帧，累积绘制
+        context = context if context is not None else {}
+        processed_frame = frame
+        task_results: Dict[str, VisionResult] = {}
 
         for task in self.tasks.values():
-            if task.enabled:
-                timer_name = f"task_{task.name}_process"
-                profiler.start(timer_name)
-                result = task.execute(frame, all_results)  # 始终用原始帧处理
-                profiler.stop(timer_name)
+            if not task.enabled:
+                continue
 
-                all_results[task.name] = result
+            task_context = {**context, **task_results}
 
-                # 在帧上绘制结果
-                if result is not None and self.draw_enabled:
-                    draw_timer_name = f"task_{task.name}_draw"
-                    profiler.start(draw_timer_name)
-                    processed_frame = task.processor.draw_result(processed_frame, result)
-                    profiler.stop(draw_timer_name)
-                #TODO 这种写法可能不适合串行任务
-                # 触发回调
-                for callback in self.result_callbacks:
-                    try:
-                        callback(task.name, result)
-                    except Exception as e:
-                        print(f"Error in result callback: {e}")
+            profiler.start(f"task_{task.name}_process")
+            result = task.execute(frame, task_context)
+            profiler.stop(f"task_{task.name}_process")
 
-        return processed_frame, all_results
+            if result is not None:
+                task_results[task.name] = result
+
+            if result is not None and self.draw_enabled:
+                profiler.start(f"task_{task.name}_draw")
+                processed_frame = task.processor.draw_result(processed_frame, result)
+                profiler.stop(f"task_{task.name}_draw")
+
+            for callback in self.result_callbacks:
+                try:
+                    callback(task.name, result)
+                except Exception as e:
+                    print(f"Error in result callback: {e}")
+
+        return processed_frame, task_results
 
     def get_all_results(self) -> Dict[str, Optional[VisionResult]]:
         """获取所有任务的最后结果"""
