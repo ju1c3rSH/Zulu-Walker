@@ -62,6 +62,12 @@ class RingDetector:
         self.name = name
 
         self.ed = None
+        # ED params must be assigned BEFORE _init_edge_drawing() calls _update_ed_params()
+        self.ed_min_path_length = 50
+        self.ed_gradient_threshold = 36
+        self.ed_nfa_validation = True
+        self.edge_morph_kernel = 3
+        self.edge_morph_iterations = 1
         self._init_edge_drawing()
         self.detect_method = RingDetectMethod.FAST_RING
 
@@ -75,11 +81,6 @@ class RingDetector:
 
         self.blur_kernel = 5
         self.blur_sigma = 1.5
-        self.ed_min_path_length = 50
-        self.ed_gradient_threshold = 36
-        self.ed_nfa_validation = True
-        self.edge_morph_kernel = 3
-        self.edge_morph_iterations = 1
 
         self._last_mask = None
         self._last_morphed = None
