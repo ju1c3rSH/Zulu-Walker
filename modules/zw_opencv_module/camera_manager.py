@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import traceback
 
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 if _project_root not in sys.path:
@@ -71,6 +72,7 @@ class Camera:
         self._empty_queue_count = 0
         self._fresh_frame_count = 0
         self._diag_start_time = time.time()
+        self._diag_push_time = 0.0  # throttle for TUI diagnostics push
         # 焦距计算器
         self.focal_calculator = None
         self._setup_stream(config)
@@ -80,6 +82,7 @@ class Camera:
     def _setup_stream(self, config: CameraConfig):
         try:
             self.stream = CameraStream(config.source, config.width, config.height,
+                                       camera_id=self.camera_id,
                                        queue_size=config.camera_stream_queue_size)
         except Exception as e:
             if isinstance(config.source, int):
@@ -89,6 +92,7 @@ class Camera:
                     fallback_idx = cameras[0].index
                     try:
                         self.stream = CameraStream(fallback_idx, config.width, config.height,
+                                                   camera_id=self.camera_id,
                                                    queue_size=config.camera_stream_queue_size)
                         print(f"[Camera {self.camera_id}] Fallback to camera index {fallback_idx} succeeded")
                         self.config.source = fallback_idx
@@ -102,6 +106,12 @@ class Camera:
             self.enabled = False
 
     def _setup_tasks(self, task_configs: List[dict]):
+        """创建所有任务处理器, 即使 enabled=false 也会实例化。
+        
+        注意: 处理器在 __init__ 中就会被实例化, 如果依赖的底层模块(如 CargoDetector)
+        初始化失败, 会导致整个 Camera 创建失败。enabled=false 仅控制 task.execute()
+        是否执行, 不影响处理器创建。
+        """
         for task_config in task_configs:
             task_name = task_config.get("name", "")
             task_type = task_config.get("type", "")
@@ -191,7 +201,25 @@ class Camera:
             return None
         return self.stream.read_frame()
 
+    def _push_diagnostics(self):
+        """Push per-camera stream metrics to TUI Status panel (throttled ~1 Hz)."""
+        now = time.monotonic()
+        if now - self._diag_push_time < 1.0:
+            return
+        self._diag_push_time = now
+        from utils.debug_console import DebugConsole
+        dc = DebugConsole()
+        if self.stream is None:
+            dc.set(f"{self.camera_id}_fps",   "offline")
+            dc.set(f"{self.camera_id}_queue", "-")
+            dc.set(f"{self.camera_id}_drop",  "-")
+            return
+        dc.set(f"{self.camera_id}_fps",   f"{self.stream.fps:.1f}")
+        dc.set(f"{self.camera_id}_queue", str(self.stream.queue_depth))
+        dc.set(f"{self.camera_id}_drop",  str(self.stream.dropped_count))
+
     def process_frame(self, fps: float = 0.0) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult], bool]:
+        self._push_diagnostics()
         if not self.enabled:
             return None, {}, False
 
@@ -432,61 +460,65 @@ class CameraManager:
                 print(f"[CameraManager] Failed to start FFmpegPusher: {e}")
 
         while self._running:
-            profiler.start("total")
-            start_time = time.time()
+            try:
+                profiler.start("total")
+                start_time = time.time()
 
-            profiler.start("process_all")
-            composed_frame, all_results, any_fresh = self.process_all()
-            profiler.stop("process_all")
+                profiler.start("process_all")
+                composed_frame, all_results, any_fresh = self.process_all()
+                profiler.stop("process_all")
 
-            if any_fresh:
-                self._fps_frame_count += 1
-                elapsed_fps = time.time() - self._fps_start_time
-                if elapsed_fps >= 1.0:
-                    self._fps = self._fps_frame_count / elapsed_fps
-                    self._fps_frame_count = 0
-                    self._fps_start_time = time.time()
+                if any_fresh:
+                    self._fps_frame_count += 1
+                    elapsed_fps = time.time() - self._fps_start_time
+                    if elapsed_fps >= 1.0:
+                        self._fps = self._fps_frame_count / elapsed_fps
+                        self._fps_frame_count = 0
+                        self._fps_start_time = time.time()
 
-            if self.config and self.config.enable_streaming:
-                if self.ffmpeg_pusher and composed_frame is not None:
-                    profiler.start("ffmpeg_push")
-                    self.ffmpeg_pusher.push_frame_sync(composed_frame)
-                    profiler.stop("ffmpeg_push")
+                if self.config and self.config.enable_streaming:
+                    if self.ffmpeg_pusher and composed_frame is not None:
+                        profiler.start("ffmpeg_push")
+                        self.ffmpeg_pusher.push_frame_sync(composed_frame)
+                        profiler.stop("ffmpeg_push")
 
-            # 推入显示队列（主线程 loop() 消费）
-            if self.config and self.config.enable_local_display and composed_frame is not None:
-                now = time.monotonic()
-                if now - self._last_display_time >= self._display_interval:
-                    self._last_display_time = now
-                    if self._display_queue.full():
-                        try:
-                            self._display_queue.get_nowait()
-                        except:
-                            pass
-                    self._display_queue.put_nowait(composed_frame)
+                # 推入显示队列（主线程 loop() 消费）
+                if self.config and self.config.enable_local_display and composed_frame is not None:
+                    now = time.monotonic()
+                    if now - self._last_display_time >= self._display_interval:
+                        self._last_display_time = now
+                        if self._display_queue.full():
+                            try:
+                                self._display_queue.get_nowait()
+                            except:
+                                pass
+                        self._display_queue.put_nowait(composed_frame)
 
-            profiler.start("callbacks")
-            for cb in self._result_callbacks:
-                try:
-                    cb(all_results)
-                except Exception as e:
-                    print(f"Error in result callback: {e}")
-            profiler.stop("callbacks")
+                profiler.start("callbacks")
+                for cb in self._result_callbacks:
+                    try:
+                        cb(all_results)
+                    except Exception as e:
+                        print(f"Error in result callback: {e}")
+                profiler.stop("callbacks")
 
-            if self._event_bus:
-                try:
-                    from context.events import FrameResult
-                    self._event_bus.publish(FrameResult(all_results))
-                except ImportError:
-                    pass
+                if self._event_bus:
+                    try:
+                        from context.events import FrameResult
+                        self._event_bus.publish(FrameResult(all_results))
+                    except ImportError:
+                        pass
 
-            profiler.stop("total")
-            if any_fresh:
-                profiler.end_frame()
-            else:
-                profiler.start("idle_wait")
-                time.sleep(0.001)
-                profiler.stop("idle_wait")
+                profiler.stop("total")
+                if any_fresh:
+                    profiler.end_frame()
+                else:
+                    profiler.start("idle_wait")
+                    time.sleep(0.001)
+                    profiler.stop("idle_wait")
+            except Exception:
+                traceback.print_exc()
+                time.sleep(1.0)
 
     def process_all(self) -> Tuple[Optional[np.ndarray], Dict[str, Dict[str, VisionResult]], bool]:
         frames = []
@@ -535,9 +567,27 @@ class CameraManager:
         try:
             frame = self._display_queue.get_nowait()
         except:
-            return None
+            frame = None
+
+        # 诊断：无条件刷新 config/队列状态到 TUI
+        if getattr(self, '_disp_cnt', None) is None:
+            self._disp_cnt = 0
+        self._disp_cnt += 1
+        if self._disp_cnt % 300 == 0:
+            from utils.debug_console import DebugConsole
+            has_cfg = str(self.config is not None)
+            ld = str(self.config.enable_local_display) if self.config else "N/A"
+            DebugConsole().set("has_cfg", has_cfg)
+            DebugConsole().set("local_disp", ld)
+            DebugConsole().set("q_frame", "yes" if frame is not None else "no")
+
         if self.config and self.config.enable_local_display:
-            cv2.imshow("Zulu-Walker Camera Preview", frame)
+            if frame is not None:
+                try:
+                    cv2.namedWindow("Zulu-Walker Camera Preview", cv2.WINDOW_NORMAL)
+                except Exception:
+                    pass
+                cv2.imshow("Zulu-Walker Camera Preview", frame)
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q') or key == 27:
                 self._running = False

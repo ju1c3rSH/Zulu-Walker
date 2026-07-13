@@ -75,6 +75,7 @@ class ModuleManager:
 
                     if coordinator:
                         coordinator.loop()
+                        _push_coordinator_status(coordinator)
 
                     # 使用 select.select 而非 time.sleep 以实现更高精度的定时。
                     # 当前平台 ~300Hz，每 tick 最快 3.33ms。
@@ -103,7 +104,21 @@ class SystemConfig:
     ]
 
 
-            
+
+def _push_coordinator_status(coordinator) -> None:
+    from utils.debug_console import DebugConsole
+    dc = DebugConsole()
+    info = coordinator.get_info()
+    sm_info = info.get("mission", {})
+    dc.set("mission_state", sm_info.get("state", "-"))
+    dc.set("visual_state", info.get("visual_state", "-"))
+    dc.set("link_active", str(coordinator.is_link_active()))
+    dc.set("active_task", info.get("active_task", "-"))
+    dc.set("cargo_count", str(sm_info.get("cargo_count", "-")))
+    dc.set("batch", str(sm_info.get("batch", "-")))
+    dc.set("step", str(sm_info.get("step", "-")))
+
+
 def main():
     """主入口"""
     print("0xfb709394")
