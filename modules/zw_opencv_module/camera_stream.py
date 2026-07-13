@@ -15,7 +15,7 @@ class CameraStream:
 
     """
 
-    def __init__(self, source=0, width=640, height=480, queue_size=2):
+    def __init__(self, source=0, width=640, height=480, camera_id="", queue_size=2):
         try:
             self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
         except AttributeError:
@@ -54,8 +54,24 @@ class CameraStream:
         self._cap_fps_actual = 0.0
         self._frames_dropped = 0
         self._frames_produced = 0
+        self.camera_id = camera_id
         self.thread = Thread(target=self._update, daemon=True)
         self.thread.start()
+
+    @property
+    def fps(self) -> float:
+        """Actual capture FPS, updated every ~2 seconds."""
+        return self._cap_fps_actual
+
+    @property
+    def queue_depth(self) -> int:
+        """Current frame queue depth."""
+        return self.queue.qsize()
+
+    @property
+    def dropped_count(self) -> int:
+        """Total frames dropped due to queue overflow."""
+        return self._frames_dropped
 
     def _set_thread_affinity(self, cores):
         """设置当前线程的 CPU 亲和性（小核心）"""
@@ -83,10 +99,6 @@ class CameraStream:
                 self._cap_fps_actual = self._cap_fps_count / elapsed
                 self._cap_fps_count = 0
                 self._cap_fps_start = time.time()
-                print(
-                    f"[CameraStream] FPS: {self._cap_fps_actual:.1f}, "
-                    f"queue: {self.queue.qsize()}, dropped: {self._frames_dropped}"
-                )
 
             """
             这里使用非阻塞式队列来更新每一帧的数据
