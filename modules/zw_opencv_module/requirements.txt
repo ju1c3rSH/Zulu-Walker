@@ -8,6 +8,9 @@ pytest>=6.0.0
 pytest-asyncio>=0.16.0
 qrcode[pil]>=7.0.0
 
+# QR 码解码
+pyzbar>=0.1.9
+
 # 可选：用于生成测试QR码
 Pillow>=8.0.0
 
