@@ -4,6 +4,7 @@ from collections import deque
 from typing import Optional, Callable
 
 from modules.zw_opencv_module.camera_manager import CameraManager
+from utils.log_util import LoggerFactory
 
 from .event_bus import EventBus
 from .events import (
@@ -27,7 +28,7 @@ from modules.zw_uart_module.protocol import (
 )
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.cargo import CargoSet
-from modules.zw_opencv_module.processors.base import ColorTrackable
+from modules.zw_opencv_module.processors.base import ColorTrackable, VisionResult
 from modules.zw_opencv_module.processors.cargo_processor import TrackCargoProcessor
 
 
@@ -317,7 +318,9 @@ class MissionCoordinator:
     def _on_vision_results(self, event: FrameResult) -> None:
         for camera_id, results in event.all_results.items():
             for task_name, vision_result in results.items():
-                if vision_result is None or not vision_result.success:
+                if not isinstance(vision_result, VisionResult):
+                    continue
+                if not vision_result.success:
                     continue
                 data = vision_result.result_data
                 if not data:
