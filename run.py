@@ -15,6 +15,10 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 
+from utils.console_capture import ConsoleCapture
+from utils.debug_console import DebugConsole
+
+
 def run_main():
     from main import main
     main()
@@ -33,6 +37,15 @@ def run_debug(args):
         runner.stop()
 
 
+def _init_debug_console():
+    DebugConsole().start()
+    ConsoleCapture.install()
+
+
+def _cleanup():
+    DebugConsole().stop()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Zulu-Walker 启动器",
@@ -47,12 +60,17 @@ def main():
     debug_parser.add_argument("-W", "--width", type=int, default=640, help="画面宽度 (默认: 640)")
     debug_parser.add_argument("-H", "--height", type=int, default=480, help="画面高度 (默认: 480)")
 
+    _init_debug_console()
+
     args = parser.parse_args()
 
-    if args.mode == "main":
-        run_main()
-    elif args.mode == "debug":
-        run_debug(args)
+    try:
+        if args.mode == "main":
+            run_main()
+        elif args.mode == "debug":
+            run_debug(args)
+    finally:
+        _cleanup()
 
 
 if __name__ == "__main__":
