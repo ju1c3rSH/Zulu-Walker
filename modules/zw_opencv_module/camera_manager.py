@@ -252,17 +252,17 @@ class Camera:
 
         # 计时：处理阶段
         profiler.start(self.get_task.__name__ + "_processing")
-        context = {
+        env_context = {
             "fps": fps,
             "focal_calculator": self.focal_calculator,
         }
-        result = self.task_manager.run_tasks_serial(frame, all_results=context)
+        processed_frame, task_results = self.task_manager.run_tasks_serial(
+            frame, context=env_context)
         profiler.stop(self.get_task.__name__ + "_processing")
 
-        self._last_frame = result[0]  # 缓存带绘制的帧
-        self._last_results = result[1]
-        # 0是processed_frame，1是all_results
-        return result[0], result[1], True
+        self._last_frame = processed_frame
+        self._last_results = task_results
+        return processed_frame, task_results, True
 
     def release(self):
         if self.stream:

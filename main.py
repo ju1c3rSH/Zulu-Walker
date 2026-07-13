@@ -143,11 +143,11 @@ def main():
     from modules.zw_opencv_module import get_camera_manager
     from modules.zw_uart_module import get_interface
 
-    cm = get_camera_manager()
+    cm = opencv_mod.get_camera_manager()
     if cm:
         coordinator.connect_camera(cm)
 
-    uart = get_interface()
+    uart = uart_mod.get_interface()
     if uart:
         coordinator.set_uart_sender(uart.send_raw)
 
