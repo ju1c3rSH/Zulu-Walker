@@ -209,6 +209,8 @@ class MissionContext:
 
 class _IdleState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "IDLE")
         print("[MissionSM] Enter IDLE")
         ctx.reset()
 
@@ -221,6 +223,8 @@ class _IdleState(State):
 
 class _WaitStartState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "WAIT_START")
         print("[MissionSM] Enter WAIT_START")
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -232,6 +236,8 @@ class _WaitStartState(State):
 
 class _ReadQrState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "READ_QR")
         print("[MissionSM] Enter READ_QR")
         ctx.state_entry_time = time()
 
@@ -245,6 +251,8 @@ class _ReadQrState(State):
 
 class _NavToRawState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "NAV_TO_RAW")
         print("[MissionSM] Enter NAV_TO_RAW")
         ctx.state_entry_time = time()
 
@@ -258,6 +266,8 @@ class _NavToRawState(State):
 
 class _AlignRawState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "ALIGN_RAW")
         print("[MissionSM] Enter ALIGN_RAW")
         
         ctx.state_entry_time = time()
@@ -280,6 +290,8 @@ class _AlignRawState(State):
 
 class _PickRawState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "PICK_RAW")
         print("[MissionSM] Enter PICK_RAW")
         ctx.state_entry_time = time()
 
@@ -293,6 +305,8 @@ class _PickRawState(State):
 
 class _PickRoughState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "PICK_ROUGH")
         print("[MissionSM] Enter PICK_ROUGH")
         ctx.state_entry_time = time()
 
@@ -305,6 +319,8 @@ class _PickRoughState(State):
 
 class _CheckLoadState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "CHECK_LOAD")
         print("[MissionSM] Enter CHECK_LOAD")
         ctx.state_entry_time = time()
         ctx.cargo_confirmed = True  # 信任 MCU: ACTION_DONE=OK 即确认抓取成功，无需视觉确认
@@ -350,6 +366,8 @@ class _CheckLoadState(State):
 
 class _RingDiscoveryState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "RING_DISCOVERY")
         print("[MissionSM] Enter RING_DISCOVERY")
         ctx.discovery_done = False
         ctx.discovery_active = False
@@ -373,6 +391,8 @@ class _RingDiscoveryState(State):
 
 class _NavToRoughState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "NAV_TO_ROUGH")
         print("[MissionSM] Enter NAV_TO_ROUGH")
         ctx.state_entry_time = time()
 
@@ -386,6 +406,8 @@ class _NavToRoughState(State):
 class _AlignRoughState(State):
     ## 放要对准一次，收也要对准一次！
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "ALIGN_ROUGH")
         print("[MissionSM] Enter ALIGN_ROUGH")
         ctx.state_entry_time = time()
         ctx.ready_to_place = False
@@ -402,6 +424,8 @@ class _AlignRoughState(State):
 
 class _PlaceRoughState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "PLACE_ROUGH")
         print("[MissionSM] Enter PLACE_ROUGH")
         ctx.state_entry_time = time()
 
@@ -431,6 +455,8 @@ class _PlaceRoughState(State):
 
 class _NavToTempState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "NAV_TO_TEMP")
         print("[MissionSM] Enter NAV_TO_TEMP")
         ctx.state_entry_time = time()
 
@@ -443,6 +469,8 @@ class _NavToTempState(State):
 
 class _AlignTempState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "ALIGN_TEMP")
         print("[MissionSM] Enter ALIGN_TEMP")
         ctx.state_entry_time = time()
         ctx.ready_to_place = False
@@ -456,6 +484,8 @@ class _AlignTempState(State):
 
 class _PlaceTempState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "PLACE_TEMP")
         print("[MissionSM] Enter PLACE_TEMP")
         ctx.state_entry_time = time()
 
@@ -484,6 +514,8 @@ class _PlaceTempState(State):
 
 class _ReturnHomeState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "RETURN_HOME")
         print("[MissionSM] Enter RETURN_HOME")
         ctx.state_entry_time = time()
 
@@ -498,6 +530,8 @@ class _ReturnHomeState(State):
 
 class _FinishedState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "FINISHED")
         print("[MissionSM] Enter FINISHED")
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -509,6 +543,10 @@ class _FinishedState(State):
 
 class _ErrorState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        dc = DebugConsole()
+        dc.set("mission_state", f"ERROR({ctx.error_code})")
+        dc.incr_error()
         print(f"[MissionSM] Enter ERROR code={ctx.error_code} msg={ctx.error_msg}")
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
