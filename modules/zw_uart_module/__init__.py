@@ -68,6 +68,9 @@ def start() -> bool:
         print("[zw_uart_module] Error: Module not initialized")
         return False
 
+    if _running:
+        return True
+
     print("[zw_uart_module] Starting...")
 
     if _uart_interface.start():

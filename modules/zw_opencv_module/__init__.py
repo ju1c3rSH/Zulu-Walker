@@ -20,13 +20,11 @@ _running: bool = False
 
 
 def init(event_bus=None):
-    """Module initialization (called by ModuleManager)"""
-    global _camera_manager, _config_path
+    """Module initialization (called by ModuleManager).
 
-    if _camera_manager is not None:
-        if event_bus is not None:
-            _camera_manager.set_event_bus(event_bus)
-        return
+    Note: init() is called exactly once by ModuleManager.load_module().
+    """
+    global _camera_manager, _config_path
 
     print("[zw_opencv_module] Initializing...")
     print(cv2.getBuildInformation())
@@ -35,9 +33,6 @@ def init(event_bus=None):
     _camera_manager = CameraManager()
     if event_bus is not None:
         _camera_manager.set_event_bus(event_bus)
-    else:
-        from context import EventBus
-        _camera_manager.set_event_bus(EventBus())
 
     print("[zw_opencv_module] Initialized successfully")
 
