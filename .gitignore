@@ -1,3 +1,11 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# Agent/IDE config — NOT for version control
+AGENTS.md
+CLAUDE.md
+claude.settings.json
+
+# Runtime data
+logs/
