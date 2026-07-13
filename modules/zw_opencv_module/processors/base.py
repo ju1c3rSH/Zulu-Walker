@@ -79,6 +79,10 @@ class Processor(ABC):
     def clear_getters(self) -> None:
         self._getters.clear()
 
+    def release(self) -> None:
+        """释放 Processor 持有的资源（模型、detector等）。子类按需覆盖。"""
+        pass
+
 @runtime_checkable
 class ColorTrackable(Protocol):
     @abstractmethod
