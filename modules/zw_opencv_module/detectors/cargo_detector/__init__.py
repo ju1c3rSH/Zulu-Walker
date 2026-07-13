@@ -68,6 +68,16 @@ class CargoDetector:
     def __init__(self, name: str = "cargo_detect"):
         self.name = name
 
+        # EdgeDrawing 圆检测参数（必须在 _init_edge_drawing 之前赋值，_update_ed_params 会读取）
+        self.blur_kernel = 5
+        self.blur_sigma = 1.5
+        self.ed_min_path_length = 50
+        self.ed_gradient_threshold = 36
+        self.ed_nfa_validation = True
+        self.edge_morph_kernel = 3
+        self.edge_morph_iterations = 1
+        self.color_match_threshold = 0.6
+
         # EdgeDrawing 初始化（若不可用则默认使用 FAST_CIRCLE）
         self.ed = None
         self._init_edge_drawing()
@@ -88,16 +98,6 @@ class CargoDetector:
         self.smooth_window = 5
         self.kernel_open = 5
         self.kernel_close = 7
-
-        # EdgeDrawing 圆检测参数
-        self.blur_kernel = 5
-        self.blur_sigma = 1.5
-        self.ed_min_path_length = 50
-        self.ed_gradient_threshold = 36
-        self.ed_nfa_validation = True
-        self.edge_morph_kernel = 3
-        self.edge_morph_iterations = 1
-        self.color_match_threshold = 0.6
 
         self._last_mask = None
         self._last_morphed = None
