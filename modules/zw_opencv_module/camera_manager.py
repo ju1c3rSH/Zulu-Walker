@@ -569,6 +569,8 @@ class CameraManager:
         self.stop()
         self.stop_streaming()
 
+        self.task_manager.release()
+
         for camera in self.cameras.values():
             camera.release()
 

@@ -24,6 +24,7 @@ class Task:
     def disable(self):
         """禁用任务"""
         self.enabled = False
+        self.processor.release()
 
     def execute(self, frame: np.ndarray, context: dict = None) -> Optional[VisionResult]:
         """
@@ -156,3 +157,8 @@ class TaskManager:
         """清除所有任务的最后结果"""
         for task in self.tasks.values():
             task._last_result = None
+
+    def release(self):
+        for task in self.tasks.values():
+            task.processor.release()
+        self.tasks.clear()
