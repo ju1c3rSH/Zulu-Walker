@@ -6,3 +6,4 @@ opencv-contrib-python>=4.5
 numpy>=1.21
 pyyaml>=5.4
 rich>=13.0
+pyzbar>=0.1.9
