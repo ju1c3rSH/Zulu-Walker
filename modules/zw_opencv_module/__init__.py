@@ -23,6 +23,11 @@ def init(event_bus=None):
     """Module initialization (called by ModuleManager)"""
     global _camera_manager, _config_path
 
+    if _camera_manager is not None:
+        if event_bus is not None:
+            _camera_manager.set_event_bus(event_bus)
+        return
+
     print("[zw_opencv_module] Initializing...")
     print(cv2.getBuildInformation())
     _config_path = os.path.join(_module_dir, "config", "camera_config.yaml")
