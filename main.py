@@ -10,19 +10,24 @@ from typing import Dict, Any
 sys.path.insert(0, os.path.dirname(__file__))
 
 class ModuleManager:
-    def __init__(self):
+    def __init__(self, event_bus=None):
         self.modules = {}
         self.running = True
         self._loop_methods = {}
+        self._event_bus = event_bus
 
-    def load_module(self,module_name):
+    def load_module(self, module_name):
         try:
             # 使用 modules.{name} 路径加载，与绝对导入一致
             full_name = f'modules.{module_name}'
             module = __import__(full_name, fromlist=[module_name])
             self.modules[module_name] = module
             if hasattr(module, 'init'):
-                module.init()
+                module.init(event_bus=self._event_bus)
+            if hasattr(module, 'start'):
+                module.start()
+            if hasattr(module, 'loop'):
+                self._loop_methods[module_name] = module.loop
             if SystemConfig.DEBUG:
                 print(f"Module '{module_name}' loaded successfully")
             return True
@@ -31,21 +36,9 @@ class ModuleManager:
             return False
 
     def start_all(self):
-        """启动所有模块
-        检查模块是否有Loop和Start方法，分别调用，并将Loop方法注册到主循环调用列表
-        """
+        """启动所有模块（唯一入口）：init → start → 注册 loop"""
         for module_name in SystemConfig.AUTO_START_MODULES:
-            if self.load_module(module_name):
-                module = self.modules.get(module_name)
-                
-                if module and hasattr(module, 'start'):
-                    try:
-                        module.start()
-                    except Exception as e:
-                        print(f"Failed to start {module_name}: {e}")
-                
-                if module and hasattr(module, 'loop'):
-                    self._loop_methods[module_name] = module.loop
+            self.load_module(module_name)
                     
     def stop_all(self):
         """停止所有模块，并且清除所有的loop方法"""
@@ -100,7 +93,7 @@ class SystemConfig:
     AUTO_START_MODULES = [
         #'uart_test',
         'zw_opencv_module',
-        # 'zw_uart_module' -- loaded manually in main() with event_bus injection
+        'zw_uart_module',
     ]
 
 
@@ -128,26 +121,20 @@ def main():
     bus = EventBus()
     coordinator = MissionCoordinator(bus)
 
-    # 注入 EventBus 到各模块（必须在 start_all() 之前）
-    import modules.zw_opencv_module as opencv_mod
-    import modules.zw_uart_module as uart_mod
-    opencv_mod.init(event_bus=bus)
-    uart_mod.init(event_bus=bus)
-
-    # 启动模块（UART 不在 AUTO_START_MODULES 里，手动启动）
-    manager = ModuleManager()
+    # ModuleManager 统一管理模块生命周期：init → start → 注册 loop
+    # EventBus 通过构造参数注入，load_module 内部自动传给 module.init()
+    manager = ModuleManager(event_bus=bus)
     manager.start_all()
-    uart_mod.start()
 
-    # 桥接：Coordinator ↔ 各模块（必须在 start 之后，拿到实例引用）
+    # 桥接：Coordinator ↔ 各模块（start_all 之后实例已就绪）
     from modules.zw_opencv_module import get_camera_manager
     from modules.zw_uart_module import get_interface
 
-    cm = opencv_mod.get_camera_manager()
+    cm = get_camera_manager()
     if cm:
         coordinator.connect_camera(cm)
 
-    uart = uart_mod.get_interface()
+    uart = get_interface()
     if uart:
         coordinator.set_uart_sender(uart.send_raw)
 
