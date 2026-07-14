@@ -20,13 +20,8 @@ from .protocol import (
     parse_heartbeat_payload, parse_request_sync_payload,
     parse_emergency_stop_payload,
 )
+from hal.interface import Uart
 from .exceptions import UartError
-
-# Import SerialController from utils
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from utils.serial_controller import SerialController
 
 
 class ParserState(enum.Enum):
@@ -144,17 +139,14 @@ class STM32UartInterface:
     - Background frame parsing with state machine
     """
 
-    def __init__(self, port: str = "/dev/ttyS4", baudrate: int = 921600):
+    def __init__(self, uart: Uart):
         """
         Initialize UART interface.
 
         Args:
-            port: Serial port device path
-            baudrate: Baud rate
+            uart: HAL Uart Protocol instance
         """
-        self._port = port
-        self._baudrate = baudrate
-        self._serial = SerialController(port, baudrate)
+        self._uart = uart
         self._parser = FrameParser()
 
         # Thread-safe state variables
@@ -177,19 +169,9 @@ class STM32UartInterface:
         self._debug_hex = False
 
     @property
-    def port(self) -> str:
-        """Get the serial port path."""
-        return self._port
-
-    @property
-    def baudrate(self) -> int:
-        """Get the baud rate."""
-        return self._baudrate
-
-    @property
     def is_connected(self) -> bool:
         """Check if serial port is connected."""
-        return self._serial.is_connected
+        return self._uart.is_connected
 
     def set_log_level(self, level: int):
         """
@@ -219,15 +201,15 @@ class STM32UartInterface:
             True if started successfully, False otherwise
         """
         try:
-            if not self._serial.connect():
-                self._logger.error(f"Failed to connect to {self._port}")
+            if not self._uart.connect():
+                self._logger.error(f"Failed to connect to UART")
                 return False
 
             # Start async receiver with callback
-            self._serial.start_receiver(self._on_data_received)
+            self._uart.start_receiver(self._on_data_received)
 
             self._logger.info(
-                f"STM32UartInterface started on {self._port} @ {self._baudrate}bps"
+                f"STM32UartInterface started"
             )
             return True
 
@@ -238,8 +220,8 @@ class STM32UartInterface:
     def stop(self):
         """Stop the UART interface and cleanup resources."""
         try:
-            self._serial.stop_receiver()
-            self._serial.disconnect()
+            self._uart.stop_receiver()
+            self._uart.disconnect()
             self._parser.reset()
             self._logger.info("STM32UartInterface stopped")
         except Exception as e:
@@ -282,9 +264,9 @@ class STM32UartInterface:
     def send_raw(self, frame: bytes) -> bool:
         try:
             with self._write_lock:
-                if not self._serial.is_connected:
+                if not self._uart.is_connected:
                     return False
-                return self._serial.send_bytes(frame) == len(frame)
+                return self._uart.send(frame) == len(frame)
         except Exception as e:
             self._logger.error(f"Failed to send raw frame: {e}")
             return False
@@ -439,11 +421,11 @@ class STM32UartInterface:
             frame = build_error_frame(error_type, error_value)
 
             with self._write_lock:
-                if not self._serial.is_connected:
+                if not self._uart.is_connected:
                     self._logger.warning("Cannot send: not connected")
                     return False
 
-                bytes_sent = self._serial.send_bytes(frame)
+                bytes_sent = self._uart.send(frame)
 
                 if bytes_sent == len(frame):
                     if self._debug_hex:
