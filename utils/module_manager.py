@@ -45,7 +45,7 @@ class ModuleManager:
         for name in self._auto_start:
             self.load(name)
 
-    def run_main_loop(self, coordinator=None) -> None:
+    def run_main_loop(self, coordinator=None, tick_callback=None) -> None:
         while self._running:
             try:
                 for name, loop_method in self._loop_methods.items():
@@ -56,6 +56,11 @@ class ModuleManager:
 
                 if coordinator:
                     coordinator.loop()
+                    if tick_callback:
+                        try:
+                            tick_callback(coordinator)
+                        except Exception:
+                            ...
 
                 if self._machine and self._machine.display:
                     vision_mod = self.modules.get("zw_opencv_module")
