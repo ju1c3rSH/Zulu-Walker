@@ -1,3 +1,4 @@
+from .ai import MockAI
 from .camera import MockCamera
 from .display import MockDisplay
 from .uart import MockUart
@@ -16,10 +17,16 @@ def create_uart(port: str = "mock", baudrate: int = 921600) -> MockUart:
     return MockUart(port=port, baudrate=baudrate)
 
 
+def create_ai() -> MockAI:
+    return MockAI()
+
+
 __all__ = [
+    "MockAI",
     "MockCamera",
     "MockDisplay",
     "MockUart",
+    "create_ai",
     "create_camera",
     "create_display",
     "create_uart",
