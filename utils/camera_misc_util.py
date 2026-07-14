@@ -3,11 +3,14 @@ from dataclasses import dataclass
 
 
 @dataclass
-class CameraInfo:
+class DeviceCameraInfo:
     index: int
     name: str
     device: str
     type: str = "camera"
+
+
+CameraInfo = DeviceCameraInfo
 
 
 class CameraMiscUtil:
@@ -68,6 +71,6 @@ class CameraMiscUtil:
 
         for idx, node in video_indices:
             if CameraMiscUtil.verify_camera(idx):
-                return [CameraInfo(index=idx, name=device_name, device=node)]
+                return [DeviceCameraInfo(index=idx, name=device_name, device=node)]
 
         return []
