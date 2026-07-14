@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib
 import logging
@@ -8,7 +8,7 @@ from typing import Optional
 import yaml
 
 from hal.camera_hub import CameraHub
-from hal.interface import Display, Uart
+from hal.interface import AIInference, Display, Uart
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class Machine:
         camera_hub: CameraHub,
         display: Display,
         uart: Uart,
-        ai=None,
+        ai: Optional[AIInference] = None,
     ) -> None:
         self.camera_hub = camera_hub
         self.display = display
@@ -34,6 +34,7 @@ class Machine:
             platform = "linux"
             cameras_config = []
             uart_config = {"port": "/dev/ttyS4", "baudrate": 921600}
+            ai_config = None
         else:
             with open(path) as f:
                 cfg = yaml.safe_load(f)
@@ -44,6 +45,7 @@ class Machine:
                 "port": uart_defaults.get("port", "/dev/ttyS4"),
                 "baudrate": uart_defaults.get("baudrate", 921600),
             }
+            ai_config = cfg.get("ai")
 
         platform_mod = importlib.import_module(f"hal.platforms.{platform}")
 
@@ -65,9 +67,34 @@ class Machine:
 
         display = platform_mod.create_display()
         uart = platform_mod.create_uart(**uart_config)
-        # 这里无法保证缺省时能正常运行
-        
-        return cls(camera_hub=hub, display=display, uart=uart)
+
+        # --- AI initialization ---
+        ai: Optional[AIInference] = None
+        if ai_config is not None:
+            try:
+                ai = platform_mod.create_ai()
+                models_cfg = ai_config.get("models", [])
+                for m in models_cfg:
+                    ai.add(
+                        nick_name=m["nick_name"],
+                        model_path=m["model"],
+                        model_type=m.get("model_type", "auto"),
+                    )
+                active = ai_config.get("active")
+                if active:
+                    if active in ai.models:
+                        ai.switch(active)
+                    else:
+                        logger.warning(
+                            "AI active model '%s' not in registered models %s",
+                            active,
+                            ai.models,
+                        )
+            except Exception as e:
+                logger.error("Failed to initialize AI: %s", e)
+                ai = None
+
+        return cls(camera_hub=hub, display=display, uart=uart, ai=ai)
 
     def close(self) -> None:
         if self.camera_hub:
@@ -85,3 +112,8 @@ class Machine:
                 self.uart.disconnect()
             except Exception as e:
                 logger.error("UART disconnect error: %s", e)
+        if self.ai is not None:
+            try:
+                self.ai.unload()
+            except Exception as e:
+                logger.error("AI unload error: %s", e)

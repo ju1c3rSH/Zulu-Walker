@@ -1,3 +1,4 @@
+﻿from .ai import MaixCam2AI
 from .camera import MaixCam2Camera
 from .display import MaixCam2Display
 from .uart import MaixCam2Uart
@@ -31,10 +32,16 @@ def create_uart(port: str, baudrate: int = 921600) -> MaixCam2Uart:
     return MaixCam2Uart(port=port, baudrate=baudrate)
 
 
+def create_ai() -> MaixCam2AI:
+    return MaixCam2AI()
+
+
 __all__ = [
+    "MaixCam2AI",
     "MaixCam2Camera",
     "MaixCam2Display",
     "MaixCam2Uart",
+    "create_ai",
     "create_camera",
     "create_display",
     "create_uart",
