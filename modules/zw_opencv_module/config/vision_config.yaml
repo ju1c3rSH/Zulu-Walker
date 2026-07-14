@@ -1,13 +1,13 @@
 pipelines:
   - pipeline_id: "cam_qr"
-    camera_id: "mipi"
+    camera_id: "qr"
     tasks:
       - name: "qr_detect"
         type: "QRCodeProcessor"
         enabled: true
 
   - pipeline_id: "cam_cargo"
-    camera_id: "mipi"
+    camera_id: "cargo"
     tasks:
       - name: "track_cargo"
         type: "TrackCargoProcessor"
