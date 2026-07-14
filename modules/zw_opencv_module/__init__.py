@@ -5,7 +5,7 @@ from typing import Optional
 
 from hal import Machine
 
-from .camera_manager import VisionManager, _LegacyCameraManagerShim
+from .vision_manager import VisionManager, _LegacyCameraManagerShim
 
 _module_dir = os.path.dirname(__file__)
 _vision_manager: Optional[VisionManager] = None
