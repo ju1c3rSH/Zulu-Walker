@@ -4,15 +4,31 @@ from .uart import MaixCam2Uart
 
 
 def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> MaixCam2Camera:
-    raise NotImplementedError("MaixCAM2 camera not yet implemented")
+    camera_id = kwargs.pop("camera_id", str(source))
+    fps = kwargs.pop("fps", 120)
+    buff_num = kwargs.pop("camera_stream_queue_size", 3)
+    focal_length_mm = kwargs.pop("focal_length_mm", None)
+    sensor_width_mm = kwargs.pop("sensor_width_mm", None)
+    sensor_height_mm = kwargs.pop("sensor_height_mm", None)
+    return MaixCam2Camera(
+        source=source,
+        width=width,
+        height=height,
+        fps=fps,
+        camera_id=camera_id,
+        buff_num=buff_num,
+        focal_length_mm=focal_length_mm,
+        sensor_width_mm=sensor_width_mm,
+        sensor_height_mm=sensor_height_mm,
+    )
 
 
 def create_display() -> MaixCam2Display:
-    raise NotImplementedError("MaixCAM2 display not yet implemented")
+    return MaixCam2Display()
 
 
 def create_uart(port: str, baudrate: int = 921600) -> MaixCam2Uart:
-    raise NotImplementedError("MaixCAM2 UART not yet implemented")
+    return MaixCam2Uart(port=port, baudrate=baudrate)
 
 
 __all__ = [
