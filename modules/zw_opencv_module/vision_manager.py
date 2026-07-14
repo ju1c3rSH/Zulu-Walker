@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 import traceback
 from threading import Thread
 from typing import Callable, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import yaml
@@ -64,13 +67,22 @@ class VisionManager:
             if cam is None:
                 continue
 
+            focal_length_mm = getattr(cam, 'focal_length_mm', None)
+            sensor_width_mm = getattr(cam, 'sensor_width_mm', None)
+            sensor_height_mm = getattr(cam, 'sensor_height_mm', None)
+            if focal_length_mm is None:
+                logger.debug(
+                    "Camera '%s' has no intrinsics; distance calculation disabled",
+                    camera_id,
+                )
+
             pipe = PipelineCamera(
                 pipeline_id=pipeline_id,
                 camera=cam,
                 task_configs=pipe_cfg.get("tasks", []),
-                focal_length_mm=getattr(cam, 'focal_length_mm', None),
-                sensor_width_mm=getattr(cam, 'sensor_width_mm', None),
-                sensor_height_mm=getattr(cam, 'sensor_height_mm', None),
+                focal_length_mm=focal_length_mm,
+                sensor_width_mm=sensor_width_mm,
+                sensor_height_mm=sensor_height_mm,
                 image_width=pipe_cfg.get("width", 640),
                 image_height=pipe_cfg.get("height", 480),
             )
