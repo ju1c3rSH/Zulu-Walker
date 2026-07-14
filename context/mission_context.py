@@ -3,7 +3,7 @@ import time
 from collections import deque
 from typing import Optional, Callable
 
-from modules.zw_opencv_module.camera_manager import CameraManager
+from modules.zw_opencv_module.camera_manager import VisionManager
 from utils.log_util import LoggerFactory
 
 from .event_bus import EventBus
@@ -54,7 +54,7 @@ class MissionCoordinator:
         self.mission_sm.context.cargo_set = CargoSet.create_standard()
 
         self._uart_sender: Optional[callable] = None
-        self._camera_manager: Optional[CameraManager] = None
+        self._vision_manager: Optional[VisionManager] = None
         self._qr_decoded = False
         self._active_task: Optional[str] = None
 
@@ -72,8 +72,8 @@ class MissionCoordinator:
         self._running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
 
-    def connect_camera(self, camera_manager: CameraManager) -> None:
-        self._camera_manager = camera_manager
+    def connect_vision(self, vision_manager: VisionManager) -> None:
+        self._vision_manager = vision_manager
 
     def is_link_active(self) -> bool:
         return self._is_linked
@@ -200,28 +200,26 @@ class MissionCoordinator:
         self.mission_sm.run_to_completion()
 
     def _activate_task(self, task_name: str, color: Optional[Color] = None) -> None:
-        if not self._camera_manager:
+        if not self._vision_manager:
             return
 
-        cm = self._camera_manager
-        all_tasks = ["qr_detect", "track_cargo", "ring_discovery"]
+        vm = self._vision_manager
+        all_pipelines = ["cam_qr", "cam_cargo"]
 
-        for cam in cm.cameras.values():
-            for name in all_tasks:
-                cam.disable_task(name)
+        for pid in all_pipelines:
+            vm.disable_task(pid, "qr_detect")
+            vm.disable_task(pid, "track_cargo")
+            vm.disable_task(pid, "ring_discovery")
 
-        for cam_id, cam in cm.cameras.items():
-            is_qr = cam_id.endswith("_qr")
-            is_cargo = cam_id.endswith("_cargo")
-
-            if task_name == "qr_detect" and is_qr:
-                cam.enable_task(task_name)
-                self._active_task = task_name
-                break
-            elif task_name in ("track_cargo", "ring_discovery") and is_cargo:
-                cam.enable_task(task_name)
-                if color is not None:
-                    t = cam.get_task(task_name)
+        if task_name == "qr_detect":
+            vm.enable_task("cam_qr", task_name)
+            self._active_task = task_name
+        elif task_name in ("track_cargo", "ring_discovery"):
+            vm.enable_task("cam_cargo", task_name)
+            if color is not None:
+                pipe = vm.get_pipeline("cam_cargo")
+                if pipe:
+                    t = pipe.get_task(task_name)
                     if t and isinstance(t.processor, ColorTrackable):
                         t.processor.set_target_color(color)
                     if t and isinstance(t.processor, TrackCargoProcessor):
@@ -230,31 +228,31 @@ class MissionCoordinator:
                             self.mission_sm.context.current_batch,
                             self.mission_sm.context.current_target_color(),
                         ))
-                self.visual_sm.start()
-                self._active_task = task_name
-                self._ready_frames = 0
-                self._ready_latched = False
-                self._ready_flag = 0
-                self._discovery_ready_frames = 0
-                self._discovery_ready_latched = False
-                break
+            self.visual_sm.start()
+            self._active_task = task_name
+            self._ready_frames = 0
+            self._ready_latched = False
+            self._ready_flag = 0
+            self._discovery_ready_frames = 0
+            self._discovery_ready_latched = False
 
     def _deactivate_all_visual(self) -> None:
-        # run_to_completion() 级联多个状态时, bridge 回调可能在同一调用栈中
-        # 对 _deactivate_all_visual 多次调用。第一次将 _active_task 置 None,
-        # 后续调用检测到已停用则跳过, 避免重复发送 STATUS_FROM_VISION 帧。
         if self._active_task is None:
             return
-        if not self._camera_manager:
+        if not self._vision_manager:
             return
+        vm = self._vision_manager
+        all_pipelines = ["cam_qr", "cam_cargo"]
         all_tasks = ["qr_detect", "track_cargo", "ring_discovery"]
-        for cam in self._camera_manager.cameras.values():
+        for pid in all_pipelines:
             for name in all_tasks:
-                cam.disable_task(name)
+                vm.disable_task(pid, name)
             for name in all_tasks:
-                t = cam.get_task(name)
-                if t and hasattr(t.processor, "clear_getters"):
-                    t.processor.clear_getters()
+                pipe = vm.get_pipeline(pid)
+                if pipe:
+                    t = pipe.get_task(name)
+                    if t and hasattr(t.processor, "clear_getters"):
+                        t.processor.clear_getters()
         self.visual_sm.stop()
         self._active_task = None
         self._ready_frames = 0
