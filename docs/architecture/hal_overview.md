@@ -1,4 +1,4 @@
-# HAL 架构概览
+﻿# HAL 架构概览
 
 ## 分层架构
 
@@ -67,7 +67,7 @@ classDiagram
         +CameraHub camera_hub
         +Display display
         +Uart uart
-        +AIBackend ai
+        +AIInference ai
         +create(config) Machine
         +close()
     }
@@ -115,6 +115,10 @@ classDiagram
     VisionManager --> PipelineCamera
     PipelineCamera --> CameraHub : 通过 hub.get() 获取 Camera
 ```
+
+## AIInference
+
+AI 推理层使用多模型注册表模式，通过 machine.ai 访问。支持注册多个模型配置，但每次只能激活一个模型（适配 NPU 单模型限制）。detect() 和 classify() 方法根据活跃模型自动路由。Linux 和 Mock 平台提供存根实现，MaixCAM2 平台通过 maix.nn 实现真实 NPU 推理。
 
 ## Display 主线程约束
 
@@ -202,3 +206,4 @@ gantt
     重命名 zw_opencv_module → vision_module :c1, 1d
     更新所有 15+ import       :c2, 0.5d
 ```
+
