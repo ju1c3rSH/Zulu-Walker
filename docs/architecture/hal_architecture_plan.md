@@ -55,7 +55,7 @@ utils/
 modules/
 ├── zw_opencv_module/
 │   ├── __init__.py                 # init(machine) 签名
-│   ├── camera_manager.py           # VisionManager + CameraManager 垫片
+│   ├── vision_manager.py           # VisionManager + CameraManager 垫片
 │   ├── camera_hub.py               # CameraHub (单例)
 │   ├── pipeline_camera.py          # PipelineCamera (持有 hal.Camera)
 │   ├── task_manager.py             # 保留
@@ -114,7 +114,7 @@ run.py                              # debug 入口暂用 CameraManager 垫片
 |---|------|------|
 | 22 | `main.py` | 桥接改为 `connect_vision()` |
 | 23 | `modules/zw_opencv_module/__init__.py` | `init(machine)` 签名，导出 `get_vision_manager()` |
-| 24 | `modules/zw_opencv_module/camera_manager.py` | 重写为 `VisionManager` + `CameraManager` 垫片 |
+| 24 | `modules/zw_opencv_module/vision_manager.py` | 重写为 `VisionManager` + `CameraManager` 垫片 |
 | 25 | `modules/zw_opencv_module/camera_hub.py` | 新建（单例 CameraHub） |
 | 26 | `modules/zw_opencv_module/pipeline_camera.py` | 新建（PipelineCamera 持有 hal.Camera） |
 | 27 | `modules/zw_uart_module/__init__.py` | `init(machine)` 签名 |
@@ -281,7 +281,7 @@ uart_defaults:
 |------|------|------|------|
 | 6 | `camera_hub.py` 单例 | #25 | Step 2~4 |
 | 7 | `pipeline_camera.py` | #26 | Step 6 |
-| 8 | `camera_manager.py`（VisionManager + 垫片） | #24 | Step 6~7 |
+| 8 | `vision_manager.py`（VisionManager + 垫片） | #24 | Step 6~7 |
 | 9 | `__init__.py` 改 | #23 | Step 8 |
 | 10 | `vision_config.yaml` 新建 | #21 | — |
 | 11 | `module_manager.py` | #20 | — |

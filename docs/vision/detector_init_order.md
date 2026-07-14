@@ -62,7 +62,7 @@ def __init__(self):
 
 ## 关联约束：`_setup_tasks` 总是实例化处理器
 
-`Camera._setup_tasks()` (`camera_manager.py`) 即使任务配置了 `enabled: false`，也会创建对应的处理器对象。
+`Camera._setup_tasks()` (`vision_manager.py`) 即使任务配置了 `enabled: false`，也会创建对应的处理器对象。
 
 禁用只控制 `task.execute()` 是否执行，但处理器 `__init__` 仍会被调用。
 
