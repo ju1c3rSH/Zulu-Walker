@@ -126,7 +126,7 @@ flowchart TD
 | 文件 | 改动 |
 |------|------|
 | `task_manager.py:104-152` | `run_tasks_serial` 签名 `all_results` → `context`；内部建独立 `task_results` dict；返回纯 VisionResult 结果 |
-| `camera_manager.py:253-265` | `Camera.process_frame()` 拆包 `(processed_frame, task_results)` |
+| `vision_manager.py:253-265` | `Camera.process_frame()` 拆包 `(processed_frame, task_results)` |
 | `mission_context.py:31,329-342` | 加 `VisionResult` import + `isinstance` 守卫 |
 
 ### 3.4 关键设计决策
