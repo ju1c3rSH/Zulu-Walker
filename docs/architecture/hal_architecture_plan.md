@@ -13,7 +13,7 @@
 | CameraHub | **单例**模式，`open()` 返回 `Camera` Protocol，`release_all()` 统一释放 |
 | `connect_camera` → `connect_vision` | 统一方法名，与 `CameraManager` 解耦 |
 | 设备标识 | `CameraInfo.id` 使用 `/dev/v4l/by-id/` 稳定路径，fallback 到设备名 |
-| 平台隔离 | maixcam2/ 所有 `maix import` 延迟到函数内 |
+| 平台隔离 | maixcam2/ 使用模块级 `maix import`（由上层 `importlib.import_module` 动态加载，不使用的平台不会触发导入） |
 | Module 重命名 | 本轮**不改名**（`zw_opencv_module`），后续 PR 做 |
 | 迁移方案 | `camera_config.yaml` 保留不动，VisionManager 读 `vision_config.yaml` |
 | 向后兼容 | `_LegacyCameraManagerShim` + `CameraManager` 垫片 |
@@ -40,9 +40,9 @@ hal/
     │   └── uart.py                 # LinuxUart (pyserial)
     ├── maixcam2/
     │   ├── __init__.py
-    │   ├── camera.py               # MaixCam2Camera (存根，延迟导入)
-    │   ├── display.py              # MaixCam2Display (存根)
-    │   └── uart.py                 # MaixCam2Uart (存根)
+    │   ├── camera.py               # MaixCam2Camera (maix.camera.Camera + image2cv)
+    │   ├── display.py              # MaixCam2Display (maix.display.Display + cv2image)
+    │   └── uart.py                 # MaixCam2Uart (maix.peripheral.uart.UART)
     └── mock/
         ├── __init__.py
         ├── camera.py               # MockCamera (棋盘格帧)
@@ -97,10 +97,10 @@ run.py                              # debug 入口暂用 CameraManager 垫片
 | 9 | `hal/platforms/linux/camera.py` | LinuxCamera（V4L2 + 采集线程 + Queue） |
 | 10 | `hal/platforms/linux/display.py` | LinuxDisplay（cv2.imshow, `show() → bool`） |
 | 11 | `hal/platforms/linux/uart.py` | LinuxUart（pyserial + 后台接收线程） |
-| 12 | `hal/platforms/maixcam2/__init__.py` | 存根导出 |
-| 13 | `hal/platforms/maixcam2/camera.py` | 存根（延迟导入） |
-| 14 | `hal/platforms/maixcam2/display.py` | 存根 |
-| 15 | `hal/platforms/maixcam2/uart.py` | 存根 |
+| 12 | `hal/platforms/maixcam2/__init__.py` | 已实现（工厂函数返回真实对象） |
+| 13 | `hal/platforms/maixcam2/camera.py` | 已实现（模块级 maix.camera + image2cv） |
+| 14 | `hal/platforms/maixcam2/display.py` | 已实现（模块级 maix.display + cv2image） |
+| 15 | `hal/platforms/maixcam2/uart.py` | 已实现（模块级 maix.peripheral.uart） |
 | 16 | `hal/platforms/mock/__init__.py` | 导出 MockCamera, MockDisplay, MockUart |
 | 17 | `hal/platforms/mock/camera.py` | MockCamera（棋盘格帧） |
 | 18 | `hal/platforms/mock/display.py` | MockDisplay（日志） |
@@ -304,9 +304,9 @@ uart_defaults:
 
 | Step | 内容 |
 |------|------|
-| 21 | 实现 `maixcam2/camera.py`（用 maix.camera 替代存根） |
-| 22 | 实现 `maixcam2/display.py`（maix.display） |
-| 23 | 实现 `maixcam2/uart.py`（pyserial + pinmux） |
+| 21 | `maixcam2/camera.py` 已实现（模块级 maix.camera + image2cv） |
+| 22 | `maixcam2/display.py` 已实现（模块级 maix.display + cv2image） |
+| 23 | `maixcam2/uart.py` 已实现（模块级 maix.peripheral.uart） |
 | 24 | 训练 YOLO11n 模型，添加 AI Backend |
 
 ## 关键纠正点（相对初版 Plan 的更新）

@@ -147,7 +147,7 @@ flowchart LR
     end
     subgraph MaixCam2["hal/platforms/maixcam2/"]
         M1["CameraHubMaixCam2<br/>maix.camera.list_devices()"]
-        M2["MaixCam2Camera<br/>maix.camera.Camera<br/>延迟导入"]
+        M2["MaixCam2Camera<br/>maix.camera.Camera<br/>模块级导入"]
     end
     subgraph Mock["hal/platforms/mock/"]
         K1["MockCameraHub<br/>固定 CameraInfo"]
