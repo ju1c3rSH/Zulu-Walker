@@ -68,9 +68,9 @@ class VisionManager:
                 pipeline_id=pipeline_id,
                 camera=cam,
                 task_configs=pipe_cfg.get("tasks", []),
-                focal_length_mm=pipe_cfg.get("focal_length_mm"),
-                sensor_width_mm=pipe_cfg.get("sensor_width_mm"),
-                sensor_height_mm=pipe_cfg.get("sensor_height_mm"),
+                focal_length_mm=getattr(cam, 'focal_length_mm', None),
+                sensor_width_mm=getattr(cam, 'sensor_width_mm', None),
+                sensor_height_mm=getattr(cam, 'sensor_height_mm', None),
                 image_width=pipe_cfg.get("width", 640),
                 image_height=pipe_cfg.get("height", 480),
             )
