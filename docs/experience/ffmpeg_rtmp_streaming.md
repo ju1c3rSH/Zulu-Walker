@@ -218,7 +218,7 @@ if self.process.returncode is not None:
 ## 相关文件
 
 - `modules/zw_opencv_module/ffmpeg_pusher.py` - FFmpeg 推流核心实现
-- `modules/zw_opencv_module/camera_manager.py` - 相机管理和推流调用
+- `modules/zw_opencv_module/vision_manager.py` - 相机管理和推流调用
 
 ---
 

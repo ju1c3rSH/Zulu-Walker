@@ -3,7 +3,7 @@ import time
 from collections import deque
 from typing import Optional, Callable
 
-from modules.zw_opencv_module.camera_manager import VisionManager
+from modules.zw_opencv_module.vision_manager import VisionManager
 from utils.log_util import LoggerFactory
 
 from .event_bus import EventBus
