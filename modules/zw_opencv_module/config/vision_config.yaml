@@ -1,0 +1,17 @@
+pipelines:
+  - pipeline_id: "cam_qr"
+    camera_id: "mipi"
+    tasks:
+      - name: "qr_detect"
+        type: "QRCodeProcessor"
+        enabled: true
+
+  - pipeline_id: "cam_cargo"
+    camera_id: "mipi"
+    tasks:
+      - name: "track_cargo"
+        type: "TrackCargoProcessor"
+        enabled: false
+      - name: "ring_discovery"
+        type: "RingDiscoveryProcessor"
+        enabled: false
