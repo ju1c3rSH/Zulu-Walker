@@ -1,3 +1,4 @@
+﻿from .ai import LinuxAI
 from .camera import LinuxCamera
 from .display import LinuxDisplay
 from .uart import LinuxUart
@@ -33,10 +34,16 @@ def create_uart(port: str, baudrate: int = 921600) -> LinuxUart:
     return LinuxUart(port=port, baudrate=baudrate)
 
 
+def create_ai() -> LinuxAI:
+    return LinuxAI()
+
+
 __all__ = [
+    "LinuxAI",
     "LinuxCamera",
     "LinuxDisplay",
     "LinuxUart",
+    "create_ai",
     "create_camera",
     "create_display",
     "create_uart",
