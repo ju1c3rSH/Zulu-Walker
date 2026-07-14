@@ -21,6 +21,9 @@ class LinuxCamera:
         height: int = 480,
         fps: float = 120,
         queue_size: int = 2,
+        focal_length_mm: Optional[float] = None,
+        sensor_width_mm: Optional[float] = None,
+        sensor_height_mm: Optional[float] = None,
     ) -> None:
         self._camera_id = camera_id
         self._source = source
@@ -28,6 +31,9 @@ class LinuxCamera:
         self._height = height
         self._fps = fps
         self._queue_size = queue_size
+        self._focal_length_mm = focal_length_mm
+        self._sensor_width_mm = sensor_width_mm
+        self._sensor_height_mm = sensor_height_mm
         self._running = False
         self._frame_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         self._capture_thread: Optional[threading.Thread] = None
@@ -42,6 +48,18 @@ class LinuxCamera:
     @property
     def fps(self) -> float:
         return self._actual_fps
+
+    @property
+    def focal_length_mm(self) -> Optional[float]:
+        return self._focal_length_mm
+
+    @property
+    def sensor_width_mm(self) -> Optional[float]:
+        return self._sensor_width_mm
+
+    @property
+    def sensor_height_mm(self) -> Optional[float]:
+        return self._sensor_height_mm
 
     def start(self) -> None:
         self._cap = cv2.VideoCapture(self._source, cv2.CAP_V4L2)

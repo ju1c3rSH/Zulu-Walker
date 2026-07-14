@@ -7,6 +7,9 @@ def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> Linu
     camera_id = kwargs.pop("camera_id", str(source))
     fps = kwargs.pop("fps", 120)
     queue_size = kwargs.pop("camera_stream_queue_size", 2)
+    focal_length_mm = kwargs.pop("focal_length_mm", None)
+    sensor_width_mm = kwargs.pop("sensor_width_mm", None)
+    sensor_height_mm = kwargs.pop("sensor_height_mm", None)
     cam = LinuxCamera(
         camera_id=camera_id,
         source=source,
@@ -14,6 +17,9 @@ def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> Linu
         height=height,
         fps=fps,
         queue_size=queue_size,
+        focal_length_mm=focal_length_mm,
+        sensor_width_mm=sensor_width_mm,
+        sensor_height_mm=sensor_height_mm,
     )
     cam.start()
     return cam
