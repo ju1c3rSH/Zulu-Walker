@@ -65,7 +65,8 @@ class Machine:
 
         display = platform_mod.create_display()
         uart = platform_mod.create_uart(**uart_config)
-
+        # 这里无法保证缺省时能正常运行
+        
         return cls(camera_hub=hub, display=display, uart=uart)
 
     def close(self) -> None:
