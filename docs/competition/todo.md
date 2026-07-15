@@ -21,7 +21,7 @@
 - [x] `CMD_START_COLOR_DETECT` 参数: 移除 `slot_idx`
 - [x] 删除 `CMD_SET_EXPOSURE`（相机曝光 OP 自主管理）
 - [x] 删除 legacy `orange_send` 协议栈（`build_orange_send_frame`、`ORANGE_STATE_*`）
-- [x] 删除 `send_orange_frame` 路径（`camera_manager.py` → `uart_driver.py` → `protocol.py` 全链路）
+- [x] 删除 `send_orange_frame` 路径（`vision_manager.py` → `uart_driver.py` → `protocol.py` 全链路）
 - [x] 时序图 B 修复：新增 `CMD_START_COLOR_DETECT` 步骤，`STATUS_FROM_MCU` → `HEARTBEAT`
 - [x] `HEARTBEAT` 说明：MCU→OP 时 `visual_state` 恒为 0
 - [x] 新增机器人 3 槽位固定颜色约束
@@ -75,7 +75,7 @@
 ### Processor 基础
 - [x] 新增 `ColorTrackable Protocol` — 使用 `@runtime_checkable` + `isinstance` 检测
 - [x] `CircleTargetProcessor.set_target_color` 签名 `Optional[str]` → `Optional[Color]`
-- [x] 删除遗留 `_apply_detect_params` 硬编码方法（`camera_manager.py`）
+- [x] 删除遗留 `_apply_detect_params` 硬编码方法（`vision_manager.py`）
 
 ### Coordinator / Context 重构
 - [x] `MissionContext` 字段重命名：`first_batch/second_batch/current_index/target_color:int` → `batch_order/current_step/target_color:Color`
@@ -127,7 +127,7 @@
 ## 待实现（按优先级排列）
 
 ### P0 — 核心链路（必须先完成）
-- [x] `camera_manager.py:_create_processor()` 注册三种 Processor 类型（stub 文件已有定义但未测试）：
+- [x] `vision_manager.py:_create_processor()` 注册三种 Processor 类型（stub 文件已有定义但未测试）：
   - `QRCodeProcessor` / `TrackCargoProcessor` / `RingDiscoveryProcessor`
 - [x] `TrackCargoProcessor.process()` 完整实现
 - [x] `RingDiscoveryProcessor.process()` 完整实现（委托 RingDetector + FastRingMethod）
