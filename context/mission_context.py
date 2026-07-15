@@ -219,25 +219,26 @@ class MissionCoordinator:
             self._deactivate_all_visual()
 
         elif cmd == CMD_START_RING_DISCOVERY:
-            if self.mission_sm.current_state != "RING_DISCOVERY":
-                return
             try:
                 color_id = args[0] if len(args) >= 1 else 0
                 color = Color(color_id)
             except (ValueError, KeyError):
                 return
-            self.visual_sm.stop()
-            self.visual_sm.start()
-            self._discovery_ready_frames = 0
-            self._discovery_ready_latched = False
-            self._discovery_color_sent = False
-            self._activate_task("ring_discovery", color)
-            self._enqueue_sm(lambda: self._apply_ring_discovery_start(color))
+            captured = color
+            self._enqueue_sm(lambda c=captured: self._handle_ring_discovery_cmd(c))
 
         elif cmd == CMD_DISCOVERY_DONE:
             self._enqueue_sm(lambda: self.mission_sm.on_discovery_done())
 
-    def _apply_ring_discovery_start(self, color: Color) -> None:
+    def _handle_ring_discovery_cmd(self, color: Color) -> None:
+        if self.mission_sm.current_state != "RING_DISCOVERY":
+            return
+        self.visual_sm.stop()
+        self.visual_sm.start()
+        self._discovery_ready_frames = 0
+        self._discovery_ready_latched = False
+        self._discovery_color_sent = False
+        self._activate_task("ring_discovery", color)
         self.mission_sm.context.discovery_color = color
         self.mission_sm.context.discovery_active = True
         self.mission_sm.run_to_completion()
@@ -292,22 +293,19 @@ class MissionCoordinator:
             )
 
     def _deactivate_all_visual(self) -> None:
-        if self._active_task is None:
-            return
-        if not self._vision_manager:
-            return
-        vm = self._vision_manager
-        all_pipelines = ["cam_qr", "cam_cargo"]
-        all_tasks = ["qr_detect", "track_cargo", "ring_discovery"]
-        for pid in all_pipelines:
-            for name in all_tasks:
-                vm.disable_task(pid, name)
-            for name in all_tasks:
-                pipe = vm.get_pipeline(pid)
-                if pipe:
-                    t = pipe.get_task(name)
-                    if t and hasattr(t.processor, "clear_getters"):
-                        t.processor.clear_getters()
+        if self._vision_manager:
+            vm = self._vision_manager
+            all_pipelines = ["cam_qr", "cam_cargo"]
+            all_tasks = ["qr_detect", "track_cargo", "ring_discovery"]
+            for pid in all_pipelines:
+                for name in all_tasks:
+                    vm.disable_task(pid, name)
+                for name in all_tasks:
+                    pipe = vm.get_pipeline(pid)
+                    if pipe:
+                        t = pipe.get_task(name)
+                        if t and hasattr(t.processor, "clear_getters"):
+                            t.processor.clear_getters()
         self.visual_sm.stop()
         self._active_task = None
         self._ready_frames = 0
