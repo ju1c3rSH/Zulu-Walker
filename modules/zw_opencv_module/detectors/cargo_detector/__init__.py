@@ -60,6 +60,8 @@ class _TrackingState:
         self._last_predict_time = None
         self._center_history.clear()
         self._radius_history.clear()
+        self._ema_s = None
+        self._ema_v = None
         self.kf.statePost = np.zeros((4, 1), dtype=np.float32)
         self.kf.errorCovPost = np.eye(4, dtype=np.float32)
 
