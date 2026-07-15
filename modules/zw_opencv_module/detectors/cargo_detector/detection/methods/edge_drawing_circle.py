@@ -194,14 +194,45 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             center, axes, ellipse[2], color_mask
         )
         if refined_center is None:
-            print("EdgeDrawing: Failed to refine center with color moments.")
+            print(
+                f"EdgeDrawing: Failed to refine center with color moments.\n"
+                f"  contour: area={area:.1f} peri={peri:.1f} "
+                f"circularity={circularity:.4f} axis_ratio={axis_ratio:.3f}\n"
+                f"  ellipse: center=({center[0]:.1f},{center[1]:.1f}) "
+                f"axes=({axes[0]:.1f},{axes[1]:.1f}) angle={ellipse[2]:.1f}"
+            )
             refined_center = center
 
         color_score = self._compute_color_score(
             refined_center, radius, color_mask
         )
         if color_score < self.detector.color_match_threshold:
-            print("EdgeDrawing: Color score is below the threshold.")
+            _h, _w = color_mask.shape[:2]
+            _x, _y = int(refined_center[0]), int(refined_center[1])
+            _r = int(radius)
+            _x1 = max(_x - _r, 0)
+            _y1 = max(_y - _r, 0)
+            _x2 = min(_x + _r, _w)
+            _y2 = min(_y + _r, _h)
+            _roi = color_mask[_y1:_y2, _x1:_x2]
+            _roi_r = min(_r, _roi.shape[1] // 2, _roi.shape[0] // 2) if _roi.size > 0 else 0
+            _matched = 0
+            _total_px = 0.0
+            if _roi_r > 0:
+                _cm = np.zeros_like(_roi)
+                cv2.circle(_cm, (_roi.shape[1] // 2, _roi.shape[0] // 2), _roi_r, 255, -1)
+                _matched = cv2.countNonZero(cv2.bitwise_and(_roi, _roi, mask=_cm))
+                _total_px = np.pi * float(_roi_r) * float(_roi_r)
+            print(
+                f"EdgeDrawing: Color score is below the threshold.\n"
+                f"  score={color_score:.3f} < threshold={self.detector.color_match_threshold:.3f}  "
+                f"matched={_matched}/{_total_px:.0f} ({_matched / _total_px * 100:.1f}%)\n"
+                f"  center=({refined_center[0]:.1f},{refined_center[1]:.1f}) "
+                f"radius={radius:.1f}\n"
+                f"  contour: area={area:.1f} peri={peri:.1f} "
+                f"circularity={circularity:.4f} axis_ratio={axis_ratio:.3f} "
+                f"ellipse_axes=({axes[0]:.1f},{axes[1]:.1f})"
+            )
             return None
 
         return {
@@ -225,6 +256,16 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         obj_mask = cv2.bitwise_and(color_mask, mask)
         M = cv2.moments(obj_mask)
         if M["m00"] <= 0:
+            ellipse_px = cv2.countNonZero(mask)
+            masked_px = cv2.countNonZero(obj_mask)
+            print(
+                f"EdgeDrawing: _refine_center_with_color_moments failed.\n"
+                f"  ellipse: center=({center[0]:.1f},{center[1]:.1f}) "
+                f"axes=({axes[0]:.1f},{axes[1]:.1f}) angle={angle:.1f}\n"
+                f"  mask: ellipse_area={ellipse_px}px "
+                f"color_intersection={masked_px}px m00={M['m00']:.0f}\n"
+                f"  cause: no color mask pixels inside the fitted ellipse"
+            )
             return None
 
         cx = M["m10"] / M["m00"]
