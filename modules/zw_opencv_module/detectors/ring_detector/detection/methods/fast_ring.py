@@ -69,6 +69,11 @@ class FastRingMethod(BaseRingDetectionMethod):
             morphed, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
 
         if not contours or hierarchy is None:
+            if not hasattr(self.detector, '_ring_log_frame'):
+                self.detector._ring_log_frame = 0
+            self.detector._ring_log_frame += 1
+            if self.detector._ring_log_frame % 60 == 0:
+                print(f"[FastRing] target={target_color.name} no contours")
             return None
 
         outer_candidates = []
@@ -92,11 +97,25 @@ class FastRingMethod(BaseRingDetectionMethod):
             orig_cy = (cy + oy) / scale
             outer_candidates.append(((orig_cx, orig_cy), area, axis_ratio))
 
+        if not hasattr(self.detector, '_ring_log_frame'):
+            self.detector._ring_log_frame = 0
+        self.detector._ring_log_frame += 1
+        frame = self.detector._ring_log_frame
+
         if not outer_candidates:
+            if frame % 60 == 0:
+                print(f"[FastRing] target={target_color.name} "
+                      f"contours={len(contours)} outer_candidates=0")
             return None
 
         outer_candidates.sort(key=lambda x: x[1], reverse=True)
         center = outer_candidates[0][0]
+
+        if frame % 60 == 0:
+            print(f"[FastRing] target={target_color.name} "
+                  f"contours={len(contours)} outer_candidates={len(outer_candidates)} "
+                  f"best: area={outer_candidates[0][1]:.0f} axis_ratio={outer_candidates[0][2]:.2f}")
+
         return center, target_color, 100.0
 
     def _finalize(self, result, target_color, ts, scale):
