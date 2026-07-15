@@ -81,11 +81,7 @@ class CargoDetector:
         # EdgeDrawing 初始化（若不可用则默认使用 FAST_CIRCLE）
         self.ed = None
         self._init_edge_drawing()
-        self.detect_method = (
-            DetectMethod.EDGE_DRAWING_CIRCLE
-            if self.ed is not None
-            else DetectMethod.FAST_CIRCLE
-        )
+        self.detect_method = DetectMethod.FAST_CIRCLE
 
         self._kf_q_base = 0.2
         self._kf_q_vel_base = 0.15

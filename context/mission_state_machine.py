@@ -282,6 +282,16 @@ class _AlignRawState(State):
             return MissionStateNames[MissionState.ERROR]
         if ctx.visual_fail:
             return MissionStateNames[MissionState.ERROR]
+        elapsed = time() - ctx.state_entry_time
+        if elapsed > 360.0:
+            # 超过 6 分钟仍未完成色环发现，判定为失败
+            ctx.error_code = 40
+            ctx.error_msg = f"ALIGN_RAW timeout: no target found after {elapsed:.1f}s"
+            from utils.debug_console import DebugConsole
+            dc = DebugConsole()
+            dc.log(f"[MissionSM] ALIGN_RAW TIMEOUT after {elapsed:.1f}s")
+            dc.incr_error()
+            return MissionStateNames[MissionState.ERROR]
         return None
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
@@ -379,7 +389,8 @@ class _RingDiscoveryState(State):
                 return MissionStateNames[MissionState.ALIGN_ROUGH]
             elif ctx.current_zone == Zone.TEMP:
                 return MissionStateNames[MissionState.ALIGN_TEMP]
-        if ctx.state_entry_time + 30.0 < time():
+        if ctx.state_entry_time + 360.0 < time():
+            # 超过 6 分钟仍未完成色环发现，判定为失败
             ctx.error_code = 50
             return MissionStateNames[MissionState.ERROR]
         return None
