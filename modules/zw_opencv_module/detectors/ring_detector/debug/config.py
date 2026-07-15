@@ -27,6 +27,8 @@ RING_METHOD_PARAM_DEFS: Dict[str, List[ParamDef]] = {
         ParamDef("max_roi_miss",          "Max ROI Miss",       5,    1,   30,   1),
         ParamDef("min_area",              "Min Area",         100,   10, 2000,  10),
         ParamDef("smooth_window",         "Smooth Win",         5,    1,   20,   1),
+        ParamDef("blur_kernel",           "Blur Kernel",        5,    1,   31,   2,  odd=True),
+        ParamDef("blur_sigma",            "Blur Sigma",       150,    5,  500,   5,  scale=0.01),
     ],
 }
 
