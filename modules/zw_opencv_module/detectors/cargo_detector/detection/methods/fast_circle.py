@@ -9,7 +9,7 @@ from .. import kalman_filter
 
 
 class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
-    SV_PERCENTILE = 5
+    SV_PERCENTILE = 15
     EMA_ALPHA = 0.3
     TARGET_W = 640
     TARGET_H = 480
@@ -127,11 +127,28 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
                 print(f"[FastCircle] target={target_color.name} coarse_mask={coarse_px}px -> too few pixels, skipping")
             return None
 
-        s_low, v_low = self._compute_adaptive_sv(hsv, ts, mask_coarse)
+        coarse_px = cv2.countNonZero(mask_coarse)
+        h, w = hsv.shape[:2]
+        total_px = h * w
+        coarse_ratio = coarse_px / total_px
+
+        if coarse_ratio > 0.30:
+            if not hasattr(self.detector, '_fast_log_frame'):
+                self.detector._fast_log_frame = 0
+            self.detector._fast_log_frame += 1
+            if self.detector._fast_log_frame % 60 == 0:
+                print(f"[FastCircle] target={target_color.name} coarse={coarse_px}px "
+                      f"({coarse_ratio:.0%} of frame) -> too large, skipping adaptive SV, "
+                      f"falling back to hardcoded ranges")
+            return self._build_hardcoded_mask(hsv, target_color)
+
+        s_raw, v_raw = self._compute_adaptive_sv(hsv, ts, mask_coarse)
+        s_low = max(s_raw, self.detector.color_ranges[target_color][0][0][1])
+        v_low = max(v_raw, self.detector.color_ranges[target_color][0][0][2])
 
         mask_fine = None
         for lower, upper in ranges:
-            adjusted_lower = np.array([lower[0], max(lower[1], s_low), max(lower[2], v_low)], dtype=np.uint8)
+            adjusted_lower = np.array([lower[0], s_low, v_low], dtype=np.uint8)
             adjusted_upper = np.array([upper[0], upper[1], upper[2]], dtype=np.uint8)
             chunk = cv2.inRange(hsv, adjusted_lower, adjusted_upper)
             mask_fine = chunk if mask_fine is None else cv2.bitwise_or(mask_fine, chunk)
@@ -140,12 +157,20 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
             self.detector._fast_log_frame = 0
         self.detector._fast_log_frame += 1
         if self.detector._fast_log_frame % 60 == 0:
-            coarse_px = cv2.countNonZero(mask_coarse)
             fine_px = cv2.countNonZero(mask_fine) if mask_fine is not None else 0
             print(f"[FastCircle] target={target_color.name} coarse={coarse_px}px "
-                  f"s_adaptive={s_low} v_adaptive={v_low} fine={fine_px}px")
+                  f"s_raw={s_raw} s_clamped={s_low} v_raw={v_raw} v_clamped={v_low} "
+                  f"fine={fine_px}px")
 
         return mask_fine
+
+    def _build_hardcoded_mask(self, hsv: np.ndarray, target_color: Color) -> np.ndarray:
+        ranges = self.detector.color_ranges[target_color]
+        mask = None
+        for lower, upper in ranges:
+            chunk = cv2.inRange(hsv, lower, upper)
+            mask = chunk if mask is None else cv2.bitwise_or(mask, chunk)
+        return mask
 
     def _compute_adaptive_sv(self, hsv: np.ndarray, ts,
                              mask: np.ndarray) -> Tuple[int, int]:

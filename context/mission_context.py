@@ -460,7 +460,15 @@ class MissionCoordinator:
 
         if not self._discovery_ready_latched:
             if self.visual_sm.is_tracking() and target_found:
-                self._discovery_ready_frames += 1
+                conf = data.get("confidence", 0)
+                if conf >= 80:
+                    self._discovery_ready_frames += 1
+                elif self._discovery_ready_frames % 60 == 1:
+                    from utils.debug_console import DebugConsole
+                    DebugConsole().log(
+                        f"[VisualSM] discovery: target_found conf={conf}<80, "
+                        f"waiting for complete ring"
+                    )
             else:
                 self._discovery_ready_frames = max(0, self._discovery_ready_frames - 1)
 
