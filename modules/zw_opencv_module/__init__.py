@@ -20,6 +20,7 @@ def init(machine: Machine, event_bus=None) -> None:
     _vision_manager = VisionManager(
         camera_hub=machine.camera_hub,
         config_path=config_path,
+        ai=machine.ai,
     )
     if event_bus is not None:
         _vision_manager.set_event_bus(event_bus)
