@@ -101,7 +101,7 @@ class MissionContext:
     # Visual feedback
     visual_state: int = VisualState.IDLE
     visual_flags: int = 0
-    target_color: Color = Color.RED
+    target_color: Optional[Color] = None
     target_found: bool = False
     ready_to_pick: bool = False
     ready_to_place: bool = False
@@ -138,7 +138,7 @@ class MissionContext:
             self.cargo_set.reset_all()
         self.visual_state = VisualState.IDLE
         self.visual_flags = 0
-        self.target_color = Color.RED
+        self.target_color = None
         self.target_found = False
         self.ready_to_pick = False
         self.ready_to_place = False
@@ -847,6 +847,8 @@ class MissionStateMachine(BaseStateMachine):
             "step": self.context.current_step,
             "cargo_count": self.context.cargo_count,
             "target_color": self.context.target_color.name if self.context.target_color else "",
+            "first_batch_order": [c.name for c in self.context.first_batch_order],
+            "second_batch_order": [c.name for c in self.context.second_batch_order],
             "visual_state": self.context.visual_state,
             "visual_flags": self.context.visual_flags,
             "zone": self.context.current_zone,
