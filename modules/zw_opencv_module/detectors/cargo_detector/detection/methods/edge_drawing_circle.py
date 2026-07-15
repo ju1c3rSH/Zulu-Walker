@@ -1,4 +1,3 @@
-import time
 import cv2
 import numpy as np
 from typing import Optional, Tuple, List
@@ -24,7 +23,6 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         super().__init__(name=name, detector=detector)
 
     def detect(self, frame: np.ndarray, target_color: Color) -> Optional[CargoItem]:
-        print(f"[ED] detect() called, ed={self.detector.ed is not None}, method={self.detector.detect_method}")
         ts = self.detector._get_tracking(target_color)
         small, scale = self._scale_frame(frame)
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
@@ -77,7 +75,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         sub_img, offset = roi
         sub_hsv = cv2.cvtColor(sub_img, cv2.COLOR_BGR2HSV)
 
-        center, radius = self._detect_circle(sub_img, sub_hsv, ts, target_color)
+        center, radius = self._detect_circle(sub_img, sub_hsv, target_color)
         if center is None:
             ts.roi_miss_count += 1
             return None
@@ -87,17 +85,15 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
 
     def _try_global(self, frame: np.ndarray, hsv: np.ndarray,
                     ts, target_color: Color, scale: float) -> Optional[CargoItem]:
-        center, radius = self._detect_circle(frame, hsv, ts, target_color)
+        center, radius = self._detect_circle(frame, hsv, target_color)
         if center is None:
             return None
 
         return self._finalize(center, radius, ts, target_color, scale)
 
     def _detect_circle(self, bgr: np.ndarray, hsv: np.ndarray,
-                       ts, target_color: Color) -> Tuple[Optional[Tuple[float, float]], Optional[float]]:
-        print(f"[ED] _detect_circle() called, ed={self.detector.ed is not None}")
+                       target_color: Color) -> Tuple[Optional[Tuple[float, float]], Optional[float]]:
         if self.detector.ed is None:
-            print("[ED] ed is None — returning early!")
             return None, None
 
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -133,13 +129,13 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             print("EdgeDrawing: No contours detected.")
             return None, None
 
-        color_mask = self._build_color_mask(hsv, ts, target_color)
+        color_mask = self._build_color_mask(hsv, target_color)
         if color_mask is None:
             return None, None
 
         candidates = []
         for contour in contours:
-            candidate = self._evaluate_contour(contour, color_mask, hsv, ts)
+            candidate = self._evaluate_contour(contour, color_mask, hsv)
             if candidate is not None:
                 candidates.append(candidate)
 
@@ -149,74 +145,51 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         best = self._select_best_candidate(candidates)
         return best["center"], best["radius"]
 
-    SV_PERCENTILE = 5
-    EMA_ALPHA = 0.3
-    COARSE_MIN_PIXELS = 50
+    _LOW_LIGHT_MIN_PIXELS = 50
+    _RELAXED_S = 10
+    _RELAXED_V = 5
 
-    def _build_color_mask(self, hsv: np.ndarray, ts,
+    def _build_color_mask(self, hsv: np.ndarray,
                           target_color: Color) -> Optional[np.ndarray]:
-        print(f"[ED] _build_color_mask() called, target={target_color}")
         if target_color not in self.detector.color_ranges:
             print(f"EdgeDrawing: Color {target_color} is not in the supported color ranges.")
             return None
         raw_ranges = self.detector.color_ranges[target_color]
         if not raw_ranges:
-            print(f"EdgeDrawing: Empty color_ranges for {target_color}.")
             return None
 
-        # Step 1 — coarse mask: H only, full S/V
-        mask_coarse = None
-        for lower, upper in raw_ranges:
-            coarse_lower = np.array([lower[0], 0, 0], dtype=np.uint8)
-            coarse_upper = np.array([upper[0], 255, 255], dtype=np.uint8)
-            chunk = cv2.inRange(hsv, coarse_lower, coarse_upper)
-            mask_coarse = chunk if mask_coarse is None else cv2.bitwise_or(mask_coarse, chunk)
-
-        if mask_coarse is None or cv2.countNonZero(mask_coarse) < self.COARSE_MIN_PIXELS:
-            # 粗 mask 太少像素 → 回退原始硬编码范围
-            mask = None
-            for lower, upper in raw_ranges:
-                chunk = cv2.inRange(hsv, lower, upper)
-                mask = chunk if mask is None else cv2.bitwise_or(mask, chunk)
-            return mask
-
-        # Step 2 — compute adaptive S/V lower bounds (histogram O(n), no sort)
-        s_ch = hsv[:, :, 1][mask_coarse > 0]
-        v_ch = hsv[:, :, 2][mask_coarse > 0]
-        _t0 = time.perf_counter()
-        s_bins = np.bincount(s_ch.astype(np.int32), minlength=256)
-        v_bins = np.bincount(v_ch.astype(np.int32), minlength=256)
-        s_cum = np.cumsum(s_bins, dtype=np.float64)
-        v_cum = np.cumsum(v_bins, dtype=np.float64)
-        s_low = int(np.searchsorted(s_cum, s_cum[-1] * 0.05))
-        v_low = int(np.searchsorted(v_cum, v_cum[-1] * 0.05))
-        _t1 = time.perf_counter()
-        if _t1 - _t0 > 0.01:
-            print(f"[ED] bincount percentile took {_t1-_t0:.3f}s, pixels={len(s_ch)}")
-
-        # Step 3 — EMA smoothing across frames
-        if ts._ema_s is None:
-            ts._ema_s = s_low
-            ts._ema_v = v_low
-        else:
-            ts._ema_s = int(self.EMA_ALPHA * s_low + (1 - self.EMA_ALPHA) * ts._ema_s)
-            ts._ema_v = int(self.EMA_ALPHA * v_low + (1 - self.EMA_ALPHA) * ts._ema_v)
-
-        # Step 4 — fine mask with adjusted S/V
+        # Pass 1 — use the original hardcoded ranges (same as original code)
         mask = None
         for lower, upper in raw_ranges:
-            adj_lower = np.array([
-                lower[0],
-                max(int(lower[1]), ts._ema_s),
-                max(int(lower[2]), ts._ema_v),
-            ], dtype=np.uint8)
-            chunk = cv2.inRange(hsv, adj_lower, upper)
+            chunk = cv2.inRange(hsv, lower, upper)
             mask = chunk if mask is None else cv2.bitwise_or(mask, chunk)
+
+        if mask is not None and cv2.countNonZero(mask) >= self._LOW_LIGHT_MIN_PIXELS:
+            return mask
+
+        # Pass 2 — mask too sparse (low light), relax S/V
+        relaxed = None
+        for lower, upper in raw_ranges:
+            rel_lower = np.array([
+                lower[0],
+                max(int(lower[1]) // 3, self._RELAXED_S),
+                max(int(lower[2]) // 3, self._RELAXED_V),
+            ], dtype=np.uint8)
+            chunk = cv2.inRange(hsv, rel_lower, upper)
+            relaxed = chunk if relaxed is None else cv2.bitwise_or(relaxed, chunk)
+
+        if relaxed is not None and cv2.countNonZero(relaxed) > 0:
+            print(
+                f"EdgeDrawing: Low-light fallback activated. "
+                f"original={cv2.countNonZero(mask) if mask is not None else 0}px, "
+                f"relaxed={cv2.countNonZero(relaxed)}px"
+            )
+            return relaxed
 
         return mask
 
     def _evaluate_contour(self, contour: np.ndarray, color_mask: np.ndarray,
-                          hsv: np.ndarray, ts) -> Optional[dict]:
+                          hsv: np.ndarray) -> Optional[dict]:
         area = cv2.contourArea(contour)
         if area < self.detector.min_area:
             return None
@@ -264,10 +237,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         color_score = self._compute_color_score(
             refined_center, radius, color_mask
         )
-        _base_threshold = self.detector.color_match_threshold
-        _ema_v = ts._ema_v if ts._ema_v is not None else 80
-        _effective_threshold = max(0.15, min(_base_threshold, _ema_v / 80.0 * _base_threshold))
-        if color_score < _effective_threshold:
+        if color_score < self.detector.color_match_threshold:
             _h, _w = color_mask.shape[:2]
             _x, _y = int(refined_center[0]), int(refined_center[1])
             _r = int(radius)
@@ -286,10 +256,8 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                 _total_px = np.pi * float(_roi_r) * float(_roi_r)
             print(
                 f"EdgeDrawing: Color score is below the threshold.\n"
-                f"  score={color_score:.3f} < threshold={_effective_threshold:.3f} "
-                f"(base={_base_threshold:.3f})  matched={_matched}/{_total_px:.0f} "
-                f"({_matched / _total_px * 100:.1f}%)\n"
-                f"  light: ema_s={ts._ema_s} ema_v={_ema_v}\n"
+                f"  score={color_score:.3f} < threshold={self.detector.color_match_threshold:.3f}  "
+                f"matched={_matched}/{_total_px:.0f} ({_matched / _total_px * 100:.1f}%)\n"
                 f"  center=({refined_center[0]:.1f},{refined_center[1]:.1f}) "
                 f"radius={radius:.1f}\n"
                 f"  contour: area={area:.1f} peri={peri:.1f} "
