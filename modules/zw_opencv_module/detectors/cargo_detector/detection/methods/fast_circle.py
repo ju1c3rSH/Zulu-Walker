@@ -9,8 +9,6 @@ from .. import kalman_filter
 
 
 class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
-    SV_PERCENTILE = 15
-    EMA_ALPHA = 0.3
     TARGET_W = 640
     TARGET_H = 480
 
@@ -118,7 +116,7 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
             chunk = cv2.inRange(hsv, wide_lower, wide_upper)
             mask_coarse = chunk if mask_coarse is None else cv2.bitwise_or(mask_coarse, chunk)
 
-        if mask_coarse is None or cv2.countNonZero(mask_coarse) < 50:
+        if mask_coarse is None or cv2.countNonZero(mask_coarse) < self.detector.coarse_min_pixels:
             if not hasattr(self.detector, '_fast_log_frame'):
                 self.detector._fast_log_frame = 0
             self.detector._fast_log_frame += 1
@@ -132,7 +130,7 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         total_px = h * w
         coarse_ratio = coarse_px / total_px
 
-        if coarse_ratio > 0.30:
+        if coarse_ratio > self.detector.coarse_ratio_threshold:
             if not hasattr(self.detector, '_fast_log_frame'):
                 self.detector._fast_log_frame = 0
             self.detector._fast_log_frame += 1
@@ -177,18 +175,19 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         s_channel = hsv[:, :, 1][mask > 0]
         v_channel = hsv[:, :, 2][mask > 0]
 
-        if len(s_channel) < 10:
-            return (50, 50)
+        if len(s_channel) < self.detector.sv_min_samples:
+            return (self.detector.sv_fallback_s, self.detector.sv_fallback_v)
 
-        s_low = int(np.percentile(s_channel, self.SV_PERCENTILE))
-        v_low = int(np.percentile(v_channel, self.SV_PERCENTILE))
+        s_low = int(np.percentile(s_channel, self.detector.sv_percentile))
+        v_low = int(np.percentile(v_channel, self.detector.sv_percentile))
 
         if ts._ema_s is None:
             ts._ema_s = s_low
             ts._ema_v = v_low
         else:
-            ts._ema_s = int(self.EMA_ALPHA * s_low + (1 - self.EMA_ALPHA) * ts._ema_s)
-            ts._ema_v = int(self.EMA_ALPHA * v_low + (1 - self.EMA_ALPHA) * ts._ema_v)
+            alpha = self.detector.ema_alpha
+            ts._ema_s = int(alpha * s_low + (1 - alpha) * ts._ema_s)
+            ts._ema_v = int(alpha * v_low + (1 - alpha) * ts._ema_v)
 
         return (ts._ema_s, ts._ema_v)
 
@@ -231,6 +230,17 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
 
         if self.detector._fast_log_frame % 60 == 0:
             print(f"[FastCircle] found: area={area:.1f} circularity={circularity:.3f}")
+
+        if len(largest) >= self.detector.ellipse_min_contour_points:
+            try:
+                (ecx, ecy), (ea, eb), _ = cv2.fitEllipse(largest)
+                if ea > 0 and eb > 0:
+                    axis_ratio = max(ea, eb) / min(ea, eb)
+                    if axis_ratio <= self.detector.ellipse_max_axis_ratio:
+                        radius = (ea + eb) / 4.0
+                        return ((float(ecx), float(ecy)), float(radius))
+            except cv2.error:
+                pass
 
         M = cv2.moments(largest)
         if M["m00"] == 0:
