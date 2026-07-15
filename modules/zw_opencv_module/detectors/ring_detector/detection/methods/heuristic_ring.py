@@ -7,6 +7,8 @@ from ..target_creation import create_ring_target
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.ring import RingTarget
 from modules.zw_opencv_module.detectors._shared.kalman_utils import kalman_update
+from utils.log_util import log_print
+
 
 
 class HeuristicRingMethod(BaseRingDetectionMethod):
@@ -256,7 +258,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     def _info(self, msg: str, force: bool = False) -> None:
         frame = self._tick()
         if force or frame % self._LOG_INTERVAL == 0:
-            print(msg)
+            log_print(msg)
 
     def _log_detection(self, context, target_color, center, area, conf):
         stage = "COMPLETE" if conf >= 100 else "HEURISTIC"

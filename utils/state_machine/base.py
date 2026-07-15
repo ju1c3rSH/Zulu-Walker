@@ -10,6 +10,7 @@ from enum import Enum
 from dataclasses import dataclass
 from time import time
 import threading
+from utils.log_util import log_print
 
 
 class State(ABC):
@@ -59,6 +60,7 @@ class State(ABC):
 @dataclass
 class Transition:
     """状态转换定义"""
+
     from_state: str
     to_state: str
     condition: Optional[Callable[[Any], bool]] = None
@@ -336,7 +338,7 @@ class BaseStateMachine(ABC):
             try:
                 callback(old_state, new_state, event)
             except Exception as e:
-                print(f"[StateMachine] Callback error: {e}")
+                log_print(f"[StateMachine] Callback error: {e}")
 
     def _trigger_enter_callbacks(self, state_name: str, from_state: str) -> None:
         """触发状态进入回调"""
@@ -344,7 +346,7 @@ class BaseStateMachine(ABC):
             try:
                 callback(self._context, from_state)
             except Exception as e:
-                print(f"[StateMachine] Enter callback error: {e}")
+                log_print(f"[StateMachine] Enter callback error: {e}")
 
     def _trigger_exit_callbacks(self, state_name: str, to_state: str) -> None:
         """触发状态退出回调"""
@@ -352,7 +354,7 @@ class BaseStateMachine(ABC):
             try:
                 callback(self._context, to_state)
             except Exception as e:
-                print(f"[StateMachine] Exit callback error: {e}")
+                log_print(f"[StateMachine] Exit callback error: {e}")
 
     # === 属性访问 ===
 

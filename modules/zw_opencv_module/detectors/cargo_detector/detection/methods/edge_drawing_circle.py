@@ -6,6 +6,8 @@ from .base import BaseDetectionMethod
 from .....models.color import Color
 from .....models.cargo import CargoItem
 from .. import kalman_filter
+from utils.log_util import log_print
+
 
 
 class EdgeDrawingCircleMethod(BaseDetectionMethod):
@@ -100,10 +102,10 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             self.detector.ed.detectEdges(blurred)
             edges = self.detector.ed.getEdgeImage()
             if edges is None or cv2.countNonZero(edges) < self.detector.edge_min_pixels:
-                print("EdgeDrawing: No edges detected or too few edges.")
+                log_print("EdgeDrawing: No edges detected or too few edges.")
                 return None, None
         except cv2.error:
-            print("EdgeDrawing: Error occurred while detecting edges.")
+            log_print("EdgeDrawing: Error occurred while detecting edges.")
             return None, None
 
         morph_k = self.detector.edge_morph_kernel
@@ -119,7 +121,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
 
         contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
-            print("EdgeDrawing: No contours detected.")
+            log_print("EdgeDrawing: No contours detected.")
             return None, None
 
         color_mask = self._build_color_mask(hsv, target_color)
@@ -138,7 +140,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             self.detector._ed_log_frame += 1
             if self.detector._ed_log_frame % 60 == 0:
                 mask_px = cv2.countNonZero(color_mask)
-                print(f"[EdgeDraw] target={target_color.name} color_mask={mask_px}px "
+                log_print(f"[EdgeDraw] target={target_color.name} color_mask={mask_px}px "
                       f"contours={len(contours)} candidates=0")
             return None, None
 
@@ -148,7 +150,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         self.detector._ed_log_frame += 1
         if self.detector._ed_log_frame % 60 == 0:
             mask_px = cv2.countNonZero(color_mask)
-            print(f"[EdgeDraw] target={target_color.name} color_mask={mask_px}px "
+            log_print(f"[EdgeDraw] target={target_color.name} color_mask={mask_px}px "
                   f"contours={len(contours)} candidates={len(candidates)} "
                   f"best: area={best['area']:.1f} circularity={best['circularity']:.3f} "
                   f"color_score={best['color_score']:.3f}")
@@ -157,7 +159,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
     def _build_color_mask(self, hsv: np.ndarray,
                           target_color: Color) -> Optional[np.ndarray]:
         if target_color not in self.detector.color_ranges:
-            print(f"EdgeDrawing: Color {target_color} is not in the supported color ranges.")
+            log_print(f"EdgeDrawing: Color {target_color} is not in the supported color ranges.")
             return None
         raw_ranges = self.detector.color_ranges[target_color]
         if not raw_ranges:
@@ -184,7 +186,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             relaxed = chunk if relaxed is None else cv2.bitwise_or(relaxed, chunk)
 
         if relaxed is not None and cv2.countNonZero(relaxed) > 0:
-            print(
+            log_print(
                 f"EdgeDrawing: Low-light fallback activated. "
                 f"original={cv2.countNonZero(mask) if mask is not None else 0}px, "
                 f"relaxed={cv2.countNonZero(relaxed)}px"
@@ -228,7 +230,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             center, axes, ellipse[2], color_mask
         )
         if refined_center is None:
-            print(
+            log_print(
                 f"EdgeDrawing: Failed to refine center with color moments.\n"
                 f"  contour: area={area:.1f} peri={peri:.1f} "
                 f"circularity={circularity:.4f} axis_ratio={axis_ratio:.3f}\n"
@@ -257,7 +259,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                 cv2.circle(_cm, (_roi.shape[1] // 2, _roi.shape[0] // 2), _roi_r, 255, -1)
                 _matched = cv2.countNonZero(cv2.bitwise_and(_roi, _roi, mask=_cm))
                 _total_px = np.pi * float(_roi_r) * float(_roi_r)
-            print(
+            log_print(
                 f"EdgeDrawing: Color score is below the threshold.\n"
                 f"  score={color_score:.3f} < threshold={self.detector.color_match_threshold:.3f}  "
                 f"matched={_matched}/{_total_px:.0f} ({_matched / _total_px * 100:.1f}%)\n"
@@ -292,7 +294,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         if M["m00"] <= 0:
             ellipse_px = cv2.countNonZero(mask)
             masked_px = cv2.countNonZero(obj_mask)
-            print(
+            log_print(
                 f"EdgeDrawing: _refine_center_with_color_moments failed.\n"
                 f"  ellipse: center=({center[0]:.1f},{center[1]:.1f}) "
                 f"axes=({axes[0]:.1f},{axes[1]:.1f}) angle={angle:.1f}\n"
