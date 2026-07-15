@@ -257,6 +257,7 @@ class MissionCoordinator:
         elif task_name in ("track_cargo", "ring_discovery"):
             vm.enable_task("cam_cargo", task_name)
             if color is not None:
+                self.mission_sm.context.target_color = color
                 pipe = vm.get_pipeline("cam_cargo")
                 if pipe:
                     t = pipe.get_task(task_name)
