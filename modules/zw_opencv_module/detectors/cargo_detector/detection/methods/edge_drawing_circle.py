@@ -204,8 +204,6 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             return None
 
         circularity = 4.0 * np.pi * area / (peri * peri)
-        if circularity < self.detector.min_circularity:
-            return None
 
         if len(contour) < self.detector.ellipse_min_contour_points:
             return None
