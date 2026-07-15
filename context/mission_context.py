@@ -276,6 +276,16 @@ class MissionCoordinator:
             self._ready_flag = 0
             self._discovery_ready_frames = 0
             self._discovery_ready_latched = False
+            from utils.debug_console import DebugConsole
+            dc = DebugConsole()
+            color_name = color.name if color else "N/A"
+            dc.set("target_color", color_name)
+            dc.set("active_task", task_name)
+            dc.log(
+                f"[MissionSM] Activate task={task_name} color={color_name} "
+                f"batch={self.mission_sm.context.current_batch} "
+                f"step={self.mission_sm.context.current_step}"
+            )
 
     def _deactivate_all_visual(self) -> None:
         if self._active_task is None:
@@ -359,13 +369,10 @@ class MissionCoordinator:
             for task_name, vision_result in results.items():
                 if not isinstance(vision_result, VisionResult):
                     continue
-                if not vision_result.success:
-                    continue
-                data = vision_result.result_data
-                if not data:
-                    continue
-
+                data = vision_result.result_data if vision_result.success else {}
                 if task_name == "qr_detect":
+                    if not vision_result.success or not data:
+                        continue
                     self._handle_qr_result(data)
                 elif task_name in ("track_cargo", "ring_discovery"):
                     self._handle_track_result(data)
@@ -395,6 +402,12 @@ class MissionCoordinator:
             ctx.percent_error_y = 0
             ctx.consecutive_lost_frames += 1
             ctx.consecutive_detected_frames = 0
+            if ctx.consecutive_lost_frames % 60 == 1:
+                from utils.debug_console import DebugConsole
+                DebugConsole().log(
+                    f"[VisualSM] {self.visual_sm.current_state} "
+                    f"lost={ctx.consecutive_lost_frames} detected={ctx.consecutive_detected_frames}"
+                )
 
         self.visual_sm.update()
 
