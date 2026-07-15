@@ -180,18 +180,19 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                 mask = chunk if mask is None else cv2.bitwise_or(mask, chunk)
             return mask
 
-        # Step 2 — compute adaptive S/V lower bounds
+        # Step 2 — compute adaptive S/V lower bounds (histogram O(n), no sort)
         s_ch = hsv[:, :, 1][mask_coarse > 0]
         v_ch = hsv[:, :, 2][mask_coarse > 0]
         _t0 = time.perf_counter()
-        _n = len(s_ch) // 20  # → 5th percentile via sorted index
-        s_sorted = np.sort(s_ch)
-        v_sorted = np.sort(v_ch)
-        s_low = int(s_sorted[max(0, _n)])
-        v_low = int(v_sorted[max(0, _n)])
+        s_bins = np.bincount(s_ch.astype(np.int32), minlength=256)
+        v_bins = np.bincount(v_ch.astype(np.int32), minlength=256)
+        s_cum = np.cumsum(s_bins, dtype=np.float64)
+        v_cum = np.cumsum(v_bins, dtype=np.float64)
+        s_low = int(np.searchsorted(s_cum, s_cum[-1] * 0.05))
+        v_low = int(np.searchsorted(v_cum, v_cum[-1] * 0.05))
         _t1 = time.perf_counter()
         if _t1 - _t0 > 0.01:
-            print(f"[ED] fast_percentile took {_t1-_t0:.3f}s, pixels={len(s_ch)}")
+            print(f"[ED] bincount percentile took {_t1-_t0:.3f}s, pixels={len(s_ch)}")
 
         # Step 3 — EMA smoothing across frames
         if ts._ema_s is None:
