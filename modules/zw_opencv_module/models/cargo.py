@@ -25,6 +25,7 @@ class CargoItem:
     radius: Optional[float] = None
     available: bool = True
     zone: int = CargoZone.RAW
+    is_predicted: bool = False
 
     def update_position(self, coord: Tuple[int, int]) -> None:
         self.coordinate = coord
