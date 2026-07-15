@@ -387,18 +387,20 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                           scale: float) -> Optional[CargoItem]:
         center = self._kalman_predict(ts, None)
         if center is not None:
-            return self._build_cargo_item(center, target_color)
+            return self._build_cargo_item(center, target_color, is_predicted=True)
 
         if len(ts._center_history) > 0:
             avg = (
                 sum(c[0] for c in ts._center_history) / len(ts._center_history),
                 sum(c[1] for c in ts._center_history) / len(ts._center_history),
             )
-            return self._build_cargo_item(avg, target_color)
+            return self._build_cargo_item(avg, target_color, is_predicted=True)
 
         return None
 
     def _build_cargo_item(self, center: Tuple[float, float], target_color: Color,
-                          radius: Optional[float] = None) -> CargoItem:
+                          radius: Optional[float] = None,
+                          is_predicted: bool = False) -> CargoItem:
         from ..target_creation import create_cargo_item
-        return create_cargo_item(center, target_color, radius=radius)
+        return create_cargo_item(center, target_color, radius=radius,
+                                 is_predicted=is_predicted)

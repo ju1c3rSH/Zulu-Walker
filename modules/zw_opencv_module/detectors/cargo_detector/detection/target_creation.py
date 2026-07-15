@@ -9,6 +9,7 @@ def create_cargo_item(
     color: Color,
     index: int = 0,
     radius: Optional[float] = None,
+    is_predicted: bool = False,
 ) -> CargoItem:
     return CargoItem(
         index=index,
@@ -16,4 +17,5 @@ def create_cargo_item(
         batch=0,
         coordinate=(int(center[0]), int(center[1])),
         radius=radius,
+        is_predicted=is_predicted,
     )
