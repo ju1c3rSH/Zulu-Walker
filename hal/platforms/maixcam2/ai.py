@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 _SLOT_CLASSES = {
     "yolo": maix.nn.YOLO11,
     "classifier": maix.nn.Classifier,
+    "hand_landmarks": maix.nn.HandLandmarks,
     "nn": maix.nn.NN,
 }
 
@@ -23,7 +24,7 @@ class MaixCam2AI:
     def __init__(self) -> None:
         self._registry: dict[str, dict] = {}  # nick_name -> {path, type, kwargs}
         self._active_name: str = ""
-        self._model: Optional[Union[maix.nn.YOLO11, maix.nn.Classifier, maix.nn.NN]] = None
+        self._model: Optional[Union[maix.nn.YOLO11, maix.nn.Classifier, maix.nn.HandLandmarks, maix.nn.NN]] = None
         self._model_type: str = ""
         self._model_path: str = ""
 
@@ -38,6 +39,10 @@ class MaixCam2AI:
     @property
     def active_model(self) -> str:
         return self._active_name
+
+    @property
+    def model_type(self) -> str:
+        return self._model_type
 
     def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
         if nick_name in self._registry:
@@ -78,8 +83,10 @@ class MaixCam2AI:
             return False
 
         try:
-            self._model = slot_cls(path, dual_buff=True, **kwargs)
+            # self._model = slot_cls(path, dual_buff=True, **kwargs)
+            self._model = slot_cls(path, **kwargs)
             self._model_path = path
+            self._model_type = model_type
             self._active_name = nick_name
             logger.info("Switched to model '%s' (%s)", nick_name, path)
             return True
@@ -152,13 +159,17 @@ class MaixCam2AI:
     # ------------------------------------------------------------------ #
 
     def detect(
-        self, frame: np.ndarray, conf_th: float = 0.5, iou_th: float = 0.45
+        self, frame: np.ndarray,
+        **kwargs
     ) -> list[Detection]:
         """Run object detection on frame.
 
         Returns a list of Detection dataclasses.  Returns an empty list
         when no model is loaded or inference fails.
         """
+        conf_th = kwargs.get("conf_th", 0.5)
+        iou_th = kwargs.get("iou_th", 0.45)
+
         if self._model is None:
             logger.warning("detect() called but no model is loaded")
             return []
@@ -172,20 +183,21 @@ class MaixCam2AI:
             return []
 
         try:
-            img = maix.image.cv2image(frame, bgr=True, copy=True)
+            frame_rgb = frame[:, :, ::-1].copy()
+            img = maix.image.cv2image(frame_rgb, bgr=False, copy=False)
         except Exception as e:
             logger.error("cv2image conversion failed: %s", e)
             return []
 
         try:
-            objects = self._model.detect(img, conf_th=conf_th, iou_th=iou_th)
+            objects = self._model.detect(img, conf_th=conf_th, iou_th=iou_th, **kwargs)
         except Exception as e:
             logger.error("Model detect() failed: %s", e)
             return []
 
         results: list = []
         for obj in objects:
-            kps = self._convert_keypoints(obj)
+            kps = self._convert_keypoints(obj, self._model_type)
             angle: Optional[float]
             if hasattr(obj, "angle") and obj.angle != -9999:
                 angle = float(obj.angle)
@@ -207,12 +219,14 @@ class MaixCam2AI:
             results.append(det)
         return results
 
-    def classify(self, frame: np.ndarray, top_k: int = 1) -> list[tuple[int, float]]:
+    def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
         """Run classification on frame.
 
         Returns list of (class_id, score) tuples.  Returns empty list
         when no model is loaded or inference fails.
         """
+        top_k = kwargs.get("top_k", 1)
+
         if self._model is None:
             logger.warning("classify() called but no model is loaded")
             return []
@@ -226,7 +240,8 @@ class MaixCam2AI:
             return []
 
         try:
-            img = maix.image.cv2image(frame, bgr=True, copy=True)
+            frame_rgb = frame[:, :, ::-1].copy()
+            img = maix.image.cv2image(frame_rgb, bgr=False, copy=False)
         except Exception as e:
             logger.error("cv2image conversion failed: %s", e)
             return []
@@ -287,19 +302,28 @@ class MaixCam2AI:
         return maix.nn.NN
 
     @staticmethod
-    def _convert_keypoints(obj) -> list[Keypoint]:
+    def _convert_keypoints(obj, model_type: str = "") -> list[Keypoint]:
         """Convert a MaixPy flat *points* list to `list[Keypoint]`."""
         kps: list[Keypoint] = []
         pts = obj.points
         if not pts:
             return kps
-        step = 3 if len(pts) % 3 == 0 else 2
-        for i in range(0, len(pts), step):
+
+        offset = 0
+        step = 2
+
+        if model_type == "hand_landmarks":
+            offset = 8
+            step = 3
+        elif len(pts) % 3 == 0:
+            step = 3
+
+        for i in range(offset, len(pts), step):
             score = float(pts[i + 2]) if step == 3 else 0.0
             kps.append(
                 Keypoint(
                     x=float(pts[i]), y=float(pts[i + 1]),
-                    score=score, id=i // step,
+                    score=score, id=(i - offset) // step,
                 )
             )
         return kps

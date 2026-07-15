@@ -5,6 +5,8 @@ from typing import Optional
 
 import numpy as np
 
+from hal.interface.ai import Detection
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,6 +14,7 @@ class LinuxAI:
     def __init__(self) -> None:
         self._registry: dict[str, dict] = {}
         self._active_name: str = ""
+        self._model_type: str = ""
         self._model_path: str = ""
 
     # ------------------------------------------------------------------ #
@@ -25,6 +28,10 @@ class LinuxAI:
     @property
     def active_model(self) -> str:
         return self._active_name
+
+    @property
+    def model_type(self) -> str:
+        return self._model_type
 
     def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
         if nick_name in self._registry:
@@ -56,6 +63,7 @@ class LinuxAI:
         self._active_name = nick_name
         info = self._registry[nick_name]
         self._model_path = info["path"]
+        self._model_type = info.get("type", "")
         return True
 
     # ------------------------------------------------------------------ #
@@ -98,13 +106,11 @@ class LinuxAI:
     #  Inference (stub)
     # ------------------------------------------------------------------ #
 
-    def detect(
-        self, frame: np.ndarray, conf_th: float = 0.5, iou_th: float = 0.45
-    ) -> list:
+    def detect(self, frame: np.ndarray, **kwargs) -> list[Detection]:
         logger.warning("LinuxAI.detect() called but no NPU is available")
         return []
 
-    def classify(self, frame: np.ndarray, top_k: int = 1) -> list[tuple[int, float]]:
+    def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
         logger.warning("LinuxAI.classify() called but no NPU is available")
         return []
 
