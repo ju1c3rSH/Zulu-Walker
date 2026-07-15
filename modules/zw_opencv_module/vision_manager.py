@@ -20,6 +20,8 @@ from .ffmpeg_pusher import FFmpegPusher
 from .pipeline_camera import PipelineCamera
 from .performance import profiler
 
+profiler._enabled = False
+
 _module_dir = os.path.dirname(__file__)
 
 

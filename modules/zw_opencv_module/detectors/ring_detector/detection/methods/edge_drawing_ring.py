@@ -9,15 +9,16 @@ from modules.zw_opencv_module.models.ring import RingTarget
 
 
 class EdgeDrawingRingMethod(BaseRingDetectionMethod):
-    """Edge-drawing ring detection with color verification.
+    """Edge-drawing ring detection with ROI-based color verification.
 
-    Finds ellipse-shaped edges, then verifies the candidate contains the
-    target color.  Uses absolute pixel count (>=15px) to avoid the
-    hollow-center penalty inherent in fill-ratio thresholds.
+    Runs EdgeDrawing on grayscale (fast, C++ edge detector), fits ellipses
+    to dilated edge contours, then verifies target color ONLY on a small
+    ROI around each candidate ellipse.  No full-frame HSV, no full-frame
+    mask allocation, no Kalman.
     """
 
     AXIS_RATIO_MAX = 1.5
-    COLOR_MATCH_MIN_PX = 15  # absolute pixels of target color inside ellipse
+    COLOR_MATCH_MIN_PX = 15
 
     def __init__(self, detector=None):
         super().__init__(name="edge_drawing_ring", detector=detector)
@@ -26,10 +27,10 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
         if self.detector is None or self.detector.ed is None:
             return None
 
-        small, scale, small_hw = self._scale_frame(frame)
+        small, scale, _ = self._scale_frame(frame)
 
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-        bk = getattr(self.detector, "blur_kernel", 5)
+        bk = getattr(self.detector, "blur_kernel", 3)
         if bk % 2 == 0:
             bk += 1
         bs = getattr(self.detector, "blur_sigma", 1.5)
@@ -37,10 +38,9 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
 
         self.detector.ed.detectEdges(blurred)
         edges = self.detector.ed.getEdgeImage()
-        self.detector._last_edge_preview = edges.copy()
 
-        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-        color_mask = self._build_color_mask(hsv, target_color)
+        if edges is None or cv2.countNonZero(edges) < 30:
+            return None
 
         ek = getattr(self.detector, "edge_morph_kernel", 3)
         ei = getattr(self.detector, "edge_morph_iterations", 1)
@@ -48,12 +48,13 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
             ek += 1
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ek, ek))
         dilated = cv2.morphologyEx(edges, cv2.MORPH_DILATE, kernel, iterations=ei)
+        self.detector._last_edge_preview = dilated
+
         contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        min_area = getattr(self.detector, "min_area", 100)
+        min_area = getattr(self.detector, "min_area", 150)
         best = None
         best_score = 0.0
-        total_candidates = 0
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -66,10 +67,12 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
             axis_ratio = max(a, b) / max(min(a, b), 1)
             if axis_ratio > self.AXIS_RATIO_MAX:
                 continue
-            total_candidates += 1
 
-            color_px = self._count_color_in_ellipse(color_mask, int(cx), int(cy),
-                                                    int(a / 2), int(b / 2), angle)
+            color_px = self._verify_color_on_roi(
+                small, int(cx), int(cy),
+                int(a / 2), int(b / 2), angle,
+                target_color,
+            )
             if color_px < self.COLOR_MATCH_MIN_PX:
                 continue
 
@@ -80,46 +83,48 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
 
             if score > best_score:
                 best_score = score
-                orig_cx = cx / scale
-                orig_cy = cy / scale
-                best = (orig_cx, orig_cy)
-
-        if not hasattr(self.detector, '_ring_log_frame'):
-            self.detector._ring_log_frame = 0
-        self.detector._ring_log_frame += 1
-        frame_no = self.detector._ring_log_frame
-
-        if frame_no % 60 == 0:
-            if best is not None:
-                print(f"[EdgeDrawRing] target={target_color.name} "
-                      f"contours={len(contours)} candidates={total_candidates} "
-                      f"best: score={best_score:.2f} center=({best[0]:.0f},{best[1]:.0f})")
-            else:
-                mask_px = cv2.countNonZero(color_mask) if color_mask is not None else 0
-                print(f"[EdgeDrawRing] target={target_color.name} "
-                      f"contours={len(contours)} candidates={total_candidates} "
-                      f"color_mask={mask_px}px no match")
+                best = (cx / scale, cy / scale)
 
         if best is None:
             return None
 
         return create_ring_target(best, target_color, 100.0)
 
-    def _build_color_mask(self, hsv: np.ndarray, color: Color) -> Optional[np.ndarray]:
-        ranges = self.detector.color_ranges.get(color, [])
-        if not ranges:
-            return None
-        mask = None
-        for lower, upper in ranges:
-            chunk = cv2.inRange(hsv, lower, upper)
-            mask = chunk if mask is None else cv2.bitwise_or(mask, chunk)
-        return mask
+    def _verify_color_on_roi(self, bgr_frame, cx, cy, ra, rb, angle, target_color):
+        h, w = bgr_frame.shape[:2]
+        pad = 4
+        half = max(ra, rb) + pad
 
-    def _count_color_in_ellipse(self, color_mask, cx, cy, ra, rb, angle):
-        if color_mask is None:
+        x1 = max(0, cx - half)
+        y1 = max(0, cy - half)
+        x2 = min(w, cx + half)
+        y2 = min(h, cy + half)
+        if x2 <= x1 or y2 <= y1:
             return 0
-        h, w = color_mask.shape[:2]
-        roi_mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.ellipse(roi_mask, (cx, cy), (ra, rb), angle, 0, 360, 255, -1)
-        intersection = cv2.bitwise_and(color_mask, color_mask, mask=roi_mask)
+
+        roi_bgr = bgr_frame[y1:y2, x1:x2]
+        local_cx = cx - x1
+        local_cy = cy - y1
+
+        roi_hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+
+        ranges = self.detector.color_ranges.get(target_color, [])
+        if not ranges:
+            return 0
+        roi_mask = None
+        for lower, upper in ranges:
+            chunk = cv2.inRange(roi_hsv, lower, upper)
+            roi_mask = chunk if roi_mask is None else cv2.bitwise_or(roi_mask, chunk)
+        if roi_mask is None or cv2.countNonZero(roi_mask) == 0:
+            return 0
+
+        roi_h, roi_w = roi_hsv.shape[:2]
+        ellipse_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+        try:
+            cv2.ellipse(ellipse_mask, (int(local_cx), int(local_cy)),
+                        (ra, rb), angle, 0, 360, 255, -1)
+        except cv2.error:
+            return 0
+
+        intersection = cv2.bitwise_and(roi_mask, roi_mask, mask=ellipse_mask)
         return cv2.countNonZero(intersection)
