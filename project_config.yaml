@@ -1,23 +1,24 @@
-platform: linux
+platform: maixcam2
 
 cameras:
-  - camera_id: "cargo"
+  - camera_id: "cam0"
     source: 0
-    width: 640
-    height: 480
-    fps: 120
-    camera_stream_queue_size: 2
-    focal_length_mm: 2.885
-    sensor_width_mm: 3.6
-    sensor_height_mm: 2.7
+    width: 320
+    height: 240
+    fps: 60
+    camera_stream_queue_size: 3
 
-  - camera_id: "qr"
-    source: 2
-    width: 640
-    height: 480
-    fps: 30
-    camera_stream_queue_size: 2
+# Demo phase — no UART device connected; MaixCam2Uart handles absence gracefully
+# uart_defaults:
+#   port: "/dev/ttyS4"
+#   baudrate: 921600
 
-uart_defaults:
-  port: "/dev/ttyS4"
-  baudrate: 921600
+ai:
+  models:
+    - nick_name: "yolo"
+      model: "/root/models/yolo11n.mud"
+      model_type: "yolo"
+    - nick_name: "hand"
+      model: "/root/models/hand_landmarks.mud"
+      model_type: "hand_landmarks"
+  active: "yolo"
