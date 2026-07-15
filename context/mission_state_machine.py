@@ -846,6 +846,7 @@ class MissionStateMachine(BaseStateMachine):
             "batch": self.context.current_batch,
             "step": self.context.current_step,
             "cargo_count": self.context.cargo_count,
+            "target_color": self.context.target_color.name if self.context.target_color else "",
             "visual_state": self.context.visual_state,
             "visual_flags": self.context.visual_flags,
             "zone": self.context.current_zone,
