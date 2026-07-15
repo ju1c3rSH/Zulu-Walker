@@ -13,3 +13,4 @@ logs/
 .vscode/settings.json
 .vscode/launch.json
 logs/performance.log
+projects/
