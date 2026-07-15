@@ -70,6 +70,7 @@ class TrackCargoProcessor(Processor):
                 "coordinate": (cx, cy),
                 "radius": item.radius,
                 "target_color": target_color,
+                "is_predicted": item.is_predicted,
             },
         )
 
@@ -80,6 +81,10 @@ class TrackCargoProcessor(Processor):
         data = result.result_data
         target_found = data.get("target_found", False)
         if not target_found:
+            return frame
+
+        is_predicted = data.get("is_predicted", False)
+        if is_predicted:
             return frame
 
         coordinate = data.get("coordinate")
