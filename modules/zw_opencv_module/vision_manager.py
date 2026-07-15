@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import traceback
+from collections import deque
 from threading import Thread
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -46,6 +47,7 @@ class VisionManager:
 
         self._composed_frame = None
         self._any_fresh = False
+        self._pending_results: deque = deque(maxlen=5)
 
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
@@ -128,11 +130,7 @@ class VisionManager:
                         pass
 
                 if self._event_bus:
-                    try:
-                        from context.events import FrameResult
-                        self._event_bus.publish(FrameResult(all_results))
-                    except ImportError:
-                        pass
+                    self._pending_results.append(all_results)
 
                 profiler.stop("total")
                 if any_fresh:
@@ -151,7 +149,7 @@ class VisionManager:
         pipeline_ids = []
         any_fresh = False
 
-        for pid, pipe in self._pipelines.items():
+        for pid, pipe in list(self._pipelines.items()):
             frame, results = pipe.process_frame(fps=self._fps)
             if frame is not None:
                 any_fresh = True
@@ -169,6 +167,17 @@ class VisionManager:
 
     def compose_frame(self) -> Optional[np.ndarray]:
         return self._composed_frame
+
+    def drain_results(self):
+        results = []
+        while self._pending_results:
+            results.append(self._pending_results.popleft())
+        return results
+
+    def release_pipeline(self, pipeline_id: str) -> None:
+        pipe = self._pipelines.pop(pipeline_id, None)
+        if pipe is not None and hasattr(pipe.camera, 'release'):
+            pipe.camera.release()
 
     def _make_placeholder(self) -> np.ndarray:
         return np.zeros((480, 640, 3), dtype=np.uint8)
