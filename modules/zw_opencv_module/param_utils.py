@@ -16,10 +16,12 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from .detectors.circle_target_detector import DetectMethod, CircleTargetDetector
+from utils.log_util import log_print
 
 
 def get_default_params() -> Dict[str, Dict[str, Any]]:
     """获取各检测方法的默认参数"""
+
     return {
         "edge_contour_ellipse": {
             "ed_min_path_length": 50,
@@ -99,7 +101,7 @@ def load_detect_params(config_path: str) -> Tuple[DetectMethod, Dict[str, Dict[s
         return current_method, methods_params
 
     except Exception as e:
-        print(f"[param_utils] Failed to load config: {e}")
+        log_print(f"[param_utils] Failed to load config: {e}")
         return DetectMethod.EDGE_DRAWING_QUADS, default_params
 
 
@@ -187,7 +189,7 @@ def load_uv_params(config_path: str = None) -> Dict[str, Any]:
                 default_uv_params.update(data["uv_params"])
             return default_uv_params
     except Exception as e:
-        print(f"[param_utils] Failed to load UV config: {e}")
+        log_print(f"[param_utils] Failed to load UV config: {e}")
         return default_uv_params
 
 
@@ -285,7 +287,7 @@ def load_camera_params(config_path: str = None) -> Tuple[Dict[str, Any], set]:
                 return params, set(params.keys())
         return {}, set()
     except Exception as e:
-        print(f"[param_utils] Failed to load camera config: {e}")
+        log_print(f"[param_utils] Failed to load camera config: {e}")
         return {}, set()
 
 
@@ -314,7 +316,7 @@ def read_camera_params_from_capture(cap) -> Dict[str, Any]:
         except Exception:
             pass
 
-    print(f"[param_utils] Read camera HW params: {result}")
+    log_print(f"[param_utils] Read camera HW params: {result}")
     return result
 
 
@@ -328,7 +330,7 @@ def save_camera_params(params: Dict[str, Any], config_path: str = None):
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False)
     except Exception as e:
-        print(f"[param_utils] Failed to save camera config: {e}")
+        log_print(f"[param_utils] Failed to save camera config: {e}")
 
 
 def apply_camera_params_to_capture(cap, params: Dict[str, Any], user_keys: set = None):

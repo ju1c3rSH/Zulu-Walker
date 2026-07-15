@@ -9,6 +9,8 @@ import numpy as np
 import yaml
 
 from .param_panel import ParamPanel, METHOD_PARAMS
+from utils.log_util import log_print
+
 
 
 class PreviewMode(Enum):
@@ -54,7 +56,7 @@ class DebugWindow:
                         if method_name in METHOD_PARAMS:
                             self.current_method = method_name
             except Exception as e:
-                print(f"[DebugWindow] Failed to load current_method: {e}")
+                log_print(f"[DebugWindow] Failed to load current_method: {e}")
 
         if self.current_method in METHOD_PARAMS:
             self.param_panel = ParamPanel(
@@ -83,7 +85,7 @@ class DebugWindow:
                         self.param_panel.load_params(params)
 
         except Exception as e:
-            print(f"[DebugWindow] Failed to load config: {e}")
+            log_print(f"[DebugWindow] Failed to load config: {e}")
 
     def _save_config(self):
         self._save_pending = True
@@ -103,10 +105,10 @@ class DebugWindow:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False)
 
-            print(f"[DebugWindow] Config saved to {self.config_path}")
+            log_print(f"[DebugWindow] Config saved to {self.config_path}")
 
         except Exception as e:
-            print(f"[DebugWindow] Failed to save config: {e}")
+            log_print(f"[DebugWindow] Failed to save config: {e}")
 
     def _on_panel_change(self, method_name: str, params: Dict[str, Any]):
         if self.on_params_change:

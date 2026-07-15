@@ -22,18 +22,13 @@ class ConsoleCapture:
         with self._lock:
             if not self._installed:
                 return
-            self._file.write(text)
-            self._file.flush()
-        if text.strip():
-            from utils.debug_console import DebugConsole
-            dc = DebugConsole()
-            if dc._running:
-                for line in text.splitlines():
-                    stripped = line.rstrip()
-                    if stripped:
-                        dc.log(stripped)
-        with self._lock:
             self._history.append(text)
+        if text.strip():
+            from utils.log_util import log_print
+            for line in text.splitlines():
+                stripped = line.rstrip()
+                if stripped:
+                    log_print(stripped)
 
     def flush(self) -> None:
         with self._lock:

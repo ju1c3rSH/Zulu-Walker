@@ -6,6 +6,8 @@ from typing import Dict, Any, Optional, Callable, Tuple
 import cv2
 import numpy as np
 import yaml
+from utils.log_util import log_print
+
 
 
 class UVDebugWindow:
@@ -68,7 +70,7 @@ class UVDebugWindow:
                         if name in self.params:
                             self.params[name] = int(value)
         except Exception as e:
-            print(f"[UVDebugWindow] Failed to load config: {e}")
+            log_print(f"[UVDebugWindow] Failed to load config: {e}")
 
     def _save_config(self):
         self._save_pending = True
@@ -84,10 +86,10 @@ class UVDebugWindow:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False)
 
-            print(f"[UVDebugWindow] Config saved to {self.config_path}")
+            log_print(f"[UVDebugWindow] Config saved to {self.config_path}")
 
         except Exception as e:
-            print(f"[UVDebugWindow] Failed to save config: {e}")
+            log_print(f"[UVDebugWindow] Failed to save config: {e}")
 
     def setup_window(self):
         if self._window_created:
