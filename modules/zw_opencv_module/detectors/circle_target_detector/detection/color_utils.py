@@ -1,6 +1,8 @@
 from typing import Optional, Dict, List, Tuple
 import cv2
 import numpy as np
+from utils.log_util import log_print
+
 
 
 def detect_contour_color(
@@ -25,7 +27,7 @@ def detect_contour_color(
     mean_val = cv2.mean(roi_hsv, mask=mask)[:3]
 
     if debug_color:
-        print(f"[ColorDebug] HSV: H={mean_val[0]:.1f}, S={mean_val[1]:.1f}, V={mean_val[2]:.1f}")
+        log_print(f"[ColorDebug] HSV: H={mean_val[0]:.1f}, S={mean_val[1]:.1f}, V={mean_val[2]:.1f}")
 
     if mean_val[1] < color_s_min:
         return "Black"

@@ -2,6 +2,8 @@ import queue
 import sys
 import os
 import time
+from utils.log_util import log_print
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -198,15 +200,15 @@ class UartTest:
         response = self.serial.receive_line()
         
         if response:
-            print(f"Received: {response}")
+            log_print(f"Received: {response}")
             if response == test_string:
-                print("✓ Echo test passed!")
+                log_print("✓ Echo test passed!")
                 return True
             else:
-                print(f"✗ Echo test failed: Expected '{test_string}', got '{response}'")
+                log_print(f"✗ Echo test failed: Expected '{test_string}', got '{response}'")
                 return False
         else:
-            print("✗ Echo test failed: No response received")
+            log_print("✗ Echo test failed: No response received")
             return False
     def stop(self):
             """停止并断开连接"""
@@ -214,7 +216,7 @@ class UartTest:
                 self.serial.disconnect()
                 self.connected = False
                 self.running = False
-                print("UART test stopped")
+                log_print("UART test stopped")
                 
                 
 uart_test_instance = None

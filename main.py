@@ -1,6 +1,8 @@
 import os
 import sys
 import time
+from utils.log_util import log_print
+
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -26,7 +28,7 @@ def _push_coordinator_status(coordinator) -> None:
 
 
 def main():
-    print("0xfb709394")
+    log_print("0xfb709394")
 
     from context import EventBus, MissionCoordinator
     bus = EventBus()
@@ -55,7 +57,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"Unhandled exception: {e}")
+        log_print(f"Unhandled exception: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

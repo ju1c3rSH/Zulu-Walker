@@ -22,10 +22,12 @@ from .protocol import (
 )
 from hal.interface import Uart
 from .exceptions import UartError
+from utils.log_util import log_print
 
 
 class ParserState(enum.Enum):
     """State machine states for frame parsing."""
+
     WAITING_SOF = "WAITING_SOF"
     GOT_SOF = "GOT_SOF"
     GOT_LEN = "GOT_LEN"
@@ -284,7 +286,7 @@ class STM32UartInterface:
                 with self._state_lock:
                     self._last_arrived_zone = zone_id
                 self._logger.info(f"ARRIVED_AT_ZONE: zone={zone_id}")
-                print(f"[UART RX] ARRIVED zone={zone_id}")
+                log_print(f"[UART RX] ARRIVED zone={zone_id}")
                 if self._event_bus:
                     try:
                         from context.events import ArrivedEvent
@@ -298,7 +300,7 @@ class STM32UartInterface:
                 with self._state_lock:
                     self._last_pick_zone = zone_id
                 self._logger.info(f"PICK_AT_ZONE: zone={zone_id}")
-                print(f"[UART RX] PICK zone={zone_id}")
+                log_print(f"[UART RX] PICK zone={zone_id}")
                 for cb in self._pick_callbacks:
                     try:
                         cb(zone_id)
@@ -311,12 +313,12 @@ class STM32UartInterface:
                 with self._state_lock:
                     self._current_zone = zone_id
                 self._logger.info(f"SET_ZONE: zone={zone_id}")
-                print(f"[UART RX] SET zone={zone_id}")
+                log_print(f"[UART RX] SET zone={zone_id}")
 
         elif frame.frame_type == TYPE_CMD_FROM_MCU:
             parsed = parse_cmd_payload(frame.payload)
             if parsed is not None:
-                print(f"[UART RX] CMD_FROM_MCU cmd=0x{parsed[0]:02X} args={parsed[1]}")
+                log_print(f"[UART RX] CMD_FROM_MCU cmd=0x{parsed[0]:02X} args={parsed[1]}")
                 if self._event_bus:
                     try:
                         from context.events import McuCmdReceived
@@ -328,7 +330,7 @@ class STM32UartInterface:
         elif frame.frame_type == TYPE_ACTION_DONE:
             parsed = parse_action_done_payload(frame.payload)
             if parsed is not None:
-                print(f"[UART RX] ACTION_DONE action={parsed[0]} result={parsed[1]}")
+                log_print(f"[UART RX] ACTION_DONE action={parsed[0]} result={parsed[1]}")
                 if self._event_bus:
                     try:
                         from context.events import ActionDoneEvent
@@ -351,7 +353,7 @@ class STM32UartInterface:
         elif frame.frame_type == TYPE_REQUEST_SYNC:
             parsed = parse_request_sync_payload(frame.payload)
             if parsed is not None:
-                print(f"[UART RX] REQUEST_SYNC state={parsed}")
+                log_print(f"[UART RX] REQUEST_SYNC state={parsed}")
                 if self._event_bus:
                     try:
                         from context.events import RequestSyncEvent
@@ -364,7 +366,7 @@ class STM32UartInterface:
             parsed = parse_emergency_stop_payload(frame.payload)
             if parsed is not None:
                 self._logger.error(f"EMERGENCY_STOP reason={parsed}")
-                print(f"[UART RX] EMERGENCY_STOP reason={parsed}")
+                log_print(f"[UART RX] EMERGENCY_STOP reason={parsed}")
                 if self._event_bus:
                     try:
                         from context.events import EmergencyStopEvent
@@ -443,7 +445,7 @@ class STM32UartInterface:
                     self._logger.info(
                         f"Sent error frame: type={error_type}, value={error_value}"
                     )
-                    print(f"[UART TX] ERROR type={error_type} value={error_value}")
+                    log_print(f"[UART TX] ERROR type={error_type} value={error_value}")
                     return True
                 else:
                     self._logger.error(
@@ -470,26 +472,26 @@ if __name__ == "__main__":
     )
 
     # Test frame parser
-    print("=== Frame Parser Test ===")
+    log_print("=== Frame Parser Test ===")
     parser = FrameParser()
 
     # Test SET_ZONE frame for zone 5: AA 02 04 05 01
     test_frame = bytes([0xAA, 0x02, 0x04, 0x05, 0x01])
     frames = parser.feed(test_frame)
-    print(f"Parsed frames: {frames}")
+    log_print(f"Parsed frames: {frames}")
     if frames:
-        print(f"  Type: 0x{frames[0].frame_type:02X}, Payload: {frames[0].payload.hex()}")
+        log_print(f"  Type: 0x{frames[0].frame_type:02X}, Payload: {frames[0].payload.hex()}")
 
     # Test ERROR frame: type=0, value=-3
-    print("\n=== Error Frame Build Test ===")
+    log_print("\n=== Error Frame Build Test ===")
     from protocol import build_error_frame
     error_frame = build_error_frame(0, -3)
-    print(f"Error frame: {error_frame.hex()}")
+    log_print(f"Error frame: {error_frame.hex()}")
 
     # Demo usage (requires actual hardware)
-    print("\n=== Hardware Demo ===")
-    print("To test with hardware, run:")
-    print("  with STM32UartInterface('/dev/ttyS4', 921600) as uart:")
-    print("      while True:")
-    print("          print(f'Zone: cur={uart.get_current_zone()}')")
-    print("          time.sleep(0.1)")
+    log_print("\n=== Hardware Demo ===")
+    log_print("To test with hardware, run:")
+    log_print("  with STM32UartInterface('/dev/ttyS4', 921600) as uart:")
+    log_print("      while True:")
+    log_print("          log_print(f'Zone: cur={uart.get_current_zone()}')")
+    log_print("          time.sleep(0.1)")

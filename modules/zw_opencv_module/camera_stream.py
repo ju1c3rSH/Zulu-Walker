@@ -6,6 +6,8 @@ from threading import Thread
 import numpy as np
 import cv2
 import sys
+from utils.log_util import log_print
+
 
 
 class CameraStream:
@@ -87,7 +89,7 @@ class CameraStream:
         while self.running:
             ret, frame = self.cap.read()
             if not ret:
-                print("Can't receive frame (stream end?). Exiting ...")
+                log_print("Can't receive frame (stream end?). Exiting ...")
                 self.running = False
                 break
 
@@ -109,14 +111,14 @@ class CameraStream:
                     self.queue.get_nowait()
                     self._frames_dropped += 1
                 except Exception as e:
-                    print(f"Error dropping frame from queue: {e}")
+                    log_print(f"Error dropping frame from queue: {e}")
                     pass
 
 
             try:
                 self.queue.put_nowait(frame)
             except Exception as e:
-                print(f"Error putting frame into queue: {e}")
+                log_print(f"Error putting frame into queue: {e}")
                 pass
 
     def read_frame(self):
