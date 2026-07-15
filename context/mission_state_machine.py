@@ -277,11 +277,11 @@ class _AlignRawState(State):
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         if ctx.ready_to_pick and not ctx.color_mismatch:
-            return MissionStateNames.PICK_RAW
+            return MissionStateNames[MissionState.PICK_RAW]
         if ctx.color_mismatch:
-            return MissionStateNames.ERROR
+            return MissionStateNames[MissionState.ERROR]
         if ctx.visual_fail:
-            return MissionStateNames.ERROR
+            return MissionStateNames[MissionState.ERROR]
         return None
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
@@ -345,19 +345,19 @@ class _CheckLoadState(State):
             ctx.target_color = ctx.current_target_color() or Color.RED
             if not batch_done:
                 if ctx.current_zone == Zone.RAW:
-                    return MissionStateNames.ALIGN_RAW
+                    return MissionStateNames[MissionState.ALIGN_RAW]
                 else:
-                    return MissionStateNames.ALIGN_ROUGH
+                    return MissionStateNames[MissionState.ALIGN_ROUGH]
             else:
                 if ctx.current_zone == Zone.RAW:
-                    return MissionStateNames.NAV_TO_ROUGH
+                    return MissionStateNames[MissionState.NAV_TO_ROUGH]
                 else:
                     # ROUGH抓取结束，清空标志位，然后导航到TEMP
                     ctx.picking_from_rough = False
-                    return MissionStateNames.NAV_TO_TEMP
+                    return MissionStateNames[MissionState.NAV_TO_TEMP]
         if ctx.state_entry_time + 3.0 < time() and not ctx.cargo_confirmed:
             ctx.error_code = 1
-            return MissionStateNames.ERROR
+            return MissionStateNames[MissionState.ERROR]
         return None
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
@@ -376,12 +376,12 @@ class _RingDiscoveryState(State):
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         if ctx.discovery_done:
             if ctx.current_zone == Zone.ROUGH:
-                return MissionStateNames.ALIGN_ROUGH
+                return MissionStateNames[MissionState.ALIGN_ROUGH]
             elif ctx.current_zone == Zone.TEMP:
-                return MissionStateNames.ALIGN_TEMP
+                return MissionStateNames[MissionState.ALIGN_TEMP]
         if ctx.state_entry_time + 30.0 < time():
             ctx.error_code = 50
-            return MissionStateNames.ERROR
+            return MissionStateNames[MissionState.ERROR]
         return None
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
@@ -415,8 +415,8 @@ class _AlignRoughState(State):
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         if ctx.picking_from_rough:
-            return MissionStateNames.PICK_ROUGH
-        return MissionStateNames.PLACE_ROUGH
+            return MissionStateNames[MissionState.PICK_ROUGH]
+        return MissionStateNames[MissionState.PLACE_ROUGH]
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
         pass
@@ -438,13 +438,13 @@ class _PlaceRoughState(State):
             ctx.picking_from_rough = True
             ctx.current_step = 0
             ctx.target_color = ctx.current_target_color() or Color.RED
-            return MissionStateNames.ALIGN_ROUGH
+            return MissionStateNames[MissionState.ALIGN_ROUGH]
 
         if not ctx.place_action_done:
             return None
         ctx.place_action_done = False
         if ctx.cargo_count > 0:
-            return MissionStateNames.ALIGN_ROUGH
+            return MissionStateNames[MissionState.ALIGN_ROUGH]
         # cargo_count == 0: 3 个物料全部放完，启动 1s 同步延时
         ctx.place_cycle_wait_start = time()
         return None
@@ -476,7 +476,7 @@ class _AlignTempState(State):
         ctx.ready_to_place = False
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
-        return MissionStateNames.PLACE_TEMP
+        return MissionStateNames[MissionState.PLACE_TEMP]
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
         pass
@@ -494,10 +494,10 @@ class _PlaceTempState(State):
             return None
         ctx.place_action_done = False
         if ctx.cargo_count > 0:
-            return MissionStateNames.ALIGN_TEMP
+            return MissionStateNames[MissionState.ALIGN_TEMP]
         if ctx.cargo_count < 0:
             print(f"[MissionSM] ERROR: cargo_count={ctx.cargo_count} negative")
-            return MissionStateNames.RETURN_HOME
+            return MissionStateNames[MissionState.RETURN_HOME]
         # cargo_count == 0
         if not ctx.is_batch_complete():
             print(f"[MissionSM] WARNING: cargo_count=0 but step={ctx.current_step} != 0")
@@ -505,8 +505,8 @@ class _PlaceTempState(State):
             ctx.current_batch = 2
             ctx.current_batch_order = list(ctx.second_batch_order)
             ctx.current_step = 0
-            return MissionStateNames.NAV_TO_RAW_SECOND
-        return MissionStateNames.RETURN_HOME
+            return MissionStateNames[MissionState.NAV_TO_RAW_SECOND]
+        return MissionStateNames[MissionState.RETURN_HOME]
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
         pass
@@ -521,7 +521,7 @@ class _ReturnHomeState(State):
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         if ctx.current_zone == Zone.START:
-            return MissionStateNames.FINISHED
+            return MissionStateNames[MissionState.FINISHED]
         return None
 
     def on_exit(self, ctx: MissionContext, to_state: str) -> None:
