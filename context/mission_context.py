@@ -71,6 +71,7 @@ class MissionCoordinator:
         self._is_linked = False
         self._running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
+        self._last_servo_log_ts: float = 0.0
 
     def connect_vision(self, vision_manager: VisionManager) -> None:
         self._vision_manager = vision_manager
@@ -84,10 +85,49 @@ class MissionCoordinator:
     def _send(self, frame: bytes) -> bool:
         if self._uart_sender:
             try:
-                return self._uart_sender(frame)
+                ok = self._uart_sender(frame)
+                if ok and len(frame) >= 4 and frame[0] == 0xAA:
+                    self._log_uart_tx(frame)
+                return ok
             except Exception:
                 return False
         return False
+
+    def _log_uart_tx(self, frame: bytes):
+        frame_type = frame[2]
+        payload = frame[3:-1]
+
+        if frame_type == 0x11:  # STATUS_FROM_VISION
+            state_id, visual, flags, cargo = payload[0], payload[1], payload[2], payload[3]
+            state_name = MissionStateNames.get(state_id, f"UNKNOWN({state_id})")
+            print(f"[UART TX] STATUS state={state_id}({state_name}) visual={visual} flags=0x{flags:02x} cargo={cargo}")
+
+        elif frame_type == 0x12:  # QR_RESULT
+            qr_str = payload[1:1 + payload[0]].decode("ascii", errors="replace")
+            print(f"[UART TX] QR_RESULT qr=\"{qr_str}\"")
+
+        elif frame_type == 0x13:  # COLOR_RESULT
+            print(f"[UART TX] COLOR_RESULT color={payload[0]} conf={payload[1]}")
+
+        elif frame_type == 0x16:  # REQUEST_SYNC
+            state = payload[0]
+            state_name = MissionStateNames.get(state, f"UNKNOWN({state})")
+            print(f"[UART TX] REQUEST_SYNC state={state}({state_name})")
+
+        elif frame_type == 0x17:  # VISUAL_SERVO_DATA — 限速 1s
+            now = time.time()
+            if now - self._last_servo_log_ts >= 1.0:
+                self._last_servo_log_ts = now
+                err_x = int.from_bytes(payload[0:2], "little", signed=True)
+                err_y = int.from_bytes(payload[2:4], "little", signed=True)
+                print(f"[UART TX] VISUAL_SERVO err_x={err_x} err_y={err_y} flags=0x{payload[4]:02x} state={payload[5]}")
+
+        elif frame_type == 0x18:  # EMERGENCY_STOP
+            print(f"[UART TX] EMERGENCY_STOP reason={payload[0]}")
+
+        elif frame_type == 0x01:  # ERROR
+            err_value = int.from_bytes(payload[1:3], "little", signed=True)
+            print(f"[UART TX] ERROR type={payload[0]} value={err_value}")
 
     def _enqueue_sm(self, fn: Callable) -> None:
         with self._sm_lock:
