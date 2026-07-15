@@ -103,7 +103,7 @@ class CargoDetector:
         # EdgeDrawing 初始化（若不可用则默认使用 FAST_CIRCLE）
         self.ed = None
         self._init_edge_drawing()
-        self.detect_method = DetectMethod.FAST_CIRCLE
+        self.detect_method = DetectMethod.EDGE_DRAWING_CIRCLE
 
         self._kf_q_base = 0.2
         self._kf_q_vel_base = 0.15
@@ -111,7 +111,7 @@ class CargoDetector:
 
         self.roi_size = 150
         self.max_roi_miss = 5
-        self.min_circularity = 0.75
+        self.min_circularity = 0.45
         self.min_area = 100
         self.smooth_window = 5
         self.kernel_open = 5
