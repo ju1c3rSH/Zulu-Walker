@@ -20,6 +20,7 @@ def _push_coordinator_status(coordinator) -> None:
     dc.set("cargo_count", str(sm_info.get("cargo_count", "-")))
     dc.set("batch", str(sm_info.get("batch", "-")))
     dc.set("step", str(sm_info.get("step", "-")))
+    dc.set("target_color", sm_info.get("target_color", "-"))
 
 
 def main():
