@@ -155,6 +155,9 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             print(f"EdgeDrawing: Color {target_color} is not in the supported color ranges.")
             return None
         raw_ranges = self.detector.color_ranges[target_color]
+        if not raw_ranges:
+            print(f"EdgeDrawing: Empty color_ranges for {target_color}.")
+            return None
 
         # Step 1 — coarse mask: H only, full S/V
         mask_coarse = None
@@ -175,11 +178,8 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         # Step 2 — compute adaptive S/V lower bounds
         s_ch = hsv[:, :, 1][mask_coarse > 0]
         v_ch = hsv[:, :, 2][mask_coarse > 0]
-        if len(s_ch) < 10:
-            s_low, v_low = 30, 0
-        else:
-            s_low = int(np.percentile(s_ch, self.SV_PERCENTILE))
-            v_low = int(np.percentile(v_ch, self.SV_PERCENTILE))
+        s_low = int(np.percentile(s_ch, self.SV_PERCENTILE))
+        v_low = int(np.percentile(v_ch, self.SV_PERCENTILE))
 
         # Step 3 — EMA smoothing across frames
         if ts._ema_s is None:
