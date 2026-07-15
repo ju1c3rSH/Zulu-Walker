@@ -23,6 +23,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         super().__init__(name=name, detector=detector)
 
     def detect(self, frame: np.ndarray, target_color: Color) -> Optional[CargoItem]:
+        print(f"[ED] detect() called, ed={self.detector.ed is not None}, method={self.detector.detect_method}")
         ts = self.detector._get_tracking(target_color)
         small, scale = self._scale_frame(frame)
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
@@ -93,7 +94,9 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
 
     def _detect_circle(self, bgr: np.ndarray, hsv: np.ndarray,
                        ts, target_color: Color) -> Tuple[Optional[Tuple[float, float]], Optional[float]]:
+        print(f"[ED] _detect_circle() called, ed={self.detector.ed is not None}")
         if self.detector.ed is None:
+            print("[ED] ed is None — returning early!")
             return None, None
 
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -151,6 +154,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
 
     def _build_color_mask(self, hsv: np.ndarray, ts,
                           target_color: Color) -> Optional[np.ndarray]:
+        print(f"[ED] _build_color_mask() called, target={target_color}")
         if target_color not in self.detector.color_ranges:
             print(f"EdgeDrawing: Color {target_color} is not in the supported color ranges.")
             return None
