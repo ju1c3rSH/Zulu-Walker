@@ -1,3 +1,4 @@
+import time
 import cv2
 import numpy as np
 from typing import Optional, Tuple, List
@@ -182,8 +183,15 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         # Step 2 — compute adaptive S/V lower bounds
         s_ch = hsv[:, :, 1][mask_coarse > 0]
         v_ch = hsv[:, :, 2][mask_coarse > 0]
-        s_low = int(np.percentile(s_ch, self.SV_PERCENTILE))
-        v_low = int(np.percentile(v_ch, self.SV_PERCENTILE))
+        _t0 = time.perf_counter()
+        _n = len(s_ch) // 20  # → 5th percentile via sorted index
+        s_sorted = np.sort(s_ch)
+        v_sorted = np.sort(v_ch)
+        s_low = int(s_sorted[max(0, _n)])
+        v_low = int(v_sorted[max(0, _n)])
+        _t1 = time.perf_counter()
+        if _t1 - _t0 > 0.01:
+            print(f"[ED] fast_percentile took {_t1-_t0:.3f}s, pixels={len(s_ch)}")
 
         # Step 3 — EMA smoothing across frames
         if ts._ema_s is None:
