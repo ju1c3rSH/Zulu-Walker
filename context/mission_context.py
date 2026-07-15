@@ -10,7 +10,7 @@ from .event_bus import EventBus
 from .events import (
     McuCmdReceived, ArrivedEvent, ActionDoneEvent,
     HeartbeatEvent, EmergencyStopEvent, RequestSyncEvent,
-    FrameResult, QRResult,
+    QRResult,
 )
 from .mission_state_machine import (
     MissionStateMachine, MissionContext,
@@ -134,6 +134,10 @@ class MissionCoordinator:
             self._sm_queue.append(fn)
 
     def loop(self) -> None:
+        if self._vision_manager:
+            for all_results in self._vision_manager.drain_results():
+                self._process_vision_results(all_results)
+
         with self._sm_lock:
             while self._sm_queue:
                 self._sm_queue.popleft()()
@@ -164,7 +168,6 @@ class MissionCoordinator:
         self.event_bus.subscribe(HeartbeatEvent, self._on_heartbeat)
         self.event_bus.subscribe(EmergencyStopEvent, self._on_emergency)
         self.event_bus.subscribe(RequestSyncEvent, self._on_request_sync)
-        self.event_bus.subscribe(FrameResult, self._on_vision_results)
         self.event_bus.subscribe(QRResult, self._on_qr_result_event)
 
     def _wire_state_actions(self) -> None:
@@ -256,6 +259,7 @@ class MissionCoordinator:
             self._active_task = task_name
         elif task_name in ("track_cargo", "ring_discovery"):
             vm.enable_task("cam_cargo", task_name)
+            vm.release_pipeline("cam_qr")
             if color is not None:
                 self.mission_sm.context.target_color = color
                 pipe = vm.get_pipeline("cam_cargo")
@@ -364,8 +368,8 @@ class MissionCoordinator:
                 self.mission_sm.context.cargo_count,
             ))
 
-    def _on_vision_results(self, event: FrameResult) -> None:
-        for camera_id, results in event.all_results.items():
+    def _process_vision_results(self, all_results: dict) -> None:
+        for camera_id, results in all_results.items():
             for task_name, vision_result in results.items():
                 if not isinstance(vision_result, VisionResult):
                     continue
