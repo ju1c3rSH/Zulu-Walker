@@ -2,7 +2,7 @@ platform: linux
 
 cameras:
   - camera_id: "cargo"
-    source: 0
+    source: 2
     width: 640
     height: 480
     fps: 120
@@ -12,7 +12,7 @@ cameras:
     sensor_height_mm: 2.7
 
   - camera_id: "qr"
-    source: 2
+    source: 0
     width: 640
     height: 480
     fps: 30

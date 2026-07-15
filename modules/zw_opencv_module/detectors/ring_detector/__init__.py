@@ -69,7 +69,7 @@ class RingDetector:
         self.edge_morph_kernel = 3
         self.edge_morph_iterations = 1
         self._init_edge_drawing()
-        self.detect_method = RingDetectMethod.FAST_RING
+        self.detect_method = RingDetectMethod.HEURISTIC_RING
 
         self.q_base = 0.2
         self.q_vel_base = 0.15
@@ -78,6 +78,7 @@ class RingDetector:
         self.max_roi_miss = 5
         self.min_area = 100
         self.smooth_window = 5
+        self._ring_log_frame = 0
 
         self.blur_kernel = 5
         self.blur_sigma = 1.5
@@ -120,9 +121,11 @@ class RingDetector:
     def _init_detection_methods(self):
         from .detection.methods.fast_ring import FastRingMethod
         from .detection.methods.edge_drawing_ring import EdgeDrawingRingMethod
+        from .detection.methods.heuristic_ring import HeuristicRingMethod
         self._methods = {
             RingDetectMethod.FAST_RING: FastRingMethod(detector=self),
             RingDetectMethod.EDGE_DRAWING_RING: EdgeDrawingRingMethod(detector=self),
+            RingDetectMethod.HEURISTIC_RING: HeuristicRingMethod(detector=self),
         }
 
     def _get_tracking(self, color: Color) -> _TrackingState:
@@ -156,7 +159,7 @@ class RingDetector:
 
     @staticmethod
     def get_supported_methods():
-        return [RingDetectMethod.FAST_RING, RingDetectMethod.EDGE_DRAWING_RING]
+        return [RingDetectMethod.FAST_RING, RingDetectMethod.EDGE_DRAWING_RING, RingDetectMethod.HEURISTIC_RING]
 
     def get_method_params(self, method: RingDetectMethod) -> dict:
         return {
