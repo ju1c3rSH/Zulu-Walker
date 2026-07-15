@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from hal.interface import Camera
+from hal.interface import AIInference, Camera
 
 from .task_manager import TaskManager, Task
 from .processors.base import VisionResult
@@ -13,6 +13,7 @@ from .processors.circle_target_processor import CircleTargetProcessor
 from .processors.qr_processor import QRCodeProcessor
 from .processors.cargo_processor import TrackCargoProcessor
 from .processors.ring_discovery_processor import RingDiscoveryProcessor
+from .processors.ai_inference_processor import AIInferenceProcessor
 
 
 class PipelineCamera:
@@ -21,6 +22,7 @@ class PipelineCamera:
         "QRCodeProcessor": QRCodeProcessor,
         "TrackCargoProcessor": TrackCargoProcessor,
         "RingDiscoveryProcessor": RingDiscoveryProcessor,
+        "AIInferenceProcessor": AIInferenceProcessor,
     }
 
     def __init__(
@@ -33,6 +35,7 @@ class PipelineCamera:
         sensor_height_mm: Optional[float] = None,
         image_width: int = 640,
         image_height: int = 480,
+        ai: Optional[AIInference] = None,
     ) -> None:
         self.pipeline_id = pipeline_id
         self.camera = camera
@@ -41,6 +44,7 @@ class PipelineCamera:
 
         self._last_frame: Optional[np.ndarray] = None
         self._last_results: Dict[str, VisionResult] = {}
+        self._ai: Optional[AIInference] = ai
 
         self._init_focal_calculator(
             focal_length_mm, sensor_width_mm, sensor_height_mm,
@@ -80,6 +84,8 @@ class PipelineCamera:
             if processor_cls is None:
                 continue
             processor = processor_cls(task_name)
+            if self._ai is not None and hasattr(processor, "set_ai"):
+                processor.set_ai(self._ai)
             task = Task(task_name, processor, task_enabled)
             self.task_manager.register_task(task)
 
