@@ -1,11 +1,10 @@
-from .serial_controller import SerialController
 from .log_util import LoggerFactory, ConfigurableLogger, UARTModuleLogger, DataPipelineLogger
 from .point import Point
 from .focal_distance_util import CameraIntrinsics, FocalDistanceCalculator, reference_size_dict
-from .camera_misc_util import CameraMiscUtil, CameraInfo
+from .camera_misc_util import CameraMiscUtil, DeviceCameraInfo
 __all__ = [
-    'SerialController', 'LoggerFactory', 'ConfigurableLogger',
+    'LoggerFactory', 'ConfigurableLogger',
     'UARTModuleLogger', 'DataPipelineLogger',
-    'Point', 'CameraMiscUtil', 'CameraInfo',
+    'Point', 'CameraMiscUtil', 'DeviceCameraInfo',
     'CameraIntrinsics', 'FocalDistanceCalculator', 'reference_size_dict'
 ]
