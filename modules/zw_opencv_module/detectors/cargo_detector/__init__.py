@@ -76,7 +76,7 @@ class CargoDetector:
         self.ed_nfa_validation = True
         self.edge_morph_kernel = 3
         self.edge_morph_iterations = 1
-        self.color_match_threshold = 0.6
+        self.color_match_threshold = 0.35
 
         # EdgeDrawing 初始化（若不可用则默认使用 FAST_CIRCLE）
         self.ed = None
