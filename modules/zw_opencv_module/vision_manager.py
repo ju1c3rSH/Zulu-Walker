@@ -13,6 +13,7 @@ import numpy as np
 import yaml
 
 from hal.camera_hub import CameraHub
+from hal.interface import AIInference
 
 from .frame_composer import FrameComposer
 from .ffmpeg_pusher import FFmpegPusher
@@ -23,12 +24,13 @@ _module_dir = os.path.dirname(__file__)
 
 
 class VisionManager:
-    def __init__(self, camera_hub: CameraHub, config_path: str = None) -> None:
+    def __init__(self, camera_hub: CameraHub, config_path: str = None, ai: Optional[AIInference] = None) -> None:
         self._hub = camera_hub
         self._config_path = config_path or os.path.join(
             _module_dir, "config", "vision_config.yaml"
         )
         self._pipelines: Dict[str, PipelineCamera] = {}
+        self._ai = ai
         self.frame_composer: Optional[FrameComposer] = None
         self.ffmpeg_pusher: Optional[FFmpegPusher] = None
         self._running = False
@@ -85,6 +87,7 @@ class VisionManager:
                 sensor_height_mm=sensor_height_mm,
                 image_width=pipe_cfg.get("width", 640),
                 image_height=pipe_cfg.get("height", 480),
+                ai=self._ai,
             )
             self._pipelines[pipeline_id] = pipe
 
