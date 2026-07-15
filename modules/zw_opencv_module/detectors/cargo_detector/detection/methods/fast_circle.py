@@ -212,7 +212,7 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         ts._radius_history.append(radius)
 
         final_center = smoothed if smoothed is not None else center
-        return self._build_cargo_item(final_center, target_color)
+        return self._build_cargo_item(final_center, target_color, radius)
 
     def _kalman_predict(self, ts,
                         measurement: Optional[Tuple[float, float]]
@@ -245,6 +245,7 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
 
         return None
 
-    def _build_cargo_item(self, center: Tuple[float, float], target_color: Color) -> CargoItem:
+    def _build_cargo_item(self, center: Tuple[float, float], target_color: Color,
+                          radius: Optional[float] = None) -> CargoItem:
         from ..target_creation import create_cargo_item
-        return create_cargo_item(center, target_color)
+        return create_cargo_item(center, target_color, radius=radius)
