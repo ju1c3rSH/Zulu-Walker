@@ -69,18 +69,21 @@ class RingDetector:
         self.edge_morph_kernel = 3
         self.edge_morph_iterations = 1
         self._init_edge_drawing()
-        self.detect_method = RingDetectMethod.HEURISTIC_RING
+        if _HAS_XIMGPROC:
+            self.detect_method = RingDetectMethod.EDGE_DRAWING_RING
+        else:
+            self.detect_method = RingDetectMethod.FAST_RING
 
         self.q_base = 0.2
         self.q_vel_base = 0.15
         self.max_lost_frames = 10
         self.roi_size = 150
         self.max_roi_miss = 5
-        self.min_area = 100
+        self.min_area = 150
         self.smooth_window = 5
         self._ring_log_frame = 0
 
-        self.blur_kernel = 5
+        self.blur_kernel = 3
         self.blur_sigma = 1.5
 
         self._last_mask = None
