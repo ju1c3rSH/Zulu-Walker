@@ -23,8 +23,8 @@ class FastRingMethod(BaseRingDetectionMethod):
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         mask = self._build_color_mask(hsv, target_color)
         morphed = self._morph_mask(mask)
-        self.detector._last_mask = mask.copy()
-        self.detector._last_morphed = morphed.copy()
+        self.detector._last_mask = mask
+        self.detector._last_morphed = morphed
 
         result = self._try_roi(small, hsv, morphed, ts, target_color, scale, small_hw)
         if result is None:
