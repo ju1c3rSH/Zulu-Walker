@@ -21,15 +21,15 @@ class BaseRingDetectionMethod(ABC):
     def detect(self, frame: np.ndarray, target_color: Color) -> Optional[RingTarget]:
         pass
 
-    def _scale_frame(self, frame: np.ndarray):
+    def _scale_frame(self, frame: np.ndarray, target_width: int = TARGET_W):
         h, w = frame.shape[:2]
-        if w == TARGET_W and h == TARGET_H:
+        if w == target_width:
             scale = 1.0
             small = frame
         else:
-            scale = TARGET_W / w
+            scale = target_width / w
             new_h = int(h * scale)
-            small = cv2.resize(frame, (TARGET_W, new_h), interpolation=cv2.INTER_AREA)
+            small = cv2.resize(frame, (target_width, new_h), interpolation=cv2.INTER_AREA)
         return small, scale, small.shape[:2]
 
     def _decide_roi(self, ts, scale: float, small_hw: tuple):

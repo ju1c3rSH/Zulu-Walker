@@ -2,7 +2,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from .base import BaseRingDetectionMethod
+from .base import BaseRingDetectionMethod, TARGET_W
 from ..target_creation import create_ring_target
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.ring import RingTarget
@@ -27,7 +27,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     AXIS_RATIO_MAX = 2.0
     CIRCULARITY_MIN = 0.40
     MORPH_KERNEL = 3
-    MORPH_CLOSE_ITER = 2
+    MORPH_CLOSE_ITER = 1
     _LOG_INTERVAL = 60
     _COLOR_MATCH_MIN_PX = 15
 
@@ -44,7 +44,16 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             return None
 
         ts = self.detector._get_tracking(target_color)
-        small, scale, small_hw = self._scale_frame(frame)
+
+        # During discovery (no tracking), process at half resolution for ~4x speedup
+        discovery_w = 320 if ts.last_center is None else TARGET_W
+        small, scale, small_hw = self._scale_frame(frame, discovery_w)
+
+        bk = getattr(self.detector, "blur_kernel", 5)
+        if bk % 2 == 0:
+            bk += 1
+        bs = getattr(self.detector, "blur_sigma", 1.5)
+        small = cv2.GaussianBlur(small, (bk, bk), bs)
 
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         mask = self._build_color_mask(hsv, target_color)
@@ -58,8 +67,8 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             return self._fallback_predict(ts, target_color)
 
         morphed = self._morph_mask(mask)
-        self.detector._last_mask = mask.copy()
-        self.detector._last_morphed = morphed.copy()
+        self.detector._last_mask = mask
+        self.detector._last_morphed = morphed
 
         result = self._try_roi(small, morphed, ts, target_color, scale, small_hw)
         if result is not None:
