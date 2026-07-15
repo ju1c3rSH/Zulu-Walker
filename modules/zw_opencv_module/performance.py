@@ -315,8 +315,8 @@ class PerformanceProfiler:
         lines.append("=" * 60)
 
         report = "\n".join(lines)
-        print(report)
-        self._logger.info(f"\n{report}")
+        # print(report)
+        # self._logger.info(f"\n{report}")
 
     def reset(self):
         """重置所有统计数据"""
