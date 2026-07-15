@@ -66,7 +66,11 @@ class Machine:
             )
 
         display = platform_mod.create_display()
-        uart = platform_mod.create_uart(**uart_config)
+        try:
+            uart = platform_mod.create_uart(**uart_config)
+        except Exception as e:
+            logger.warning("UART creation failed (non-fatal): %s", e)
+            uart = None
 
         # --- AI initialization ---
         ai: Optional[AIInference] = None

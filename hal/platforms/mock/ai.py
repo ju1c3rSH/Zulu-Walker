@@ -14,6 +14,7 @@ class MockAI:
     def __init__(self) -> None:
         self._registry: dict[str, dict] = {}
         self._active_name: str = ""
+        self._model_type: str = ""
 
     @property
     def models(self) -> list[str]:
@@ -22,6 +23,12 @@ class MockAI:
     @property
     def active_model(self) -> str:
         return self._active_name
+
+    @property
+    def model_type(self) -> str:
+        if self._active_name and self._active_name in self._registry:
+            return self._registry[self._active_name].get("type", "")
+        return ""
 
     def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
         self._registry[nick_name] = dict(path=model_path, type=model_type, kwargs=kwargs)
@@ -71,11 +78,11 @@ class MockAI:
             return self._registry[self._active_name]["path"]
         return ""
 
-    def detect(self, frame: np.ndarray, conf_th: float = 0.5, iou_th: float = 0.45) -> list[Detection]:
+    def detect(self, frame: np.ndarray, **kwargs) -> list[Detection]:
         logger.warning("MockAI: detect() called but no NPU available")
         return []
 
-    def classify(self, frame: np.ndarray, top_k: int = 1) -> list[tuple[int, float]]:
+    def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
         logger.warning("MockAI: classify() called but no NPU available")
         return []
 

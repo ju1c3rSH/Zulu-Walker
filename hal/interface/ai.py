@@ -1,9 +1,18 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol, TypedDict, Unpack, runtime_checkable
 
 import numpy as np
+
+
+class DetectKwargs(TypedDict, total=False):
+    conf_th: float
+    iou_th: float
+
+
+class ClassifyKwargs(TypedDict, total=False):
+    top_k: int
 
 
 @dataclass
@@ -38,6 +47,10 @@ class AIInference(Protocol):
 
     @property
     def active_model(self) -> str:
+        ...
+
+    @property
+    def model_type(self) -> str:
         ...
 
     def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
@@ -76,11 +89,15 @@ class AIInference(Protocol):
         ...
 
     def detect(
-        self, frame: np.ndarray, conf_th: float = 0.5, iou_th: float = 0.45
+        self, frame: np.ndarray,
+        **kwargs: Unpack[DetectKwargs]
     ) -> list[Detection]:
         ...
 
-    def classify(self, frame: np.ndarray, top_k: int = 1) -> list[tuple[int, float]]:
+    def classify(
+        self, frame: np.ndarray,
+        **kwargs: Unpack[ClassifyKwargs]
+    ) -> list[tuple[int, float]]:
         ...
 
     def get_mask(self, index: int = 0) -> Optional[np.ndarray]:
