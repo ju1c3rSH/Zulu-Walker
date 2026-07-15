@@ -664,6 +664,13 @@ class MissionStateMachine(BaseStateMachine):
             event=self.Events.ARRIVED_RAW
         )
 
+        # [Debug] NAV_TO_RAW -> RING_DISCOVERY (skip RAW zone, jump directly to ROUGH)
+        self.register_transition(
+            MissionStateNames[MissionState.NAV_TO_RAW],
+            MissionStateNames[MissionState.RING_DISCOVERY],
+            event=self.Events.ARRIVED_ROUGH
+        )
+
         # PICK_RAW -> CHECK_LOAD
         self.register_transition(
             MissionStateNames[MissionState.PICK_RAW],
@@ -768,6 +775,9 @@ class MissionStateMachine(BaseStateMachine):
                 return self.trigger(self.Events.ARRIVED_RAW)
         elif zone_id == Zone.ROUGH:
             if state == MissionStateNames[MissionState.NAV_TO_ROUGH]:
+                return self.trigger(self.Events.ARRIVED_ROUGH)
+            # [Debug] allow ROUGH arrival while still in NAV_TO_RAW
+            if state == MissionStateNames[MissionState.NAV_TO_RAW]:
                 return self.trigger(self.Events.ARRIVED_ROUGH)
         elif zone_id == Zone.TEMP:
             if state == MissionStateNames[MissionState.NAV_TO_TEMP]:

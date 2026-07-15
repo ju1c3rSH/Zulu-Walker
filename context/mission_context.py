@@ -219,23 +219,27 @@ class MissionCoordinator:
             self._deactivate_all_visual()
 
         elif cmd == CMD_START_RING_DISCOVERY:
-            if self.mission_sm.current_state != "RING_DISCOVERY":
-                return
-            try:
-                color_id = args[0] if len(args) >= 1 else 0
-                color = Color(color_id)
-            except (ValueError, KeyError):
-                return
-            self.visual_sm.stop()
-            self.visual_sm.start()
-            self._discovery_ready_frames = 0
-            self._discovery_ready_latched = False
-            self._discovery_color_sent = False
-            self._activate_task("ring_discovery", color)
-            self._enqueue_sm(lambda: self._apply_ring_discovery_start(color))
+            args_copy = args
+            self._enqueue_sm(lambda: self._on_mcu_start_ring_discovery(args_copy))
 
         elif cmd == CMD_DISCOVERY_DONE:
             self._enqueue_sm(lambda: self.mission_sm.on_discovery_done())
+
+    def _on_mcu_start_ring_discovery(self, args: bytes) -> None:
+        if self.mission_sm.current_state != "RING_DISCOVERY":
+            return
+        try:
+            color_id = args[0] if len(args) >= 1 else 0
+            color = Color(color_id)
+        except (ValueError, KeyError):
+            return
+        self.visual_sm.stop()
+        self.visual_sm.start()
+        self._discovery_ready_frames = 0
+        self._discovery_ready_latched = False
+        self._discovery_color_sent = False
+        self._activate_task("ring_discovery", color)
+        self._enqueue_sm(lambda: self._apply_ring_discovery_start(color))
 
     def _apply_ring_discovery_start(self, color: Color) -> None:
         self.mission_sm.context.discovery_color = color
