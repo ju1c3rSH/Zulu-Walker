@@ -8,6 +8,8 @@ import numpy as np
 import yaml
 
 from ..param_utils import CAMERA_PARAM_DEFS, load_camera_params, read_camera_params_from_capture
+from utils.log_util import log_print
+
 
 
 class CameraDebugWindow:
@@ -49,9 +51,9 @@ class CameraDebugWindow:
             data = {"camera_params": self.params.copy()}
             with open(self.config_path, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False)
-            print(f"[CameraDebugWindow] Config saved to {self.config_path}")
+            log_print(f"[CameraDebugWindow] Config saved to {self.config_path}")
         except Exception as e:
-            print(f"[CameraDebugWindow] Failed to save config: {e}")
+            log_print(f"[CameraDebugWindow] Failed to save config: {e}")
 
     def setup_window(self):
         if self._window_created:

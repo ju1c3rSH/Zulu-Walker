@@ -5,6 +5,8 @@ import cv2
 import numpy as np
 import threading
 from typing import Optional
+from utils.log_util import log_print
+
 
 class FFmpegPusher:
     def __init__(self, rtmp_url, fps=30, width=1280, height=720, use_hardware_accel=False):
@@ -55,7 +57,7 @@ class FFmpegPusher:
             self.rtmp_url
         ])
 
-        print(f"启动FFmpeg命令: {' '.join(command)}")
+        log_print(f"启动FFmpeg命令: {' '.join(command)}")
         
         
         self.process = await asyncio.create_subprocess_exec(
@@ -70,11 +72,11 @@ class FFmpegPusher:
             # 进程已退出，可能是参数不兼容
             stderr_output = await self.process.stderr.read()
             error_msg = stderr_output.decode('utf-8', errors='ignore')[:500]
-            print(f"FFmpeg进程立即退出 (返回码: {self.process.returncode})")
-            print(f"错误输出: {error_msg}")
+            log_print(f"FFmpeg进程立即退出 (返回码: {self.process.returncode})")
+            log_print(f"错误输出: {error_msg}")
 
             if self.use_hardware_accel and not self.fallback_to_software:
-                print("硬件编码器可能不兼容，尝试回退到软件编码...")
+                log_print("硬件编码器可能不兼容，尝试回退到软件编码...")
                 self.fallback_to_software = True
                 self.process = None
                 # 重新启动使用软件编码
@@ -99,17 +101,17 @@ class FFmpegPusher:
                         break
                     text = line.decode('utf-8', errors='ignore').strip()
                     if text:
-                        print(f"[{prefix}] {text}")
+                        log_print(f"[{prefix}] {text}")
                         # 检测硬件编码错误
                         error_keywords = ['failed', 'error', 'Invalid', 'unsupported', 'not found', 'Connection refused']
                         if any(keyword.lower() in text.lower() for keyword in error_keywords):
-                            print(f"[FFmpegPusher] 检测到可能的错误: {text[:200]}")
+                            log_print(f"[FFmpegPusher] 检测到可能的错误: {text[:200]}")
                             if 'h264_rkmpp' in text.lower() or 'rkmpp' in text.lower():
                                 self.hardware_encode_error = True
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    print(f"Error reading {prefix}: {e}")
+                    log_print(f"Error reading {prefix}: {e}")
                     break
 
         # 同时启动 stdout 和 stderr 读取任务
@@ -169,58 +171,58 @@ class FFmpegPusher:
     async def push_frame(self, frame):
         """推送一帧到FFmpeg"""
         if frame is None:
-            print("Warning: Received an empty frame. Skipping.")
+            log_print("Warning: Received an empty frame. Skipping.")
             return False
 
         if self.hardware_encode_error and self.use_hardware_accel and not self.fallback_to_software:
-            print("检测到硬件编码错误，尝试回退到软件编码...")
+            log_print("检测到硬件编码错误，尝试回退到软件编码...")
             self.fallback_to_software = True
             if self.process:
                 await self.close()
             await self.start()
 
         if self.process is None or self.process.stdin is None:
-            print("FFmpeg process not started or stdin closed")
+            log_print("FFmpeg process not started or stdin closed")
             return False
 
         if self.process.returncode is not None:
-            print(f"FFmpeg process has exited with code {self.process.returncode}")
+            log_print(f"FFmpeg process has exited with code {self.process.returncode}")
             await self.close()
             return False
 
         if frame.shape[0] != self.height or frame.shape[1] != self.width:
-            print(f"Warning: Frame size {frame.shape[:2]} doesn't match expected {self.height}x{self.width}")
+            log_print(f"Warning: Frame size {frame.shape[:2]} doesn't match expected {self.height}x{self.width}")
             frame = cv2.resize(frame, (self.width, self.height))
 
         try:
             data = frame.tobytes()
-            # print(f"[FFmpegPusher] Writing {len(data)} bytes to FFmpeg stdin")
+            # log_print(f"[FFmpegPusher] Writing {len(data)} bytes to FFmpeg stdin")
             self.process.stdin.write(data)
-            #print(f"[FFmpegPusher] Data written, calling drain...")
+            #log_print(f"[FFmpegPusher] Data written, calling drain...")
             await self.process.stdin.drain()
-            #print(f"[FFmpegPusher] Drain completed successfully")
+            #log_print(f"[FFmpegPusher] Drain completed successfully")
             return True
         except BrokenPipeError:
-            print("Error pushing frame: Broken pipe - FFmpeg process may have terminated")
+            log_print("Error pushing frame: Broken pipe - FFmpeg process may have terminated")
             await self.close()
 
             # 检查是否需要回退到软件编码
             if self.use_hardware_accel and not self.fallback_to_software:
-                print("硬件编码失败，尝试回退到软件编码...")
+                log_print("硬件编码失败，尝试回退到软件编码...")
                 self.fallback_to_software = True
                 # 重新启动使用软件编码
                 await self.start()
                 return await self.push_frame(frame)
             return False
         except Exception as e:
-            print(f"Error pushing frame: {type(e).__name__}: {e}")
+            log_print(f"Error pushing frame: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
             await self.close()
 
             # 检查是否需要回退到软件编码
             if self.use_hardware_accel and not self.fallback_to_software:
-                print("硬件编码失败，尝试回退到软件编码...")
+                log_print("硬件编码失败，尝试回退到软件编码...")
                 self.fallback_to_software = True
                 # 重新启动使用软件编码
                 await self.start()
@@ -250,7 +252,7 @@ class FFmpegPusher:
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=5.0)
             except asyncio.TimeoutError:
-                print("FFmpeg process didn't terminate in time, forcing kill")
+                log_print("FFmpeg process didn't terminate in time, forcing kill")
                 self.process.kill()
                 await self.process.wait()
 
@@ -281,7 +283,7 @@ class FFmpegPusher:
             future = asyncio.run_coroutine_threadsafe(self.start(), loop)
             return future.result(timeout=10.0)
         except Exception as e:
-            print(f"Error in start_sync: {e}")
+            log_print(f"Error in start_sync: {e}")
             return False
     def push_frame_sync(self, frame):
         """同步推送帧（使用后台事件循环，支持高频调用）"""
@@ -293,7 +295,7 @@ class FFmpegPusher:
             # 5秒超时，避免无限等待
             return future.result(timeout=5.0)
         except Exception as e:
-            print(f"Error in push_frame_sync: {e}")
+            log_print(f"Error in push_frame_sync: {e}")
             return False
 
     def close_sync(self):
@@ -307,7 +309,7 @@ class FFmpegPusher:
                 try:
                     future.result(timeout=10.0)
                 except Exception as e:
-                    print(f"Error during close: {e}")
+                    log_print(f"Error during close: {e}")
 
             # 停止事件循环
             with self._loop_lock:
@@ -320,12 +322,12 @@ class FFmpegPusher:
                     self._loop = None
                     self._loop_thread = None
         except Exception as e:
-            print(f"Error in close_sync: {e}")
+            log_print(f"Error in close_sync: {e}")
 
     def __del__(self):
         """析构函数，确保资源清理"""
         if self.process is not None and not self._stopped:
-            print("Warning: FFmpegPusher not properly closed. Forcing cleanup.")
+            log_print("Warning: FFmpegPusher not properly closed. Forcing cleanup.")
             # 注意：在析构函数中无法运行异步代码，所以只能尽力而为
             try:
                 loop = asyncio.get_event_loop()

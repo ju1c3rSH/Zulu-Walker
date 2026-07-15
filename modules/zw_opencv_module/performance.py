@@ -11,12 +11,13 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 import statistics
 
-from utils.log_util import LoggerFactory
+from utils.log_util import LoggerFactory, log_print
 
 
 @dataclass
 class TimingRecord:
     """单次计时记录"""
+
     name: str
     duration_ms: float
     timestamp: float = field(default_factory=time.time)
@@ -315,7 +316,7 @@ class PerformanceProfiler:
         lines.append("=" * 60)
 
         report = "\n".join(lines)
-        # print(report)
+        # log_print(report)
         # self._logger.info(f"\n{report}")
 
     def reset(self):

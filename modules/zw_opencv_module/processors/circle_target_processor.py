@@ -7,6 +7,8 @@ from ..models import Color
 from utils.focal_distance_util import reference_size_dict
 
 from .base import Processor, VisionResult
+from utils.log_util import log_print
+
 
 
 class CircleTargetProcessor(Processor):
@@ -115,7 +117,7 @@ class CircleTargetProcessor(Processor):
             short_edge = min(edges)
 
             if self.detector.is_uv_spot_detected:
-                #print("[CircleTargetProcessor] UV spot detected, target may be occluded")
+                #log_print("[CircleTargetProcessor] UV spot detected, target may be occluded")
                 uv_center = self.detector.uv_spot_center
             else:
                 uv_center = None
@@ -151,7 +153,7 @@ class CircleTargetProcessor(Processor):
             )
 
         except Exception as e:
-            print(f"[CircleTargetProcessor] Error processing frame: {e}")
+            log_print(f"[CircleTargetProcessor] Error processing frame: {e}")
             import traceback
 
             traceback.print_exc()
@@ -228,7 +230,7 @@ class CircleTargetProcessor(Processor):
             target_info = ""
             if target_found and target:
                 target_info = f" | Target: {target.center_coordinates} | Error: X={percent_error_x:+d}, Y={percent_error_y:+d}"
-            print(f"[CircleTargetProcessor] FPS: {self._fps:.1f} | State: {status}{target_info}")
+            log_print(f"[CircleTargetProcessor] FPS: {self._fps:.1f} | State: {status}{target_info}")
             self._last_logged_target_found = target_found
 
     def draw_result(self, frame: np.ndarray, result: VisionResult) -> np.ndarray:

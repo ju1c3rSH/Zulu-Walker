@@ -3,6 +3,8 @@ import cv2
 import numpy as np
 from typing import Optional, Tuple, Dict, Any
 from collections import deque
+from utils.log_util import log_print
+
 
 try:
     cv2.ximgproc.createEdgeDrawing
@@ -173,7 +175,7 @@ class CargoDetector:
         if method == self.detect_method:
             return True
         if method == DetectMethod.EDGE_DRAWING_CIRCLE and self.ed is None:
-            print("EdgeDrawing method is not available currently, please check your python lib installation.")
+            log_print("EdgeDrawing method is not available currently, please check your python lib installation.")
             return False
         self.detect_method = method
         self._reset_all_tracking()

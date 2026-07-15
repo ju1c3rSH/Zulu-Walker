@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from time import time
 
 from utils.state_machine.base import BaseStateMachine, State
+from utils.log_util import log_print
 
 _SEARCH_DETECT_THRESHOLD = 10
 _TRACKING_LOST_THRESHOLD = 5
@@ -20,6 +21,7 @@ _TRACKING_LOST_THRESHOLD = 5
 @dataclass
 class VisualContext:
     """视觉状态机上下文"""
+
 
     confidence: float = 0.0
     target_center: Optional[tuple] = None
@@ -46,7 +48,7 @@ class IdleState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("visual_state", "IDLE")
-        print("[VisualStateMachine] Enter IDLE")
+        log_print("[VisualStateMachine] Enter IDLE")
         context.reset_stats()
         context.error_code = 0
         context.target_found = False
@@ -62,7 +64,7 @@ class SearchState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("visual_state", "SEARCH")
-        print("[VisualStateMachine] Enter SEARCH")
+        log_print("[VisualStateMachine] Enter SEARCH")
         context.reset_stats()
         context.state_entry_time = time()
 
@@ -79,7 +81,7 @@ class TrackingState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("visual_state", "TRACKING")
-        print("[VisualStateMachine] Enter TRACKING")
+        log_print("[VisualStateMachine] Enter TRACKING")
         context.consecutive_detected_frames = 0
 
     def on_execute(self, context: VisualContext) -> Optional[str]:
@@ -95,7 +97,7 @@ class RecoveryState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("visual_state", "RECOVERY")
-        print("[VisualStateMachine] Enter RECOVERY")
+        log_print("[VisualStateMachine] Enter RECOVERY")
         context.reset_stats()
 
     def on_execute(self, context: VisualContext) -> Optional[str]:
@@ -109,7 +111,7 @@ class FailState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("visual_state", f"FAIL({context.error_code})")
-        print(f"[VisualStateMachine] Enter FAIL (error_code={context.error_code})")
+        log_print(f"[VisualStateMachine] Enter FAIL (error_code={context.error_code})")
 
     def on_execute(self, context: VisualContext) -> Optional[str]:
         return None

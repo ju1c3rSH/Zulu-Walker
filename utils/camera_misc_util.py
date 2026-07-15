@@ -1,5 +1,7 @@
 import cv2, subprocess, re
 from dataclasses import dataclass
+from utils.log_util import log_print
+
 
 
 @dataclass
@@ -51,7 +53,7 @@ class CameraMiscUtil:
                     CameraMiscUtil.process_device_group(current_name, device_nodes)
                 )
         except Exception as e:
-            print(f"Error finding cameras: {e}")
+            log_print(f"Error finding cameras: {e}")
 
         return cameras
 

@@ -1,3 +1,5 @@
+from utils.log_util import log_print
+
 # -*- coding: utf-8 -*-
 """
 独立检测参数调试器
@@ -93,7 +95,7 @@ class DebugDetector:
         pass
 
     def start(self):
-        print(f"[DebugDetector] Opening camera {self.camera_source}...")
+        log_print(f"[DebugDetector] Opening camera {self.camera_source}...")
         self.stream = CameraStream(self.camera_source, self.width, self.height)
 
         self.debug_window = DebugWindow(
@@ -107,7 +109,7 @@ class DebugDetector:
                 on_params_change=self._on_uv_params_change
             )
             self.uv_debug_window.setup_window()
-            print("[DebugDetector] UV debug window enabled.")
+            log_print("[DebugDetector] UV debug window enabled.")
 
         if self.debug_cam:
             self.cam_debug_window = CameraDebugWindow(
@@ -115,10 +117,10 @@ class DebugDetector:
                 on_params_change=self._on_cam_params_change
             )
             self.cam_debug_window.setup_window()
-            print("[DebugDetector] Camera params debug window enabled.")
+            log_print("[DebugDetector] Camera params debug window enabled.")
 
         self._running = True
-        print("[DebugDetector] Started. Press 'q' or ESC to quit.")
+        log_print("[DebugDetector] Started. Press 'q' or ESC to quit.")
 
         self._run_loop()
 
@@ -180,7 +182,7 @@ class DebugDetector:
         self._cleanup()
 
     def _cleanup(self):
-        print("[DebugDetector] Cleaning up...")
+        log_print("[DebugDetector] Cleaning up...")
         if self.debug_window:
             self.debug_window.destroy_window()
         if self.uv_debug_window:
@@ -190,7 +192,7 @@ class DebugDetector:
         if self.stream:
             self.stream.release()
         cv2.destroyAllWindows()
-        print("[DebugDetector] Stopped.")
+        log_print("[DebugDetector] Stopped.")
 
     def stop(self):
         self._running = False

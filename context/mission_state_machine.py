@@ -19,6 +19,7 @@ from typing import Optional, List, Dict, Any, Deque
 from time import time
 
 from utils.state_machine.base import BaseStateMachine, State
+from utils.log_util import log_print
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.cargo import CargoSet, CargoZone
 from modules.zw_uart_module.protocol import ActionId, VisualFlags
@@ -28,6 +29,7 @@ from modules.zw_uart_module.protocol import ActionId, VisualFlags
 
 class MissionState:
     """Mission state IDs — must stay in sync with STM32 and protocol.py"""
+
     IDLE = 0
     WAIT_START = 1
     READ_QR = 2
@@ -211,7 +213,7 @@ class _IdleState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "IDLE")
-        print("[MissionSM] Enter IDLE")
+        log_print("[MissionSM] Enter IDLE")
         ctx.reset()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -225,7 +227,7 @@ class _WaitStartState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "WAIT_START")
-        print("[MissionSM] Enter WAIT_START")
+        log_print("[MissionSM] Enter WAIT_START")
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         return None
@@ -238,7 +240,7 @@ class _ReadQrState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "READ_QR")
-        print("[MissionSM] Enter READ_QR")
+        log_print("[MissionSM] Enter READ_QR")
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -253,7 +255,7 @@ class _NavToRawState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "NAV_TO_RAW")
-        print("[MissionSM] Enter NAV_TO_RAW")
+        log_print("[MissionSM] Enter NAV_TO_RAW")
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -268,7 +270,7 @@ class _AlignRawState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "ALIGN_RAW")
-        print("[MissionSM] Enter ALIGN_RAW")
+        log_print("[MissionSM] Enter ALIGN_RAW")
         
         ctx.state_entry_time = time()
         ctx.ready_to_pick = False
@@ -302,7 +304,7 @@ class _PickRawState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "PICK_RAW")
-        print("[MissionSM] Enter PICK_RAW")
+        log_print("[MissionSM] Enter PICK_RAW")
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -317,7 +319,7 @@ class _PickRoughState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "PICK_ROUGH")
-        print("[MissionSM] Enter PICK_ROUGH")
+        log_print("[MissionSM] Enter PICK_ROUGH")
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -331,7 +333,7 @@ class _CheckLoadState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "CHECK_LOAD")
-        print("[MissionSM] Enter CHECK_LOAD")
+        log_print("[MissionSM] Enter CHECK_LOAD")
         ctx.state_entry_time = time()
         ctx.cargo_confirmed = True  # 信任 MCU: ACTION_DONE=OK 即确认抓取成功，无需视觉确认
 
@@ -349,7 +351,7 @@ class _CheckLoadState(State):
                         matched = True
                         break
                 if not matched:
-                    print(f"[CHECK_LOAD] WARNING: no CargoSet item found for color={target} batch={ctx.current_batch}")
+                    log_print(f"[CHECK_LOAD] WARNING: no CargoSet item found for color={target} batch={ctx.current_batch}")
 
             batch_done = ctx.advance_target()
             ctx.target_color = ctx.current_target_color() or Color.RED
@@ -378,7 +380,7 @@ class _RingDiscoveryState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "RING_DISCOVERY")
-        print("[MissionSM] Enter RING_DISCOVERY")
+        log_print("[MissionSM] Enter RING_DISCOVERY")
         ctx.discovery_done = False
         ctx.discovery_active = False
         ctx.state_entry_time = time()
@@ -404,7 +406,7 @@ class _NavToRoughState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "NAV_TO_ROUGH")
-        print("[MissionSM] Enter NAV_TO_ROUGH")
+        log_print("[MissionSM] Enter NAV_TO_ROUGH")
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -419,7 +421,7 @@ class _AlignRoughState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "ALIGN_ROUGH")
-        print("[MissionSM] Enter ALIGN_ROUGH")
+        log_print("[MissionSM] Enter ALIGN_ROUGH")
         ctx.state_entry_time = time()
         ctx.ready_to_place = False
         ctx.ready_to_pick = False
@@ -437,7 +439,7 @@ class _PlaceRoughState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "PLACE_ROUGH")
-        print("[MissionSM] Enter PLACE_ROUGH")
+        log_print("[MissionSM] Enter PLACE_ROUGH")
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -468,7 +470,7 @@ class _NavToTempState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "NAV_TO_TEMP")
-        print("[MissionSM] Enter NAV_TO_TEMP")
+        log_print("[MissionSM] Enter NAV_TO_TEMP")
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -482,7 +484,7 @@ class _AlignTempState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "ALIGN_TEMP")
-        print("[MissionSM] Enter ALIGN_TEMP")
+        log_print("[MissionSM] Enter ALIGN_TEMP")
         ctx.state_entry_time = time()
         ctx.ready_to_place = False
 
@@ -497,7 +499,7 @@ class _PlaceTempState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "PLACE_TEMP")
-        print("[MissionSM] Enter PLACE_TEMP")
+        log_print("[MissionSM] Enter PLACE_TEMP")
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -507,11 +509,11 @@ class _PlaceTempState(State):
         if ctx.cargo_count > 0:
             return MissionStateNames[MissionState.ALIGN_TEMP]
         if ctx.cargo_count < 0:
-            print(f"[MissionSM] ERROR: cargo_count={ctx.cargo_count} negative")
+            log_print(f"[MissionSM] ERROR: cargo_count={ctx.cargo_count} negative")
             return MissionStateNames[MissionState.RETURN_HOME]
         # cargo_count == 0
         if not ctx.is_batch_complete():
-            print(f"[MissionSM] WARNING: cargo_count=0 but step={ctx.current_step} != 0")
+            log_print(f"[MissionSM] WARNING: cargo_count=0 but step={ctx.current_step} != 0")
         if ctx.current_batch == 1:
             ctx.current_batch = 2
             ctx.current_batch_order = list(ctx.second_batch_order)
@@ -527,7 +529,7 @@ class _ReturnHomeState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "RETURN_HOME")
-        print("[MissionSM] Enter RETURN_HOME")
+        log_print("[MissionSM] Enter RETURN_HOME")
         ctx.state_entry_time = time()
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
@@ -543,7 +545,7 @@ class _FinishedState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
         DebugConsole().set("mission_state", "FINISHED")
-        print("[MissionSM] Enter FINISHED")
+        log_print("[MissionSM] Enter FINISHED")
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         return None
@@ -558,7 +560,7 @@ class _ErrorState(State):
         dc = DebugConsole()
         dc.set("mission_state", f"ERROR({ctx.error_code})")
         dc.incr_error()
-        print(f"[MissionSM] Enter ERROR code={ctx.error_code} msg={ctx.error_msg}")
+        log_print(f"[MissionSM] Enter ERROR code={ctx.error_code} msg={ctx.error_msg}")
 
     def on_execute(self, ctx: MissionContext) -> Optional[str]:
         return None
@@ -869,11 +871,11 @@ class MissionStateMachine(BaseStateMachine):
 
 if __name__ == "__main__":
     sm = MissionStateMachine()
-    print("Initial:", sm.get_info())
+    log_print("Initial:", sm.get_info())
 
     sm.start()
-    print("After START:", sm.get_info())
+    log_print("After START:", sm.get_info())
 
     sm.on_qr_result("123+231")
-    print("After QR:", sm.get_info())
-    print("Batch order:", sm.context.current_batch_order)
+    log_print("After QR:", sm.get_info())
+    log_print("Batch order:", sm.context.current_batch_order)

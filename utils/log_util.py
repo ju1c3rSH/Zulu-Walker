@@ -4,8 +4,40 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 from typing import Optional, Dict, Any
 from datetime import datetime
+
+_LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "debug.log")
+_LOG_LOCK = threading.Lock()
+
+
+def log_print(msg: str = "", *args, **kwargs) -> None:
+    ts = datetime.now().strftime("[%H:%M:%S] ")
+    if args:
+        parts = [str(msg)] + [str(a) for a in args]
+        msg = " ".join(parts)
+    else:
+        msg = str(msg)
+    line = f"{ts}{msg}\n"
+    try:
+        os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
+        with _LOG_LOCK:
+            with open(_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+    except Exception:
+        pass
+    try:
+        from utils.debug_console import DebugConsole
+        DebugConsole().log(msg)
+    except Exception:
+        pass
+    try:
+        sys.__stdout__.write(line)
+        sys.__stdout__.flush()
+    except Exception:
+        pass
 
 
 class LoggerFactory:

@@ -7,6 +7,8 @@ from ..target_creation import create_ring_target
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.ring import RingTarget
 from modules.zw_opencv_module.detectors._shared.kalman_utils import kalman_update
+from utils.log_util import log_print
+
 
 
 class FastRingMethod(BaseRingDetectionMethod):
@@ -73,7 +75,7 @@ class FastRingMethod(BaseRingDetectionMethod):
                 self.detector._ring_log_frame = 0
             self.detector._ring_log_frame += 1
             if self.detector._ring_log_frame % 60 == 0:
-                print(f"[FastRing] target={target_color.name} no contours")
+                log_print(f"[FastRing] target={target_color.name} no contours")
             return None
 
         outer_candidates = []
@@ -104,7 +106,7 @@ class FastRingMethod(BaseRingDetectionMethod):
 
         if not outer_candidates:
             if frame % 60 == 0:
-                print(f"[FastRing] target={target_color.name} "
+                log_print(f"[FastRing] target={target_color.name} "
                       f"contours={len(contours)} outer_candidates=0")
             return None
 
@@ -112,7 +114,7 @@ class FastRingMethod(BaseRingDetectionMethod):
         center = outer_candidates[0][0]
 
         if frame % 60 == 0:
-            print(f"[FastRing] target={target_color.name} "
+            log_print(f"[FastRing] target={target_color.name} "
                   f"contours={len(contours)} outer_candidates={len(outer_candidates)} "
                   f"best: area={outer_candidates[0][1]:.0f} axis_ratio={outer_candidates[0][2]:.2f}")
 

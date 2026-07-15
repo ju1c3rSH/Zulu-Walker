@@ -5,6 +5,8 @@ import numpy as np
 
 from .processors.base import VisionResult, Processor
 from .performance import profiler
+from utils.log_util import log_print
+
 
 
 class Task:
@@ -147,7 +149,7 @@ class TaskManager:
                 try:
                     callback(task.name, result)
                 except Exception as e:
-                    print(f"Error in result callback: {e}")
+                    log_print(f"Error in result callback: {e}")
 
         return processed_frame, task_results
 
