@@ -284,6 +284,7 @@ class STM32UartInterface:
                 with self._state_lock:
                     self._last_arrived_zone = zone_id
                 self._logger.info(f"ARRIVED_AT_ZONE: zone={zone_id}")
+                print(f"[UART RX] ARRIVED zone={zone_id}")
                 if self._event_bus:
                     try:
                         from context.events import ArrivedEvent
@@ -297,6 +298,7 @@ class STM32UartInterface:
                 with self._state_lock:
                     self._last_pick_zone = zone_id
                 self._logger.info(f"PICK_AT_ZONE: zone={zone_id}")
+                print(f"[UART RX] PICK zone={zone_id}")
                 for cb in self._pick_callbacks:
                     try:
                         cb(zone_id)
@@ -309,26 +311,31 @@ class STM32UartInterface:
                 with self._state_lock:
                     self._current_zone = zone_id
                 self._logger.info(f"SET_ZONE: zone={zone_id}")
+                print(f"[UART RX] SET zone={zone_id}")
 
         elif frame.frame_type == TYPE_CMD_FROM_MCU:
             parsed = parse_cmd_payload(frame.payload)
-            if parsed is not None and self._event_bus:
-                try:
-                    from context.events import McuCmdReceived
-                    self._event_bus.publish(McuCmdReceived(parsed[0], parsed[1]))
-                except ImportError:
-                    self._logger.warning(
-                        f"CMD_FROM_MCU cmd_id=0x{parsed[0]:02X} (no event bus)")
+            if parsed is not None:
+                print(f"[UART RX] CMD_FROM_MCU cmd=0x{parsed[0]:02X} args={parsed[1]}")
+                if self._event_bus:
+                    try:
+                        from context.events import McuCmdReceived
+                        self._event_bus.publish(McuCmdReceived(parsed[0], parsed[1]))
+                    except ImportError:
+                        self._logger.warning(
+                            f"CMD_FROM_MCU cmd_id=0x{parsed[0]:02X} (no event bus)")
 
         elif frame.frame_type == TYPE_ACTION_DONE:
             parsed = parse_action_done_payload(frame.payload)
-            if parsed is not None and self._event_bus:
-                try:
-                    from context.events import ActionDoneEvent
-                    self._event_bus.publish(ActionDoneEvent(parsed[0], parsed[1]))
-                except ImportError:
-                    self._logger.warning(
-                        f"ACTION_DONE action={parsed[0]} result={parsed[1]} (no event bus)")
+            if parsed is not None:
+                print(f"[UART RX] ACTION_DONE action={parsed[0]} result={parsed[1]}")
+                if self._event_bus:
+                    try:
+                        from context.events import ActionDoneEvent
+                        self._event_bus.publish(ActionDoneEvent(parsed[0], parsed[1]))
+                    except ImportError:
+                        self._logger.warning(
+                            f"ACTION_DONE action={parsed[0]} result={parsed[1]} (no event bus)")
 
         elif frame.frame_type == TYPE_HEARTBEAT:
             parsed = parse_heartbeat_payload(frame.payload)
@@ -343,18 +350,21 @@ class STM32UartInterface:
 
         elif frame.frame_type == TYPE_REQUEST_SYNC:
             parsed = parse_request_sync_payload(frame.payload)
-            if parsed is not None and self._event_bus:
-                try:
-                    from context.events import RequestSyncEvent
-                    self._event_bus.publish(RequestSyncEvent(parsed))
-                except ImportError:
-                    self._logger.warning(
-                        f"REQUEST_SYNC state={parsed} (no event bus)")
+            if parsed is not None:
+                print(f"[UART RX] REQUEST_SYNC state={parsed}")
+                if self._event_bus:
+                    try:
+                        from context.events import RequestSyncEvent
+                        self._event_bus.publish(RequestSyncEvent(parsed))
+                    except ImportError:
+                        self._logger.warning(
+                            f"REQUEST_SYNC state={parsed} (no event bus)")
 
         elif frame.frame_type == TYPE_EMERGENCY_STOP:
             parsed = parse_emergency_stop_payload(frame.payload)
             if parsed is not None:
                 self._logger.error(f"EMERGENCY_STOP reason={parsed}")
+                print(f"[UART RX] EMERGENCY_STOP reason={parsed}")
                 if self._event_bus:
                     try:
                         from context.events import EmergencyStopEvent
@@ -433,6 +443,7 @@ class STM32UartInterface:
                     self._logger.info(
                         f"Sent error frame: type={error_type}, value={error_value}"
                     )
+                    print(f"[UART TX] ERROR type={error_type} value={error_value}")
                     return True
                 else:
                     self._logger.error(
