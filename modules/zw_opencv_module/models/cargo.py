@@ -22,6 +22,7 @@ class CargoItem:
     color: Color
     batch: int
     coordinate: Optional[Tuple[int, int]] = None
+    radius: Optional[float] = None
     available: bool = True
     zone: int = CargoZone.RAW
 
