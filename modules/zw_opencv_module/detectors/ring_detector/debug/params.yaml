@@ -16,6 +16,8 @@ HEURISTIC_RING:
   max_roi_miss: 5
   min_area: 100
   smooth_window: 5
+  blur_kernel: 5
+  blur_sigma: 150
 SHARED:
   max_lost_frames: 10
   q_base: 20
