@@ -97,6 +97,8 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
 
         result = self._find_best_contour(morphed)
         if result is None:
+            if self.detector._fast_log_frame % 60 == 0:
+                print(f"[FastCircle] global: no contour matched")
             return None
 
         center, radius = result
@@ -117,6 +119,12 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
             mask_coarse = chunk if mask_coarse is None else cv2.bitwise_or(mask_coarse, chunk)
 
         if mask_coarse is None or cv2.countNonZero(mask_coarse) < 50:
+            if not hasattr(self.detector, '_fast_log_frame'):
+                self.detector._fast_log_frame = 0
+            self.detector._fast_log_frame += 1
+            if self.detector._fast_log_frame % 60 == 0:
+                coarse_px = cv2.countNonZero(mask_coarse) if mask_coarse is not None else 0
+                print(f"[FastCircle] target={target_color.name} coarse_mask={coarse_px}px -> too few pixels, skipping")
             return None
 
         s_low, v_low = self._compute_adaptive_sv(hsv, ts, mask_coarse)
@@ -127,6 +135,15 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
             adjusted_upper = np.array([upper[0], upper[1], upper[2]], dtype=np.uint8)
             chunk = cv2.inRange(hsv, adjusted_lower, adjusted_upper)
             mask_fine = chunk if mask_fine is None else cv2.bitwise_or(mask_fine, chunk)
+
+        if not hasattr(self.detector, '_fast_log_frame'):
+            self.detector._fast_log_frame = 0
+        self.detector._fast_log_frame += 1
+        if self.detector._fast_log_frame % 60 == 0:
+            coarse_px = cv2.countNonZero(mask_coarse)
+            fine_px = cv2.countNonZero(mask_fine) if mask_fine is not None else 0
+            print(f"[FastCircle] target={target_color.name} coarse={coarse_px}px "
+                  f"s_adaptive={s_low} v_adaptive={v_low} fine={fine_px}px")
 
         return mask_fine
 
@@ -173,6 +190,8 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         largest = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(largest)
         if area < self.detector.min_area:
+            if self.detector._fast_log_frame % 60 == 0:
+                print(f"[FastCircle] largest contour area={area:.1f} < min_area={self.detector.min_area}")
             return None
 
         peri = cv2.arcLength(largest, True)
@@ -181,7 +200,12 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
 
         circularity = 4.0 * np.pi * area / (peri * peri)
         if circularity < self.detector.min_circularity:
+            if self.detector._fast_log_frame % 60 == 0:
+                print(f"[FastCircle] circularity={circularity:.3f} < threshold={self.detector.min_circularity}")
             return None
+
+        if self.detector._fast_log_frame % 60 == 0:
+            print(f"[FastCircle] found: area={area:.1f} circularity={circularity:.3f}")
 
         M = cv2.moments(largest)
         if M["m00"] == 0:

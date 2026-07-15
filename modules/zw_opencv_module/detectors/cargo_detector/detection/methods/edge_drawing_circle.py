@@ -140,9 +140,25 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                 candidates.append(candidate)
 
         if not candidates:
+            if not hasattr(self.detector, '_ed_log_frame'):
+                self.detector._ed_log_frame = 0
+            self.detector._ed_log_frame += 1
+            if self.detector._ed_log_frame % 60 == 0:
+                mask_px = cv2.countNonZero(color_mask)
+                print(f"[EdgeDraw] target={target_color.name} color_mask={mask_px}px "
+                      f"contours={len(contours)} candidates=0")
             return None, None
 
         best = self._select_best_candidate(candidates)
+        if not hasattr(self.detector, '_ed_log_frame'):
+            self.detector._ed_log_frame = 0
+        self.detector._ed_log_frame += 1
+        if self.detector._ed_log_frame % 60 == 0:
+            mask_px = cv2.countNonZero(color_mask)
+            print(f"[EdgeDraw] target={target_color.name} color_mask={mask_px}px "
+                  f"contours={len(contours)} candidates={len(candidates)} "
+                  f"best: area={best['area']:.1f} circularity={best['circularity']:.3f} "
+                  f"color_score={best['color_score']:.3f}")
         return best["center"], best["radius"]
 
     _LOW_LIGHT_MIN_PIXELS = 50
