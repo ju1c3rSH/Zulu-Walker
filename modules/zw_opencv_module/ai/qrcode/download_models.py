@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from utils.log_util import log_print
+
 """Download WeChatQRCode model files for OpenCV.
 
 Run: python download_models.py
@@ -20,21 +22,21 @@ FILES = [
 
 def main():
     target_dir = os.path.dirname(os.path.abspath(__file__))
-    print(f"Target dir: {target_dir}")
+    log_print(f"Target dir: {target_dir}")
     for fname in FILES:
         url = f"{BASE}/{fname}"
         dest = os.path.join(target_dir, fname)
         if os.path.isfile(dest):
-            print(f"SKIP  {fname} (already exists)")
+            log_print(f"SKIP  {fname} (already exists)")
             continue
-        print(f"GET   {url}")
+        log_print(f"GET   {url}")
         try:
             urlretrieve(url, dest)
             size_kb = os.path.getsize(dest) / 1024
-            print(f"OK    {fname} ({size_kb:.1f} KB)")
+            log_print(f"OK    {fname} ({size_kb:.1f} KB)")
         except Exception as e:
-            print(f"FAIL  {fname}: {e}", file=sys.stderr)
-    print("Done.")
+            log_print(f"FAIL  {fname}: {e}", file=sys.stderr)
+    log_print("Done.")
 
 if __name__ == "__main__":
     main()

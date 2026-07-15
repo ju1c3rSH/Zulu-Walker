@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 
 from .base import DetectionMethod
+from utils.log_util import log_print
+
 
 
 class TestLineQuadMethod(DetectionMethod):
@@ -61,7 +63,7 @@ class TestLineQuadMethod(DetectionMethod):
                         result = (center, radius, quad)
 
         except Exception as e:
-            print(f"[TEST_LINE_QUAD] Error: {e}")
+            log_print(f"[TEST_LINE_QUAD] Error: {e}")
             import traceback
             traceback.print_exc()
             try:
@@ -75,7 +77,7 @@ class TestLineQuadMethod(DetectionMethod):
                         radius = max(ellipse[1]) / 2
                         result = (center, radius, quad)
             except Exception as e2:
-                print(f"[TEST_LINE_QUAD] Fallback error: {e2}")
+                log_print(f"[TEST_LINE_QUAD] Fallback error: {e2}")
 
         final_center = None
         final_radius = None
