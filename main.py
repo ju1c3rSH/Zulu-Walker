@@ -21,6 +21,8 @@ def _push_coordinator_status(coordinator) -> None:
     dc.set("batch", str(sm_info.get("batch", "-")))
     dc.set("step", str(sm_info.get("step", "-")))
     dc.set("target_color", sm_info.get("target_color", "-"))
+    dc.set("batch1_order", ",".join(sm_info.get("first_batch_order", [])) or "-")
+    dc.set("batch2_order", ",".join(sm_info.get("second_batch_order", [])) or "-")
 
 
 def main():
