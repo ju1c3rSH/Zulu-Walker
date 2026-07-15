@@ -78,6 +78,28 @@ class CargoDetector:
         self.edge_morph_iterations = 1
         self.color_match_threshold = 0.35
 
+        # FastCircle 方法内部可调参数
+        self.sv_percentile = 15
+        self.ema_alpha = 0.3
+        self.coarse_min_pixels = 50
+        self.coarse_ratio_threshold = 0.30
+        self.sv_min_samples = 10
+        self.sv_fallback_s = 50
+        self.sv_fallback_v = 50
+        self.ellipse_min_contour_points = 5
+        self.ellipse_max_axis_ratio = 1.5
+
+        # EdgeDrawingCircle 方法内部可调参数
+        self.edge_min_pixels = 20
+        self.low_light_min_pixels = 50
+        self.relaxed_s = 10
+        self.relaxed_v = 5
+        self.low_light_s_divider = 3
+        self.low_light_v_divider = 3
+        self.score_weight_color = 0.5
+        self.score_weight_circularity = 0.3
+        self.score_weight_area = 0.2
+
         # EdgeDrawing 初始化（若不可用则默认使用 FAST_CIRCLE）
         self.ed = None
         self._init_edge_drawing()
@@ -197,18 +219,23 @@ class CargoDetector:
             "roi_size", "max_roi_miss", "min_area", "kernel_open", "kernel_close",
             "smooth_window", "blur_kernel", "ed_min_path_length",
             "ed_gradient_threshold", "edge_morph_kernel", "edge_morph_iterations",
+            "sv_percentile", "coarse_min_pixels", "sv_min_samples",
+            "sv_fallback_s", "sv_fallback_v", "ellipse_min_contour_points",
+            "edge_min_pixels", "low_light_min_pixels", "relaxed_s", "relaxed_v",
+            "low_light_s_divider", "low_light_v_divider",
         )
         for key in int_keys:
             if key in params:
                 setattr(self, key, int(params[key]))
 
-        float_keys = ("min_circularity", "blur_sigma", "color_match_threshold")
+        float_keys = (
+            "min_circularity", "blur_sigma", "color_match_threshold",
+            "ema_alpha", "coarse_ratio_threshold", "ellipse_max_axis_ratio",
+            "score_weight_color", "score_weight_circularity", "score_weight_area",
+        )
         for key in float_keys:
             if key in params:
                 setattr(self, key, float(params[key]))
-
-        if "ed_nfa_validation" in params:
-            self.ed_nfa_validation = bool(params["ed_nfa_validation"])
 
         for ts in self._tracking.values():
             ts.resize_histories(self.smooth_window)

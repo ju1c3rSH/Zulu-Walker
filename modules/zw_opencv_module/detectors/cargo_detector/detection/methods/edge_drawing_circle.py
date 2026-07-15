@@ -9,15 +9,8 @@ from .. import kalman_filter
 
 
 class EdgeDrawingCircleMethod(BaseDetectionMethod):
-    """基于 EdgeDrawing 边缘检测的颜色圆识别方法。
-
-    适用于俯视正拍、纯色圆形物料、边缘存在反光的场景。
-    亚像素中心采用"边缘拟合椭圆 + 颜色 mask 矩"的混合策略。
-    """
-
     TARGET_W = 640
     TARGET_H = 480
-    MAX_AXIS_RATIO = 1.5
 
     def __init__(self, name: str = "edge_drawing_circle", detector=None):
         super().__init__(name=name, detector=detector)
@@ -106,7 +99,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         try:
             self.detector.ed.detectEdges(blurred)
             edges = self.detector.ed.getEdgeImage()
-            if edges is None or cv2.countNonZero(edges) < 20:
+            if edges is None or cv2.countNonZero(edges) < self.detector.edge_min_pixels:
                 print("EdgeDrawing: No edges detected or too few edges.")
                 return None, None
         except cv2.error:
@@ -161,10 +154,6 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                   f"color_score={best['color_score']:.3f}")
         return best["center"], best["radius"]
 
-    _LOW_LIGHT_MIN_PIXELS = 50
-    _RELAXED_S = 10
-    _RELAXED_V = 5
-
     def _build_color_mask(self, hsv: np.ndarray,
                           target_color: Color) -> Optional[np.ndarray]:
         if target_color not in self.detector.color_ranges:
@@ -180,7 +169,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             chunk = cv2.inRange(hsv, lower, upper)
             mask = chunk if mask is None else cv2.bitwise_or(mask, chunk)
 
-        if mask is not None and cv2.countNonZero(mask) >= self._LOW_LIGHT_MIN_PIXELS:
+        if mask is not None and cv2.countNonZero(mask) >= self.detector.low_light_min_pixels:
             return mask
 
         # Pass 2 — mask too sparse (low light), relax S/V
@@ -188,8 +177,8 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         for lower, upper in raw_ranges:
             rel_lower = np.array([
                 lower[0],
-                max(int(lower[1]) // 3, self._RELAXED_S),
-                max(int(lower[2]) // 3, self._RELAXED_V),
+                max(int(lower[1]) // self.detector.low_light_s_divider, self.detector.relaxed_s),
+                max(int(lower[2]) // self.detector.low_light_v_divider, self.detector.relaxed_v),
             ], dtype=np.uint8)
             chunk = cv2.inRange(hsv, rel_lower, upper)
             relaxed = chunk if relaxed is None else cv2.bitwise_or(relaxed, chunk)
@@ -218,7 +207,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         if circularity < self.detector.min_circularity:
             return None
 
-        if len(contour) < 5:
+        if len(contour) < self.detector.ellipse_min_contour_points:
             return None
 
         try:
@@ -232,7 +221,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             return None
 
         axis_ratio = max(axes) / min(axes)
-        if axis_ratio > self.MAX_AXIS_RATIO:
+        if axis_ratio > self.detector.ellipse_max_axis_ratio:
             return None
 
         radius = (axes[0] + axes[1]) / 4.0
@@ -351,9 +340,9 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         for c in candidates:
             area_norm = c["area"] / max_area if max_area > 0 else 0.0
             score = (
-                0.5 * c["color_score"]
-                + 0.3 * c["circularity"]
-                + 0.2 * area_norm
+                self.detector.score_weight_color * c["color_score"]
+                + self.detector.score_weight_circularity * c["circularity"]
+                + self.detector.score_weight_area * area_norm
             )
             if score > best_score:
                 best_score = score
