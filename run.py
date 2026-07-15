@@ -3,12 +3,16 @@
 Zulu-Walker 启动器
 
 使用方法:
-    python run.py main              # 运行主程序
-    python run.py debug             # 运行物料块检测调试器
-    python run.py debug -c 1        # 调试器使用摄像头1
-    python run.py debug -W 1280 -H 720  # 指定分辨率
+    python run.py main                          # 运行主程序
+    python run.py debug [detector]              # 运行调试器
+    python run.py debug cargo                   # 物料块检测调试器
+    python run.py debug circle                  # 圆靶检测调试器
+    python run.py debug ring                    # 环检测调试器
+    python run.py debug cargo -c 1              # 指定摄像头
+    python run.py debug cargo -W 1280 -H 720    # 指定分辨率
 """
 import argparse
+import importlib
 import sys
 import os
 
@@ -19,14 +23,23 @@ from utils.console_capture import ConsoleCapture
 from utils.debug_console import DebugConsole
 
 
+_RUNNER_MAP = {
+    "cargo":  ("modules.zw_opencv_module.detectors.cargo_detector.debug.runner", "CargoDebugRunner"),
+    "circle": ("modules.zw_opencv_module.detectors.circle_target_detector.debug.runner", "CircleTargetDebugRunner"),
+    "ring":   ("modules.zw_opencv_module.detectors.ring_detector.debug.runner", "RingDebugRunner"),
+}
+
+
 def run_main():
     from main import main
     main()
 
 
 def run_debug(args):
-    from modules.zw_opencv_module.detectors.cargo_detector.debug.runner import CargoDebugRunner
-    runner = CargoDebugRunner(
+    module_path, class_name = _RUNNER_MAP[args.detector]
+    module = importlib.import_module(module_path)
+    runner_cls = getattr(module, class_name)
+    runner = runner_cls(
         camera_source=args.camera,
         width=args.width,
         height=args.height,
@@ -55,7 +68,12 @@ def main():
 
     subparsers.add_parser("main", help="运行主程序")
 
-    debug_parser = subparsers.add_parser("debug", help="运行物料块检测调试器")
+    debug_parser = subparsers.add_parser("debug", help="运行检测调试器")
+    debug_parser.add_argument(
+        "detector", nargs="?", default="cargo",
+        choices=list(_RUNNER_MAP.keys()),
+        help="检测器类型 (默认: cargo)"
+    )
     debug_parser.add_argument("-c", "--camera", type=int, default=0, help="摄像头索引 (默认: 0)")
     debug_parser.add_argument("-W", "--width", type=int, default=640, help="画面宽度 (默认: 640)")
     debug_parser.add_argument("-H", "--height", type=int, default=480, help="画面高度 (默认: 480)")

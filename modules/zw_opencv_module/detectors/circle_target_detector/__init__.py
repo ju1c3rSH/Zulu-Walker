@@ -205,39 +205,29 @@ class CircleTargetDetector:
         pass  # handled by update_params
 
     def update_params(self, params: dict):
-        if "ed_min_path_length" in params:
-            self.ed_min_path_length = params["ed_min_path_length"]
-        if "ed_gradient_threshold" in params:
-            self.ed_gradient_threshold = params["ed_gradient_threshold"]
-        if "ed_nfa_validation" in params:
-            self.ed_nfa_validation = params["ed_nfa_validation"]
-        if "morph_type" in params:
-            self.morph_type = params["morph_type"]
-        if "morph_kernel" in params:
-            self.morph_kernel = params["morph_kernel"]
-        if "morph_iterations" in params:
-            self.morph_iterations = params["morph_iterations"]
-        if "min_area_threshold_quad" in params:
-            self.min_area_threshold_quad = params["min_area_threshold_quad"]
-        if "min_area_threshold_ellipse" in params:
-            self.min_area_threshold_ellipse = params["min_area_threshold_ellipse"]
-        if "min_contour_points" in params:
-            self.min_contour_points = params["min_contour_points"]
-        if "blur_kernel" in params:
-            self.blur_kernel = params["blur_kernel"]
-        if "blur_sigma" in params:
-            self.blur_sigma = params["blur_sigma"]
-        if "max_aspect_ratio" in params:
-            self.max_aspect_ratio = params["max_aspect_ratio"]
-        if "min_circularity" in params:
-            self.min_circularity = params["min_circularity"]
-        if "quad_aspect_ratio" in params:
-            self.quad_aspect_ratio = params["quad_aspect_ratio"]
-        if "uv_min_area" in params:
-            self.uv_min_area = params["uv_min_area"]
-        if "enable_color_filter" in params:
-            self.enable_color_filter = params["enable_color_filter"]
+        for key in (
+            "ed_min_path_length", "ed_gradient_threshold",
+            "morph_type", "morph_kernel", "morph_iterations",
+            "min_area_threshold_quad", "min_area_threshold_ellipse",
+            "min_contour_points", "blur_kernel",
+            "uv_min_area", "uv_max_lost_frames",
+            "uv_s_gate", "uv_s_min", "uv_v_floor", "uv_v_percentile",
+            "uv_contrast_dilate",
+        ):
+            if key in params:
+                setattr(self, key, int(params[key]))
+        for key in (
+            "blur_sigma", "max_aspect_ratio", "min_circularity",
+            "quad_aspect_ratio", "uv_contrast_ratio_min",
+        ):
+            if key in params:
+                setattr(self, key, float(params[key]))
+        bool_keys = ("ed_nfa_validation", "enable_color_filter", "uv_adaptive_enabled")
+        for key in bool_keys:
+            if key in params:
+                setattr(self, key, bool(params[key]))
         self._update_ed_params()
+        self._morph_kernel_cache = None
 
     def _update_ed_params(self):
         if self.ed is not None:
