@@ -338,3 +338,29 @@ _heartbeat_seq             心跳线程 (仅)        心跳线程              �
 3. **VisualSM 是例外**（相机线程直接 `update()`，因为需要逐帧跟踪判定）
 4. **锁争用风险点**: `uart._write_lock` 在相机线程高频发帧时被持续持有，心跳线程可能短暂等待
 5. **300Hz 主循环精度依赖内核**: 如果内核 `HZ < 1000`，`select.select` 精度会退化。当前平台约 300Hz，所以 `MAIN_LOOP_DELAY = 0.00333`。升级内核后可降到 `0.001`。
+
+---
+
+## 11. 架构债务 / TODO
+
+### 11.1 `ModuleManager.run_main_loop` 的同步 module loop 设计不合理
+
+```python
+# 当前：串行同步调用，一个 module 阻塞会拖慢全局
+for name, loop_method in self._loop_methods.items():
+    loop_method()           # ← 串行
+
+coordinator.loop()          # ← 串行
+display.show(frame)         # ← 串行
+time.sleep(0.00333)         # ← 固定节流
+```
+
+**问题**：
+- 各 module 本质上是独立实体，应异步运行（已有 UART/Vision 各自开线程的先例）
+- 串行 `try` 意味着一个 module 的 `loop()` 阻塞会拖慢 coordinator、display 和所有其他 module
+- `time.sleep(0.00333)` 与 Linux HZ=300 对齐，但视觉 100+FPS 时主线程 300Hz 轮询 2/3 是空转；去掉 sleep 又会在无工作时吃满 CPU
+
+**建议方向**：
+- 去掉 `_loop_methods` 串行 tick 模式，模块生命周期完全自我管理（参考 UART/Vision 的独立线程模式）
+- `coordinator.loop()` 改为事件驱动（如 Condition/eventfd 通知）而不是固定 tick 轮询
+- `display.show()` 由 coordinator 变化或视觉帧就绪时触发，而非主循环盲刷
