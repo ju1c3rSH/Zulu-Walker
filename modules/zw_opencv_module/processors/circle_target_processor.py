@@ -26,7 +26,6 @@ class CircleTargetProcessor(Processor):
         self._log_interval = 300  # 每300帧输出一次日志（约2秒@150fps）
         self._frame_count = 0
         self._last_logged_target_found: Optional[bool] = None
-        cv2.ocl.setUseOpenCL(True)
 
     def set_target_color(self, color: Optional[Color]):
         """
