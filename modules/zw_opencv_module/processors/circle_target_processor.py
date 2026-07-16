@@ -379,7 +379,4 @@ class CircleTargetProcessor(Processor):
         for text, pos, color in lines:
             cv2.putText(frame, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
 
-    def _is_target_in_vision_range(self, frame: np.ndarray) -> bool:
-        """通过判定摄像头视界内是否存在一个纯黑的矩形来判断目标是否在视野范围内"""
-        # TODO: 实现视界范围检测
-        pass
+
