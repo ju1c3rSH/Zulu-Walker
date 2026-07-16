@@ -36,7 +36,7 @@ class CameraHub:
         width: int = 640,
         height: int = 480,
         **kwargs,
-    ) -> Camera:
+    ) -> Optional[Camera]:
         if camera_id in self._cameras:
             return self._cameras[camera_id]
         factory = getattr(self._platform_module, "create_camera")
@@ -47,6 +47,9 @@ class CameraHub:
             camera_id=camera_id,
             **kwargs,
         )
+        if cam is None:
+            logger.warning("Camera '%s' could not be created; not registered", camera_id)
+            return None
         self._cameras[camera_id] = cam
         return cam
 
