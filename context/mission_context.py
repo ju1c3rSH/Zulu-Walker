@@ -41,6 +41,11 @@ _VISUAL_STATE_TO_INT = {
 }
 
 _READY_THRESHOLD = 10
+# percent_error_x = ((cx - w/2) / (w/2)) * 5000
+# threshold=80  →  偏差 ≈ 80 * (w/2) / 5000 = 5.12 px @ 640x480
+_DISCOVERY_CENTER_THRESHOLD = 80
+# Align: pe_x threshold 250  →  偏差 ≈ 250 * (w/2) / 5000 = 16 px @ 640x480
+_ALIGN_CENTER_THRESHOLD = 250
 _HEARTBEAT_INTERVAL = 0.1
 _HEARTBEAT_TIMEOUT = 0.3
 
@@ -426,7 +431,7 @@ class MissionCoordinator:
 
         if not self._ready_latched:
             if self.visual_sm.is_tracking() and target_found \
-               and abs(ctx.percent_error_x) <= 250 and abs(ctx.percent_error_y) <= 250:
+               and abs(ctx.percent_error_x) <= _ALIGN_CENTER_THRESHOLD and abs(ctx.percent_error_y) <= _ALIGN_CENTER_THRESHOLD:
                 self._ready_frames += 1
             else:
                 self._ready_frames = max(0, self._ready_frames - 1)
@@ -456,29 +461,19 @@ class MissionCoordinator:
         self.mission_sm.run_to_completion()
 
     def _handle_discovery_result(self, target_found: bool, pe_x: int, pe_y: int, data: dict) -> None:
-        flags = 0
-        if target_found:
-            flags |= VisualFlags.TARGET_FOUND
-
         if not self._discovery_ready_latched:
-            if self.visual_sm.is_tracking() and target_found:
+            if self.visual_sm.is_tracking() and target_found \
+               and abs(pe_x) <= _DISCOVERY_CENTER_THRESHOLD and abs(pe_y) <= _DISCOVERY_CENTER_THRESHOLD:
                 conf = data.get("confidence", 0)
                 if conf >= 80:
                     self._discovery_ready_frames += 1
-                elif self._discovery_ready_frames % 60 == 1:
-                    from utils.debug_console import DebugConsole
-                    DebugConsole().log(
-                        f"[VisualSM] discovery: target_found conf={conf}<80, "
-                        f"waiting for complete ring"
-                    )
             else:
                 self._discovery_ready_frames = max(0, self._discovery_ready_frames - 1)
 
             if self._discovery_ready_frames >= _READY_THRESHOLD:
                 self._discovery_ready_latched = True
-        else:
-            flags |= VisualFlags.RING_CENTERED
 
+        flags = VisualFlags.TARGET_FOUND if target_found else 0
         if self._discovery_ready_latched:
             flags |= VisualFlags.RING_CENTERED
             color = self.mission_sm.context.discovery_color
