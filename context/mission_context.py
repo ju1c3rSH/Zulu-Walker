@@ -14,7 +14,8 @@ from .events import (
 )
 from .mission_state_machine import (
     MissionStateMachine, MissionContext,
-    MissionState, MissionStateNames, VisualState, Zone,
+    MissionState, MissionStateNames, ErrorCode,
+    VisualState, Zone,
 )
 from .visual_state_machine import VisualStateMachine
 from utils.state_machine.bridge import StateActionBridge
@@ -77,6 +78,7 @@ class MissionCoordinator:
         self._running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._last_servo_log_ts: float = 0.0
+        self._last_error_code = 0
 
     def connect_vision(self, vision_manager: VisionManager) -> None:
         self._vision_manager = vision_manager
@@ -147,6 +149,7 @@ class MissionCoordinator:
             while self._sm_queue:
                 self._sm_queue.popleft()()
         self.mission_sm.run_to_completion()
+        self._check_error_state()
 
     # ===== lifecycle =====
 
@@ -349,7 +352,7 @@ class MissionCoordinator:
     def _on_emergency(self, event: EmergencyStopEvent) -> None:
         captured_reason = event.reason
         self._enqueue_sm(lambda: self.mission_sm.set_error(
-            99, f"Emergency stop: reason={captured_reason}"))
+            ErrorCode.EMERGENCY_STOP, f"Emergency stop: reason={captured_reason}"))
 
     def _on_request_sync(self, event: RequestSyncEvent) -> None:
         pass
@@ -367,7 +370,7 @@ class MissionCoordinator:
             self._send(build_qr_result_frame(qr_str))
             self._send(build_status_from_vision_frame(
                 self.mission_sm.current_state_id,
-                0, 0,
+                0, VisualFlags.QR_OK,
                 self.mission_sm.context.cargo_count,
             ))
 
@@ -498,6 +501,26 @@ class MissionCoordinator:
 
     def _visual_state_int(self) -> int:
         return _VISUAL_STATE_TO_INT.get(self.visual_sm.current_state, 0)
+
+    # ===== error state notification =====
+
+    def _check_error_state(self) -> None:
+        if self.mission_sm.current_state == MissionStateNames[MissionState.ERROR]:
+            ctx = self.mission_sm.context
+            if ctx.error_code in (
+                ErrorCode.CHECK_LOAD_TIMEOUT,
+                ErrorCode.ALIGN_RAW_TIMEOUT,
+                ErrorCode.RING_DISCOVERY_TIMEOUT,
+            ) and ctx.error_code != self._last_error_code:
+                self._last_error_code = ctx.error_code
+                self._send(build_status_from_vision_frame(
+                    self.mission_sm.current_state_id,
+                    0,
+                    VisualFlags.VISUAL_FAIL,
+                    ctx.cargo_count,
+                ))
+        else:
+            self._last_error_code = 0
 
     # ===== heartbeat =====
 
