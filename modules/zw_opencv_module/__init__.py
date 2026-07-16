@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+import cv2
+
+
 from hal import Machine
 
 from .vision_manager import VisionManager, _LegacyCameraManagerShim
@@ -12,6 +15,7 @@ _vision_manager: Optional[VisionManager] = None
 _legacy_shim: Optional[_LegacyCameraManagerShim] = None
 _running: bool = False
 
+cv2.ocl.setUseOpenCL(True)
 
 def init(machine: Machine, event_bus=None) -> None:
     global _vision_manager, _legacy_shim
