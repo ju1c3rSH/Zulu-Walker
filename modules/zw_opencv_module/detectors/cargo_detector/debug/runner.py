@@ -20,7 +20,7 @@ _COLORS = [Color.RED, Color.GREEN, Color.BLUE]
 
 
 class CargoDebugRunner:
-    def __init__(self, camera_source: int = 0, width: int = 640, height: int = 480):
+    def __init__(self, camera_source: int | str = 0, width: int = 640, height: int = 480):
         self.camera_source = camera_source
         self.width = width
         self.height = height

@@ -2,7 +2,9 @@ platform: linux
 
 cameras:
   - camera_id: "cargo"
-    source: 0
+    # Linux:  use int index (legacy) or /dev/v4l/by-id/ stable path
+    # source: "/dev/v4l/by-id/usb-Vendor_Model_SERIAL-video-index0"
+    source:  "/dev/v4l/by-id/usb-HD_Camera_Manufacturer_USB_2.0_Camera-video-index0"
     width: 640
     height: 480
     fps: 120
@@ -12,7 +14,8 @@ cameras:
     sensor_height_mm: 2.7
 
   - camera_id: "qr"
-    source: 2
+    # source: "/dev/v4l/by-id/usb-Vendor_Model_SERIAL-video-index0"
+    source: "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index0"
     width: 640
     height: 480
     fps: 30
