@@ -39,8 +39,13 @@ def run_debug(args):
     module_path, class_name = _RUNNER_MAP[args.detector]
     module = importlib.import_module(module_path)
     runner_cls = getattr(module, class_name)
+    camera_source = args.camera
+    try:
+        camera_source = int(args.camera)
+    except ValueError:
+        pass
     runner = runner_cls(
-        camera_source=args.camera,
+        camera_source=camera_source,
         width=args.width,
         height=args.height,
     )
@@ -74,7 +79,7 @@ def main():
         choices=list(_RUNNER_MAP.keys()),
         help="检测器类型 (默认: cargo)"
     )
-    debug_parser.add_argument("-c", "--camera", type=int, default=0, help="摄像头索引 (默认: 0)")
+    debug_parser.add_argument("-c", "--camera", type=str, default="0", help="摄像头索引或设备路径 (默认: 0)")
     debug_parser.add_argument("-W", "--width", type=int, default=640, help="画面宽度 (默认: 640)")
     debug_parser.add_argument("-H", "--height", type=int, default=480, help="画面高度 (默认: 480)")
 

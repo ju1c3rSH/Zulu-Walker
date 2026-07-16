@@ -53,9 +53,17 @@ class Machine:
 
         for cam_cfg in cameras_config:
             cid = cam_cfg.get("camera_id", str(cam_cfg.get("source", "")))
+            raw_source = cam_cfg["source"]
+            source = raw_source
+            if platform == "linux":
+                from utils.camera_misc_util import CameraMiscUtil
+                resolved = CameraMiscUtil.resolve_camera_source(raw_source)
+                if resolved != raw_source:
+                    logger.info("Camera '%s': source %s -> %s", cid, raw_source, resolved)
+                source = resolved
             hub.open(
                 camera_id=cid,
-                source=cam_cfg["source"],
+                source=source,
                 width=cam_cfg.get("width", 640),
                 height=cam_cfg.get("height", 480),
                 fps=cam_cfg.get("fps", 120),
