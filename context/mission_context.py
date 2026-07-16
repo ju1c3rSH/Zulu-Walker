@@ -45,7 +45,7 @@ _READY_THRESHOLD = 10
 # threshold=80  →  偏差 ≈ 80 * (w/2) / 5000 = 5.12 px @ 640x480
 _DISCOVERY_CENTER_THRESHOLD = 80
 # Align: pe_x threshold 250  →  偏差 ≈ 250 * (w/2) / 5000 = 16 px @ 640x480
-_ALIGN_CENTER_THRESHOLD = 250
+_ALIGN_CENTER_THRESHOLD = 160
 _HEARTBEAT_INTERVAL = 0.1
 _HEARTBEAT_TIMEOUT = 0.3
 
@@ -433,8 +433,17 @@ class MissionCoordinator:
             if self.visual_sm.is_tracking() and target_found \
                and abs(ctx.percent_error_x) <= _ALIGN_CENTER_THRESHOLD and abs(ctx.percent_error_y) <= _ALIGN_CENTER_THRESHOLD:
                 self._ready_frames += 1
+                if self._ready_frames % 5 == 0:
+                    from utils.debug_console import DebugConsole
+                    DebugConsole().log(
+                        f"[TrackSM] ready_frames={self._ready_frames}/{_READY_THRESHOLD}"
+                    )
             else:
+                prev = self._ready_frames
                 self._ready_frames = max(0, self._ready_frames - 1)
+                if prev > 0 and self._ready_frames == 0:
+                    from utils.debug_console import DebugConsole
+                    DebugConsole().log(f"[TrackSM] ready_frames reset from {prev}")
 
             if self._ready_frames >= _READY_THRESHOLD:
                 self._ready_latched = True
@@ -443,10 +452,13 @@ class MissionCoordinator:
                 picking = self.mission_sm.context.picking_from_rough
                 if state in ("ALIGN_RAW",) or (state == "ALIGN_ROUGH" and picking):
                     self._ready_flag = VisualFlags.READY_TO_PICK
+                    flag_name = "READY_TO_PICK"
                 elif state in ("ALIGN_ROUGH", "ALIGN_TEMP") and not (state == "ALIGN_ROUGH" and picking):
                     self._ready_flag = VisualFlags.READY_TO_PLACE
+                    flag_name = "READY_TO_PLACE"
+                from utils.debug_console import DebugConsole
+                DebugConsole().log(f"[TrackSM] {flag_name} latched (state={state})")
                 flags |= self._ready_flag
-                # 捕获当前值，入队推状态机
                 captured_flags = flags
                 captured_vis = self._visual_state_int()
                 self._enqueue_sm(lambda: self._apply_visual_status(captured_vis, captured_flags))
