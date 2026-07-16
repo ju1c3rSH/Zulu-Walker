@@ -15,6 +15,7 @@ Synchronization rules:
 
 from collections import deque
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Optional, List, Dict, Any, Deque
 from time import time
 
@@ -26,6 +27,16 @@ from modules.zw_uart_module.protocol import ActionId, VisualFlags
 
 
 # ===== Shared constants (must match STM32 firmware) =====
+
+class ErrorCode(IntEnum):
+    """内部 error_code，用于 _ErrorState 判断错误来源。不在 UART 协议中传递。"""
+    CHECK_LOAD_TIMEOUT = 1
+    QR_PARSE_FAILED = 10
+    VISUAL_FAIL_FROM_MCU = 30
+    ALIGN_RAW_TIMEOUT = 40
+    RING_DISCOVERY_TIMEOUT = 50
+    EMERGENCY_STOP = 99
+
 
 class MissionState:
     """Mission state IDs — must stay in sync with STM32 and protocol.py"""
@@ -287,7 +298,7 @@ class _AlignRawState(State):
         elapsed = time() - ctx.state_entry_time
         if elapsed > 360.0:
             # 超过 6 分钟仍未完成色环发现，判定为失败
-            ctx.error_code = 40
+            ctx.error_code = ErrorCode.ALIGN_RAW_TIMEOUT
             ctx.error_msg = f"ALIGN_RAW timeout: no target found after {elapsed:.1f}s"
             from utils.debug_console import DebugConsole
             dc = DebugConsole()
@@ -368,7 +379,7 @@ class _CheckLoadState(State):
                     ctx.picking_from_rough = False
                     return MissionStateNames[MissionState.NAV_TO_TEMP]
         if ctx.state_entry_time + 3.0 < time() and not ctx.cargo_confirmed:
-            ctx.error_code = 1
+            ctx.error_code = ErrorCode.CHECK_LOAD_TIMEOUT
             return MissionStateNames[MissionState.ERROR]
         return None
 
@@ -393,7 +404,7 @@ class _RingDiscoveryState(State):
                 return MissionStateNames[MissionState.ALIGN_TEMP]
         if ctx.state_entry_time + 360.0 < time():
             # 超过 6 分钟仍未完成色环发现，判定为失败
-            ctx.error_code = 50
+            ctx.error_code = ErrorCode.RING_DISCOVERY_TIMEOUT
             return MissionStateNames[MissionState.ERROR]
         return None
 
@@ -748,7 +759,7 @@ class MissionStateMachine(BaseStateMachine):
     def on_qr_result(self, qr_str: str) -> bool:
         """Handle QR code result from vision."""
         if not self.context.parse_qr(qr_str):
-            self.context.error_code = 10
+            self.context.error_code = ErrorCode.QR_PARSE_FAILED
             self.context.error_msg = f"Invalid QR: {qr_str}"
             return self.trigger(self.Events.ERROR)
         self.context.current_batch = 1
@@ -825,7 +836,7 @@ class MissionStateMachine(BaseStateMachine):
         self.context.update_visual_flags(flags)
 
         if self.context.visual_fail:
-            self.context.error_code = 30
+            self.context.error_code = ErrorCode.VISUAL_FAIL_FROM_MCU
             self.context.error_msg = "Visual failure"
             return self.trigger(self.Events.ERROR)
 
