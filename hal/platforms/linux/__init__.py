@@ -1,10 +1,15 @@
-﻿from .ai import LinuxAI
+﻿import concurrent.futures
+import logging
+
+from .ai import LinuxAI
 from .camera import LinuxCamera
 from .display import LinuxDisplay
 from .uart import LinuxUart
 
+logger = logging.getLogger(__name__)
 
-def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> LinuxCamera:
+
+def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> LinuxCamera | None:
     camera_id = kwargs.pop("camera_id", str(source))
     fps = kwargs.pop("fps", 120)
     queue_size = kwargs.pop("camera_stream_queue_size", 2)
@@ -22,7 +27,11 @@ def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> Linu
         sensor_width_mm=sensor_width_mm,
         sensor_height_mm=sensor_height_mm,
     )
-    cam.start()
+    try:
+        cam.start()
+    except (concurrent.futures.TimeoutError, RuntimeError, Exception) as e:
+        logger.error("Camera '%s' failed to start (skipped): %s", camera_id, e)
+        return None
     return cam
 
 
