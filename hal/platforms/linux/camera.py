@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import queue
 import threading
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -61,19 +63,83 @@ class LinuxCamera:
     def sensor_height_mm(self) -> Optional[float]:
         return self._sensor_height_mm
 
-    def start(self) -> None:
-        self._cap = cv2.VideoCapture(self._source, cv2.CAP_V4L2)
-        if not self._cap.isOpened():
+    def _open_once(self) -> cv2.VideoCapture:
+        cap = cv2.VideoCapture(self._source, cv2.CAP_V4L2)
+        if not cap.isOpened():
             logger.warning("V4L2 open failed for %s, trying default backend", self._source)
-            self._cap = cv2.VideoCapture(self._source)
+            cap = cv2.VideoCapture(self._source)
+        if not cap.isOpened():
+            raise RuntimeError(f"Camera {self._camera_id}: device not accessible")
+        return cap
 
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
-        self._cap.set(cv2.CAP_PROP_FPS, self._fps)
+    def start(self) -> None:
+        timeout = 5.0
+        for attempt in (1, 2):
+            result: list[cv2.VideoCapture] = []
+            exc: list[BaseException] = []
 
-        self._actual_fps = self._cap.get(cv2.CAP_PROP_FPS)
+            def worker():
+                try:
+                    result.append(self._open_once())
+                except KeyboardInterrupt:
+                    raise
+                except SystemExit:
+                    raise
+                except BaseException as e:
+                    exc.append(e)
+
+            t = threading.Thread(
+                target=worker,
+                daemon=True,
+                name=f"cam-open-{self._camera_id}",
+            )
+            t.start()
+            t.join(timeout=timeout)
+
+            if t.is_alive():
+                logger.warning(
+                    "Camera %s: open timed out after %.1fs (attempt %d/2)",
+                    self._camera_id, timeout, attempt,
+                )
+                if attempt == 2:
+                    raise concurrent.futures.TimeoutError(
+                        f"Camera {self._camera_id}: V4L2 open timed out"
+                    )
+                time.sleep(1)
+            elif exc:
+                if isinstance(exc[0], (KeyboardInterrupt, SystemExit)):
+                    raise exc[0]
+                if attempt == 2:
+                    raise RuntimeError(
+                        f"Camera {self._camera_id}: open failed"
+                    ) from exc[0]
+                time.sleep(1)
+            else:
+                self._cap = result[0]
+                break
+        else:
+            raise RuntimeError(f"Camera {self._camera_id}: all open attempts failed")
+
+        if not self._cap.isOpened():
+            raise RuntimeError(f"Camera {self._camera_id}: opened but not accessible")
+
+        for prop, name in [
+            (cv2.CAP_PROP_FRAME_WIDTH, "width"),
+            (cv2.CAP_PROP_FRAME_HEIGHT, "height"),
+            (cv2.CAP_PROP_FPS, "fps"),
+        ]:
+            value = {"width": self._width, "height": self._height, "fps": self._fps}[name]
+            if not self._cap.set(prop, value):
+                logger.debug("Camera %s: failed to set %s=%s", self._camera_id, name, value)
+
+        actual = self._cap.get(cv2.CAP_PROP_FPS)
+        self._actual_fps = actual if actual > 0 else self._fps
         self._running = True
-        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._capture_thread = threading.Thread(
+            target=self._capture_loop,
+            daemon=True,
+            name=f"cam-capture-{self._camera_id}",
+        )
         self._capture_thread.start()
 
     def _capture_loop(self) -> None:
@@ -96,8 +162,8 @@ class LinuxCamera:
         try:
             import os
             os.sched_setaffinity(0, {0, 1, 2, 3})
-        except Exception:
-            logger.error("Failed to bind camera thread to little cores")
+        except Exception as e:
+            logger.error("Failed to bind camera thread to little cores: %s", e)
 
     def read(self) -> Optional[np.ndarray]:
         try:
