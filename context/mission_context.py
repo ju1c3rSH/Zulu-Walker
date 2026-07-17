@@ -44,7 +44,7 @@ _VISUAL_STATE_TO_INT = {
 _READY_THRESHOLD = 10
 # percent_error = ((cx - w/2) / max(w,h)/2) * 5000
 # threshold=250  →  偏差 ≈ 250 * max/2 / 5000 = 16 px @ 640x480 (X/Y 同尺度)
-_DISCOVERY_CENTER_THRESHOLD = 300
+_DISCOVERY_CENTER_THRESHOLD = 150
 # threshold=280  →  偏差 ≈ 280 * max/2 / 5000 = 17.9 px @ 640x480
 _ALIGN_CENTER_THRESHOLD = 300
 _HEARTBEAT_INTERVAL = 0.1
@@ -482,9 +482,7 @@ class MissionCoordinator:
         if not self._discovery_ready_latched:
             if self.visual_sm.is_tracking() and target_found \
                and abs(pe_x) <= _DISCOVERY_CENTER_THRESHOLD and abs(pe_y) <= _DISCOVERY_CENTER_THRESHOLD:
-                conf = data.get("confidence", 0)
-                if conf >= 80:
-                    self._discovery_ready_frames += 1
+                self._discovery_ready_frames += 1
             else:
                 self._discovery_ready_frames = max(0, self._discovery_ready_frames - 1)
 
