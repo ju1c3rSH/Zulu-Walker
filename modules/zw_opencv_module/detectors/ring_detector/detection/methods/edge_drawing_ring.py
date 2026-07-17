@@ -58,6 +58,9 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
         max_area = w_scaled * h_scaled * 0.4
         best = None
         best_score = 0.0
+        best_axes = None
+        best_angle = 0.0
+        best_area = 0.0
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -92,9 +95,20 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
             if score > best_score:
                 best_score = score
                 best = (cx / scale, cy / scale)
+                best_axes = (a / scale, b / scale)
+                best_angle = angle
+                best_area = area / (scale * scale)
 
         if best is None:
             return None
+
+        self.detector._last_ring_meta[target_color] = {
+            'center': best,
+            'outer_radius': (best_axes[0] + best_axes[1]) / 2.0,
+            'area': best_area,
+            'axes': best_axes,
+            'angle': best_angle,
+        }
 
         return create_ring_target(best, target_color, 100.0)
 
