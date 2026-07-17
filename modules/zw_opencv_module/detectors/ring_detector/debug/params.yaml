@@ -20,7 +20,7 @@ HEURISTIC_RING:
   edge_morph_iterations: 2
   edge_morph_kernel: 3
   max_roi_miss: 7
-  min_area: 50
+  min_area: 1500
   ring_gap_px: 10
   roi_size: 350
   smooth_window: 10
