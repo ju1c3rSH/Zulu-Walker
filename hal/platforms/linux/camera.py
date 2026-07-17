@@ -170,7 +170,7 @@ class LinuxCamera:
         self._capture_thread.start()
 
     def _capture_loop(self) -> None:
-        self._bind_little_cores()
+        self._bind_capture_cores()
         while self._running:
             ret, frame = self._cap.read()
             if ret:
@@ -185,12 +185,9 @@ class LinuxCamera:
             else:
                 logger.error("Camera %s: read failed", self._camera_id)
 
-    def _bind_little_cores(self) -> None:
-        try:
-            import os
-            os.sched_setaffinity(0, {0, 1, 2, 3})
-        except Exception as e:
-            logger.error("Failed to bind camera thread to little cores: %s", e)
+    def _bind_capture_cores(self) -> None:
+        from utils.cpu_affinity import bind_current_thread
+        bind_current_thread("camera_capture")
 
     def read(self) -> Optional[np.ndarray]:
         try:

@@ -46,6 +46,9 @@ class ModuleManager:
             self.load(name)
 
     def run_main_loop(self, coordinator=None, tick_callback=None) -> None:
+        from utils.cpu_affinity import bind_current_thread
+        bind_current_thread("main_loop")
+
         while self._running:
             try:
                 for name, loop_method in self._loop_methods.items():
