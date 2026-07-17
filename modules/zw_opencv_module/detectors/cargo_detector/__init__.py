@@ -116,8 +116,8 @@ class CargoDetector:
         self.score_weight_area = 0.2
 
         # HeuristicEdge 方法内部可调参数
-        self.stage2_color_threshold = 0.20
-        self.stage2_min_area_ratio = 0.3
+        self.stage2_color_threshold = 0.3
+        self.stage2_min_area_ratio = 0.5
 
         # EdgeDrawing 初始化（若不可用则默认使用 FAST_CIRCLE）
         self.ed = None
