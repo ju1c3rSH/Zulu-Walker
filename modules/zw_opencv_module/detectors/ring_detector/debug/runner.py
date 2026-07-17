@@ -203,7 +203,82 @@ class RingDebugRunner:
                     (int(cx) + 10, int(cy) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, color_bgr, 1,
                 )
+                self._draw_ring_meta_overlay(display, color, (cx, cy), color_bgr)
         return display
+
+    def _draw_ring_meta_overlay(self, display, color, coordinate, color_bgr):
+        meta = self.detector._last_ring_meta.get(color)
+        if meta is None:
+            return
+
+        cx, cy = coordinate
+        outer_r = meta.get('outer_radius', 0) or 0
+        axes = meta.get('axes')
+        angle = meta.get('angle', 0) or 0
+        area = meta.get('area') or 0
+
+        if axes is not None and axes[0] > 0 and axes[1] > 0:
+            cv2.ellipse(display, (int(cx), int(cy)),
+                        (int(axes[0]), int(axes[1])), angle,
+                        0, 360, color_bgr, 2)
+        elif outer_r > 0:
+            cv2.circle(display, (int(cx), int(cy)),
+                       int(outer_r), color_bgr, 2)
+
+        hsv_mean = self._compute_ring_hsv(display, (cx, cy), outer_r)
+        text_x = int(cx) + 10
+        line_h = 18
+
+        if hsv_mean is not None:
+            cv2.putText(display,
+                        f"H:{hsv_mean[0]:.0f} S:{hsv_mean[1]:.0f} V:{hsv_mean[2]:.0f}",
+                        (text_x, int(cy) + 22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+
+        if area > 0:
+            cv2.putText(display, f"Area: {area:.0f}",
+                        (text_x, int(cy) + 22 + line_h),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+
+    @staticmethod
+    def _compute_ring_hsv(frame, center, outer_r):
+        if outer_r <= 0:
+            return None
+        cx, cy = int(center[0]), int(center[1])
+        r = int(outer_r)
+        pad = 4
+        x1 = max(0, cx - r - pad)
+        y1 = max(0, cy - r - pad)
+        x2 = min(frame.shape[1], cx + r + pad)
+        y2 = min(frame.shape[0], cy + r + pad)
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        roi = frame[y1:y2, x1:x2]
+        roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        local_cx = cx - x1
+        local_cy = cy - y1
+        band_w = max(4, r // 6)
+        r_outer = min(int(r + band_w), min(roi.shape[0], roi.shape[1]) // 2 - 1)
+        r_inner = max(int(r - band_w), 1)
+        if r_inner >= r_outer:
+            return None
+
+        annulus = np.zeros(roi.shape[:2], dtype=np.uint8)
+        cv2.circle(annulus, (local_cx, local_cy), r_outer, 255, -1)
+        cv2.circle(annulus, (local_cx, local_cy), r_inner, 0, -1)
+
+        mask = annulus > 0
+        if not mask.any():
+            return None
+        hsv_values = roi_hsv[mask]
+        if len(hsv_values) == 0:
+            return None
+        h_mean = float(np.mean(hsv_values[:, 0]))
+        s_mean = float(np.mean(hsv_values[:, 1]))
+        v_mean = float(np.mean(hsv_values[:, 2]))
+        return (h_mean, s_mean, v_mean)
 
     def _cleanup(self):
         self.window.close()
