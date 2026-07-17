@@ -1,7 +1,7 @@
 EDGE_DRAWING_CIRCLE:
   blur_kernel: 5
   blur_sigma: 150
-  color_match_threshold: 35
+  color_match_threshold: 20
   ed_gradient_threshold: 36
   ed_min_path_length: 50
   edge_min_pixels: 20
@@ -12,10 +12,10 @@ EDGE_DRAWING_CIRCLE:
   low_light_min_pixels: 50
   low_light_s_divider: 3
   low_light_v_divider: 3
-  min_area: 100
+  min_area: 3000
   min_circularity: 50
   relaxed_s: 10
-  relaxed_v: 5
+  relaxed_v: 35
   score_weight_area: 20
   score_weight_circularity: 30
   score_weight_color: 50
@@ -40,4 +40,4 @@ SHARED:
   _kf_q_base: 20
   _kf_q_vel_base: 15
   max_lost_frames: 10
-_method_index: 0
+_method_index: 2

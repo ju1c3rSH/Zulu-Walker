@@ -14,6 +14,7 @@ from .window import CargoDebugWindow
 _METHOD_KEY_MAP = {
     DetectMethod.FAST_CIRCLE: "FAST_CIRCLE",
     DetectMethod.EDGE_DRAWING_CIRCLE: "EDGE_DRAWING_CIRCLE",
+    DetectMethod.HEURISTIC_EDGE: "EDGE_DRAWING_CIRCLE",
 }
 
 _COLORS = [Color.RED, Color.GREEN, Color.BLUE]
@@ -45,7 +46,7 @@ class CargoDebugRunner:
     def _load_config(self):
         data = self.config.load()
         method_idx = data.get("_method_index", 0)
-        self._current_method_key = ["FAST_CIRCLE", "EDGE_DRAWING_CIRCLE"][method_idx]
+        self._current_method_key = ["FAST_CIRCLE", "EDGE_DRAWING_CIRCLE", "EDGE_DRAWING_CIRCLE"][method_idx]
 
         method_params = data.get(self._current_method_key, {})
         shared_params = data.get("SHARED", {})
@@ -181,7 +182,7 @@ class CargoDebugRunner:
         display = frame.copy()
         for color in _COLORS:
             item = self.detector.detect_cargo(frame, color)
-            if item is not None:
+            if item is not None and not item.is_predicted:
                 cx, cy = item.coordinate
                 color_bgr = {
                     Color.RED: (0, 0, 255),
