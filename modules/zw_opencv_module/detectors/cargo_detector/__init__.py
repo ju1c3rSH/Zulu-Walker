@@ -16,6 +16,12 @@ from ...models.color import Color
 from ...models.cargo import CargoItem
 from .detection import DetectMethod
 
+_METHOD_TO_CONFIG_KEY = {
+    DetectMethod.FAST_CIRCLE: "FAST_CIRCLE",
+    DetectMethod.EDGE_DRAWING_CIRCLE: "EDGE_DRAWING_CIRCLE",
+    DetectMethod.HEURISTIC_EDGE: "EDGE_DRAWING_CIRCLE",
+}
+
 
 class _TrackingState:
 
@@ -75,10 +81,13 @@ class CargoDetector:
         self.blur_sigma = 1.5
         self.ed_min_path_length = 50
         self.ed_gradient_threshold = 36
-        self.ed_nfa_validation = True
+        self.ed_nfa_validation = False
         self.edge_morph_kernel = 3
         self.edge_morph_iterations = 1
-        self.color_match_threshold = 0.35
+        self.color_match_threshold = 0.20
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        self.color_match_threshold_per_color = {Color.GREEN: 0.30}
+        self.stage2_color_threshold_per_color = {Color.GREEN: 0.22}
 
         # FastCircle 方法内部可调参数
         # sv_percentile: 粗筛掩码内取 S/V 通道的第 N 百分位作为自适应下界
@@ -99,7 +108,7 @@ class CargoDetector:
         self.edge_min_pixels = 20
         self.low_light_min_pixels = 50
         self.relaxed_s = 10
-        self.relaxed_v = 5
+        self.relaxed_v = 35
         self.low_light_s_divider = 3
         self.low_light_v_divider = 3
         self.score_weight_color = 0.5
@@ -113,7 +122,7 @@ class CargoDetector:
         # EdgeDrawing 初始化（若不可用则默认使用 FAST_CIRCLE）
         self.ed = None
         self._init_edge_drawing()
-        self.detect_method = DetectMethod.EDGE_DRAWING_CIRCLE
+        self.detect_method = DetectMethod.HEURISTIC_EDGE
 
         self._kf_q_base = 0.2
         self._kf_q_vel_base = 0.15
@@ -122,7 +131,7 @@ class CargoDetector:
         self.roi_size = 150
         self.max_roi_miss = 5
         self.min_circularity = 0.5
-        self.min_area = 100
+        self.min_area = 3000
         self.smooth_window = 5
         self.kernel_open = 5
         self.kernel_close = 7
@@ -138,11 +147,11 @@ class CargoDetector:
 
         self.color_ranges = {
             Color.RED: [
-                (np.array([0, 15, 0]), np.array([10, 255, 255])),
-                (np.array([170, 15, 0]), np.array([180, 255, 255])),
+                (np.array([0, 15, 50]), np.array([10, 255, 255])),
+                (np.array([170, 15, 50]), np.array([180, 255, 255])),
             ],
-            Color.GREEN: [(np.array([50, 35, 30]), np.array([70, 255, 255]))],
-            Color.BLUE: [(np.array([100, 15, 15]), np.array([130, 255, 255]))],
+            Color.GREEN: [(np.array([45, 20, 30]), np.array([75, 255, 255]))],
+            Color.BLUE: [(np.array([100, 15, 40]), np.array([130, 255, 255]))],
         }
 
         self._methods: Dict[DetectMethod, Any] = {}
@@ -178,10 +187,9 @@ class CargoDetector:
         }
 
     def _load_params_from_config(self):
-        """从 config.py ParamDef 默认值 + params.yaml 覆盖值加载所有参数。
+        """只加载当前 detect_method 对应的 config section + SHARED。
 
-        确保 CargoDetector 与 Debug UI 使用同一套参数定义。
-        配置文件不存在时静默回退到 __init__ 硬编码值。
+        避免不同方法间的参数串扰。
         """
         try:
             from .debug.config import CargoConfig
@@ -189,12 +197,15 @@ class CargoDetector:
             config = CargoConfig()
             data = config.load()
 
-            for method_key, method_params in data.items():
-                if method_key == "_method_index":
+            method_key = _METHOD_TO_CONFIG_KEY.get(self.detect_method)
+            sections = [method_key, "SHARED"] if method_key else ["SHARED"]
+
+            for section in sections:
+                if section not in data or not isinstance(data[section], dict):
                     continue
-                defs = config.get_param_defs(method_key)
+                defs = config.get_param_defs(section)
                 pdef_map = {p.name: p for p in defs}
-                for param_name, raw_value in method_params.items():
+                for param_name, raw_value in data[section].items():
                     pdef = pdef_map.get(param_name)
                     if pdef is None:
                         continue

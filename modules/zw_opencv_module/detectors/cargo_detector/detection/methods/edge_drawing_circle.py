@@ -96,6 +96,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             return None
 
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        gray = self.detector._clahe.apply(gray)
 
         blur_k = self.detector.blur_kernel
         if blur_k % 2 == 0:
@@ -145,7 +146,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
 
         candidates = []
         for contour in contours:
-            candidate = self._evaluate_contour(contour, color_mask, hsv)
+            candidate = self._evaluate_contour(contour, color_mask, hsv, target_color)
             if candidate is not None:
                 candidates.append(candidate)
 
@@ -196,7 +197,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                 lower[0],
                 max(int(lower[1]) // self.detector.low_light_s_divider, self.detector.relaxed_s),
                 max(int(lower[2]) // self.detector.low_light_v_divider, self.detector.relaxed_v),
-            ], dtype=np.uint8)
+            ])
             chunk = cv2.inRange(hsv, rel_lower, upper)
             relaxed = chunk if relaxed is None else cv2.bitwise_or(relaxed, chunk)
 
@@ -211,7 +212,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         return mask
 
     def _evaluate_contour(self, contour: np.ndarray, color_mask: np.ndarray,
-                          hsv: np.ndarray) -> Optional[dict]:
+                          hsv: np.ndarray, target_color: Color = None) -> Optional[dict]:
         area = cv2.contourArea(contour)
         if area < self.detector.min_area:
             return None
@@ -257,7 +258,10 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         color_score = self._compute_color_score(
             refined_center, radius, color_mask
         )
-        if color_score < self.detector.color_match_threshold:
+        thresh = self.detector.color_match_threshold
+        if target_color is not None:
+            thresh = self.detector.color_match_threshold_per_color.get(target_color, thresh)
+        if color_score < thresh:
             _h, _w = color_mask.shape[:2]
             _x, _y = int(refined_center[0]), int(refined_center[1])
             _r = int(radius)
@@ -276,7 +280,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                 _total_px = np.pi * float(_roi_r) * float(_roi_r)
             log_print(
                 f"EdgeDrawing: Color score is below the threshold.\n"
-                f"  score={color_score:.3f} < threshold={self.detector.color_match_threshold:.3f}  "
+                f"  score={color_score:.3f} < threshold={thresh:.3f}  "
                 f"matched={_matched}/{_total_px:.0f} ({_matched / _total_px * 100:.1f}%)\n"
                 f"  center=({refined_center[0]:.1f},{refined_center[1]:.1f}) "
                 f"radius={radius:.1f}\n"

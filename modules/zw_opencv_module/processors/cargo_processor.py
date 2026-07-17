@@ -47,7 +47,7 @@ class TrackCargoProcessor(Processor):
                                 error_message="target_color is None")
 
         item = self.detector.detect_cargo(frame, target_color)
-        if item is None or item.coordinate is None:
+        if item is None or item.coordinate is None or getattr(item, 'is_predicted', False):
             return VisionResult(task_name=self.name, success=False)
 
         cx, cy = item.coordinate

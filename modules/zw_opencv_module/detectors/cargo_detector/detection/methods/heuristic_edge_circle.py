@@ -39,7 +39,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
         # === Stage 1: full ellipse evaluation ===
         candidates = []
         for contour in contours:
-            candidate = self._evaluate_contour(contour, color_mask, hsv)
+            candidate = self._evaluate_contour(contour, color_mask, hsv, target_color)
             if candidate is not None:
                 candidates.append(candidate)
 
@@ -50,7 +50,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
         # === Stage 2: heuristic moments fallback ===
         stage2_candidates = []
         for contour in contours:
-            candidate = self._evaluate_heuristic(contour, color_mask)
+            candidate = self._evaluate_heuristic(contour, color_mask, target_color)
             if candidate is not None:
                 stage2_candidates.append(candidate)
 
@@ -61,7 +61,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
         return None, None, None
 
     def _evaluate_heuristic(self, contour: np.ndarray,
-                            color_mask: np.ndarray) -> Optional[dict]:
+                            color_mask: np.ndarray, target_color: Color = None) -> Optional[dict]:
         area = cv2.contourArea(contour)
         if area < self.detector.min_area * self.detector.stage2_min_area_ratio:
             return None
@@ -78,7 +78,10 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
         radius = np.sqrt(area / np.pi)
 
         color_score = self._compute_color_score((cx, cy), radius, color_mask)
-        if color_score < self.detector.stage2_color_threshold:
+        thresh = self.detector.stage2_color_threshold
+        if target_color is not None:
+            thresh = self.detector.stage2_color_threshold_per_color.get(target_color, thresh)
+        if color_score < thresh:
             return None
 
         return {

@@ -18,7 +18,8 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
     """
 
     AXIS_RATIO_MAX = 1.5
-    COLOR_MATCH_MIN_PX = 15
+    COLOR_MATCH_MIN_PX = 50
+    CIRCULARITY_MIN = 0.3
 
     def __init__(self, detector=None):
         super().__init__(name="edge_drawing_ring", detector=detector)
@@ -47,19 +48,26 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
         if ek % 2 == 0:
             ek += 1
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ek, ek))
-        dilated = cv2.morphologyEx(edges, cv2.MORPH_DILATE, kernel, iterations=ei)
+        dilated = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=ei)
         self.detector._last_edge_preview = dilated
 
         contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         min_area = getattr(self.detector, "min_area", 150)
+        h_scaled, w_scaled = small.shape[:2]
+        max_area = w_scaled * h_scaled * 0.4
         best = None
         best_score = 0.0
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < min_area:
+            if area < min_area or area > max_area:
                 continue
+            peri = cv2.arcLength(cnt, True)
+            if peri > 0:
+                circularity = 4.0 * np.pi * area / (peri * peri)
+                if circularity < self.CIRCULARITY_MIN:
+                    continue
             try:
                 (cx, cy), (a, b), angle = cv2.fitEllipse(cnt)
             except cv2.error:
@@ -127,4 +135,9 @@ class EdgeDrawingRingMethod(BaseRingDetectionMethod):
             return 0
 
         intersection = cv2.bitwise_and(roi_mask, roi_mask, mask=ellipse_mask)
-        return cv2.countNonZero(intersection)
+        color_px = cv2.countNonZero(intersection)
+        ellipse_area = np.pi * ra * rb
+        needed = max(self.COLOR_MATCH_MIN_PX, int(ellipse_area * 0.05))
+        if color_px < needed:
+            return 0
+        return color_px
