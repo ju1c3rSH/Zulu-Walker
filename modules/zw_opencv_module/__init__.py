@@ -17,7 +17,12 @@ _running: bool = False
 
 cv2.ocl.setUseOpenCL(True)
 
+
 def init(machine: Machine, event_bus=None) -> None:
+    from utils.cpu_affinity import get_config as get_cpu_affinity_config
+    _cpu_cfg = get_cpu_affinity_config()
+    if _cpu_cfg and _cpu_cfg.opencv_threads > 0:
+        cv2.setNumThreads(_cpu_cfg.opencv_threads)
     global _vision_manager, _legacy_shim
 
     config_path = os.path.join(_module_dir, "config", "vision_config.yaml")

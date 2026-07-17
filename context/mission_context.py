@@ -528,6 +528,9 @@ class MissionCoordinator:
     # ===== heartbeat =====
 
     def _heartbeat_loop(self) -> None:
+        from utils.cpu_affinity import bind_current_thread
+        bind_current_thread("heartbeat")
+
         self._last_mcu_heartbeat = time.monotonic()
         while self._running:
             time.sleep(_HEARTBEAT_INTERVAL)

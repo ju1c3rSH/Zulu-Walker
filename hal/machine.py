@@ -9,6 +9,7 @@ import yaml
 
 from hal.camera_hub import CameraHub
 from hal.interface import AIInference, Display, Uart
+from utils.cpu_affinity import configure as configure_cpu_affinity
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,8 @@ class Machine:
                 "baudrate": uart_defaults.get("baudrate", 921600),
             }
             ai_config = cfg.get("ai")
+            cpu_affinity_cfg = cfg.get("cpu_affinity")
+            configure_cpu_affinity(cpu_affinity_cfg)
 
         platform_mod = importlib.import_module(f"hal.platforms.{platform}")
 
