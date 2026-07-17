@@ -112,21 +112,35 @@ class BaseDebugWindow:
             cv2.imshow(self.title, preview)
 
     def _draw_params_info(self, frame: np.ndarray):
-        y = 20
+        line_count = len(self.param_defs) + 1
+        line_height = 14
+        pad = 8
+        panel_w = 220
+        panel_h = min(line_count * line_height + pad * 2, frame.shape[0] - 10, 400)
+        if panel_w > frame.shape[1] - 10:
+            panel_w = frame.shape[1] - 10
+
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (5, 5), (5 + panel_w, 5 + panel_h), (30, 30, 30), -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, dst=frame)
+
+        y = 5 + pad + line_height
+        idx = 1
         for p in self.param_defs:
             raw = self._raw_params.get(p.name, p.default)
             if p.scale != 1.0:
-                text = f"{p.display}: {raw * p.scale:.2f}"
+                text = f"#{idx:02d} {p.display}: {raw * p.scale:.2f}"
             else:
-                text = f"{p.display}: {raw}"
+                text = f"#{idx:02d} {p.display}: {raw}"
             cv2.putText(frame, text, (10, y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
-            y += 12
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            y += line_height
+            idx += 1
 
         status = "ENABLED" if self.enabled else "DISABLED"
         color = (0, 255, 0) if self.enabled else (0, 0, 255)
-        cv2.putText(frame, f"Status: {status}", (10, y + 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        cv2.putText(frame, f"Status: {status}", (10, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
     def _build_preview(self) -> Optional[np.ndarray]:
         if self.preview_index == 0 and self._frame is not None:
