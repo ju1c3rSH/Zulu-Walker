@@ -29,6 +29,12 @@ RING_METHOD_PARAM_DEFS: Dict[str, List[ParamDef]] = {
         ParamDef("smooth_window",         "Smooth Win",         5,    1,   20,   1),
         ParamDef("blur_kernel",           "Blur Kernel",        3,    1,   31,   2,  odd=True),
         ParamDef("blur_sigma",            "Blur Sigma",       150,    5,  500,   5,  scale=0.01),
+        ParamDef("ed_min_path_length",    "ED MinPath",        20,    5,  150,   5),
+        ParamDef("ed_gradient_threshold", "ED Grad",           36,    5,  200,   1),
+        ParamDef("ed_nfa_validation",     "ED NFA",             0,    0,    1,   1),
+        ParamDef("edge_morph_kernel",     "ED Close K",         3,    1,   15,   2,  odd=True),
+        ParamDef("edge_morph_iterations", "ED Close Iter",      1,    1,    5,   1),
+        ParamDef("ring_gap_px",           "Ring Gap px",       10,    3,   60,   1),
     ],
 }
 
