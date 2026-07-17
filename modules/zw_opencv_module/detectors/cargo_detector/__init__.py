@@ -102,6 +102,10 @@ class CargoDetector:
         self.score_weight_circularity = 0.3
         self.score_weight_area = 0.2
 
+        # HeuristicEdge 方法内部可调参数
+        self.stage2_color_threshold = 0.20
+        self.stage2_min_area_ratio = 0.3
+
         # EdgeDrawing 初始化（若不可用则默认使用 FAST_CIRCLE）
         self.ed = None
         self._init_edge_drawing()
@@ -158,9 +162,11 @@ class CargoDetector:
     def _init_detection_methods(self):
         from .detection.methods.fast_circle import FastCircleDetectionWithColorMethod
         from .detection.methods.edge_drawing_circle import EdgeDrawingCircleMethod
+        from .detection.methods.heuristic_edge_circle import HeuristicEdgeCircleMethod
         self._methods = {
             DetectMethod.FAST_CIRCLE: FastCircleDetectionWithColorMethod(detector=self),
             DetectMethod.EDGE_DRAWING_CIRCLE: EdgeDrawingCircleMethod(detector=self),
+            DetectMethod.HEURISTIC_EDGE: HeuristicEdgeCircleMethod(detector=self),
         }
 
     def _get_tracking(self, color: Color) -> _TrackingState:
@@ -174,7 +180,7 @@ class CargoDetector:
     def set_detect_method(self, method: DetectMethod) -> bool:
         if method == self.detect_method:
             return True
-        if method == DetectMethod.EDGE_DRAWING_CIRCLE and self.ed is None:
+        if method in (DetectMethod.EDGE_DRAWING_CIRCLE, DetectMethod.HEURISTIC_EDGE) and self.ed is None:
             log_print("EdgeDrawing method is not available currently, please check your python lib installation.")
             return False
         self.detect_method = method
@@ -195,7 +201,7 @@ class CargoDetector:
 
     @staticmethod
     def get_supported_methods():
-        return [DetectMethod.FAST_CIRCLE, DetectMethod.EDGE_DRAWING_CIRCLE]
+        return [DetectMethod.FAST_CIRCLE, DetectMethod.EDGE_DRAWING_CIRCLE, DetectMethod.HEURISTIC_EDGE]
 
     def get_method_params(self, method: DetectMethod) -> dict:
         return {
@@ -214,6 +220,8 @@ class CargoDetector:
             "edge_morph_kernel": self.edge_morph_kernel,
             "edge_morph_iterations": self.edge_morph_iterations,
             "color_match_threshold": self.color_match_threshold,
+            "stage2_color_threshold": self.stage2_color_threshold,
+            "stage2_min_area_ratio": self.stage2_min_area_ratio,
         }
 
     def update_params(self, params: dict):
@@ -234,6 +242,7 @@ class CargoDetector:
             "min_circularity", "blur_sigma", "color_match_threshold",
             "ema_alpha", "coarse_ratio_threshold", "ellipse_max_axis_ratio",
             "score_weight_color", "score_weight_circularity", "score_weight_area",
+            "stage2_color_threshold", "stage2_min_area_ratio",
         )
         for key in float_keys:
             if key in params:
