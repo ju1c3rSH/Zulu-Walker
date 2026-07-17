@@ -32,15 +32,15 @@ CARGO_METHOD_PARAM_DEFS: Dict[str, List[ParamDef]] = {
         ParamDef("ed_gradient_threshold",   "ED Grad",           36,    5,  200,   1),
         ParamDef("edge_morph_kernel",       "ED Close K",         3,    1,   15,   2,  odd=True),
         ParamDef("edge_morph_iterations",   "ED Close Iter",      1,    1,    5,   1),
-        ParamDef("color_match_threshold",   "Color Match",       35,   10,  100,   1,  scale=0.01),
-        ParamDef("min_area",                "Min Area",         100,   10, 2000,  10),
+        ParamDef("color_match_threshold",   "Color Match",       20,   10,  100,   1,  scale=0.01),
+        ParamDef("min_area",                "Min Area",        3000,   10, 10000,  10),
         ParamDef("min_circularity",         "Min Circ",          50,   10,  100,   1,  scale=0.01),
         ParamDef("edge_min_pixels",         "Edge MinPx",        20,    5,  200,   5),
         ParamDef("ellipse_min_contour_points", "Ellipse MinPts",  5,    5,   50,   5),
         ParamDef("ellipse_max_axis_ratio",  "Ellipse AxisR",    150,  100,  300,  10,  scale=0.01),
         ParamDef("low_light_min_pixels",    "LowLight MinPx",    50,   10,  500,  10),
         ParamDef("relaxed_s",               "Relaxed S",         10,    5,   50,   5),
-        ParamDef("relaxed_v",               "Relaxed V",          5,    2,   30,   1),
+        ParamDef("relaxed_v",               "Relaxed V",         35,    2,   50,   1),
         ParamDef("low_light_s_divider",     "LowLight S Div",     3,    1,   10,   1),
         ParamDef("low_light_v_divider",     "LowLight V Div",     3,    1,   10,   1),
         ParamDef("score_weight_color",      "Score Color",       50,   10,  100,   5,  scale=0.01),
@@ -76,6 +76,8 @@ class CargoConfig:
                     for param_key in result[method_key]:
                         if param_key in data[method_key] and isinstance(data[method_key][param_key], int):
                             result[method_key][param_key] = data[method_key][param_key]
+            if "_method_index" in data:
+                result["_method_index"] = data["_method_index"]
             return result
         except Exception:
             return self._all_defaults()

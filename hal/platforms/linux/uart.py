@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Callable, Optional
 
 import serial
@@ -98,6 +99,8 @@ class LinuxUart:
                     self._receiver_callback(data)
                 except Exception as e:
                     logger.error("UART receiver callback error: %s", e)
+            else:
+                time.sleep(0.001)
 
     def stop_receiver(self) -> None:
         self._running = False
