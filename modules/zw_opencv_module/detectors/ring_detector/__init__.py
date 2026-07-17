@@ -19,6 +19,7 @@ class _TrackingState:
     __slots__ = (
         "kf", "tracking_initialized", "lost_frames", "_last_predict_time",
         "last_center", "roi_miss_count", "_center_history",
+        "_ring_outer_radius",
     )
 
     def __init__(self, smooth_window: int = 5):
@@ -52,6 +53,7 @@ class _TrackingState:
         self.lost_frames = 0
         self._last_predict_time = None
         self._center_history.clear()
+        self._ring_outer_radius = None
         self.kf.statePost = np.zeros((4, 1), dtype=np.float32)
         self.kf.errorCovPost = np.eye(4, dtype=np.float32)
 
@@ -70,7 +72,7 @@ class RingDetector:
         self.edge_morph_iterations = 1
         self._init_edge_drawing()
         if _HAS_XIMGPROC:
-            self.detect_method = RingDetectMethod.EDGE_DRAWING_RING
+            self.detect_method = RingDetectMethod.HEURISTIC_RING
         else:
             self.detect_method = RingDetectMethod.FAST_RING
 
@@ -82,6 +84,7 @@ class RingDetector:
         self.min_area = 150
         self.smooth_window = 5
         self._ring_log_frame = 0
+        self.ring_gap_px = 10
 
         self.blur_kernel = 3
         self.blur_sigma = 1.5
@@ -173,6 +176,7 @@ class RingDetector:
             "q_base": self.q_base,
             "q_vel_base": self.q_vel_base,
             "max_lost_frames": self.max_lost_frames,
+            "ring_gap_px": self.ring_gap_px,
             "blur_kernel": self.blur_kernel,
             "blur_sigma": self.blur_sigma,
             "ed_min_path_length": self.ed_min_path_length,
@@ -187,7 +191,7 @@ class RingDetector:
             "roi_size", "max_roi_miss", "min_area",
             "smooth_window", "blur_kernel", "ed_min_path_length",
             "ed_gradient_threshold", "edge_morph_kernel", "edge_morph_iterations",
-            "max_lost_frames",
+            "max_lost_frames", "ring_gap_px",
         )
         for key in int_keys:
             if key in params:

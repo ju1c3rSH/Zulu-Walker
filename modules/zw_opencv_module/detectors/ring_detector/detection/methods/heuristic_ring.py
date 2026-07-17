@@ -12,30 +12,37 @@ from utils.log_util import log_print
 
 
 class HeuristicRingMethod(BaseRingDetectionMethod):
-    """Two-stage ring detection for target-shaped rings (colored line, hollow center).
+    """Concentric ring detection via HoughCircles on color mask + concentric validation.
 
-    Stage A (Heuristic, confidence=60):
-        Color mask -> largest contour -> moments centroid.
-        Handles partial/fragmented ring arcs. Guides robot toward target color.
+    Pipeline:
+        1. Build color mask from HSV ranges (dashed ring → scattered color dots)
+        2. Morph close to bridge dash gaps into arcs
+        3. HoughCircles on morphed mask → candidate centers + radii
+        4. Group by center proximity → identify concentric groups
+        5. Ring-band color density verification per group
+        6. Multi-ring confirmation → high confidence when ≥2 rings verified
 
-    Stage B (Complete Ring, confidence=100):
-        fitEllipse succeeds + axis_ratio <= 2.0.
-        Ring is fully visible -> precise center for final confirmation.
-
-    Auto-transitions between stages every frame based on contour quality.
-    Stage transitions are logged immediately; steady-state every 60 frames.
+    Performance tiers:
+        - Discovery (no tracking): 320×240 + Hough dp=1.5                       ~3-5 ms
+        - ROI tracking (last_center known): 150×150 cropped Hough                ~1-2 ms
+        - Kalman prediction (lost): pure math, no image ops                      ~0.01 ms
     """
 
-    AXIS_RATIO_MAX = 2.0
-    CIRCULARITY_MIN = 0.40
-    MORPH_KERNEL = 3
-    MORPH_CLOSE_ITER = 1
+    MORPH_KERNEL = 5
+    MORPH_CLOSE_ITER = 2
     _LOG_INTERVAL = 60
-    _COLOR_MATCH_MIN_PX = 15
+
+    # --- concentric ring parameters ---------------------------------
+    RING_GAP_PX_DEFAULT = 10       # expected pixel gap between concentric rings (2cm → px)
+    CONCENTRIC_MIN_RINGS = 2       # minimum concentric rings required to confirm
+    RING_BAND_COLOR_THRESHOLD = 0.12  # minimum color pixel density on ring band
+    RING_BAND_WIDTH = 3            # half-width of ring band for density measurement
+    HOUGH_DP = 1.5                 # accumulator resolution (1.5 = half-res, faster)
+    HOUGH_PARAM2 = 12             # accumulator threshold (higher = fewer false circles)
+    HOUGH_MIN_DIST = 10           # minimum distance between circle centers
 
     def __init__(self, detector=None):
         super().__init__(name="heuristic_ring", detector=detector)
-        self._prev_stage: Optional[str] = None
 
     # ================================================================
     #  public entry
@@ -47,11 +54,10 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         ts = self.detector._get_tracking(target_color)
 
-        # During discovery (no tracking), process at half resolution for ~4x speedup
         discovery_w = 320 if ts.last_center is None else TARGET_W
         small, scale, small_hw = self._scale_frame(frame, discovery_w)
 
-        bk = getattr(self.detector, "blur_kernel", 5)
+        bk = getattr(self.detector, "blur_kernel", 3)
         if bk % 2 == 0:
             bk += 1
         bs = getattr(self.detector, "blur_sigma", 1.5)
@@ -71,6 +77,12 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         morphed = self._morph_mask(mask)
         self.detector._last_mask = mask
         self.detector._last_morphed = morphed
+
+        # Fast verify: when tracking, check ring-band color at predicted center
+        if ts.last_center is not None:
+            result = self._fast_roi_verify(morphed, ts, target_color, scale, small_hw)
+            if result is not None:
+                return result
 
         result = self._try_roi(small, morphed, ts, target_color, scale, small_hw)
         if result is not None:
@@ -107,6 +119,42 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         return closed
 
     # ================================================================
+    #  fast ROI verify (tracking path)
+    # ================================================================
+
+    def _fast_roi_verify(self, morphed, ts, target_color, scale, small_hw):
+        """Tracking fast path: verify the ring is still at the predicted center."""
+        roi = self._decide_roi(ts, scale, small_hw)
+        if roi is None:
+            return None
+
+        x1, y1, x2, y2 = roi
+        roi_morphed = morphed[y1:y2, x1:x2]
+
+        # Use stored outer radius, or estimate from ROI size
+        r = getattr(ts, "_ring_outer_radius", None)
+        if r is None:
+            r = min(roi_morphed.shape) // 3
+
+        roi_h, roi_w = roi_morphed.shape
+        cx_roi = roi_w // 2
+        cy_roi = roi_h // 2
+        r_scaled = r * scale
+        density = self._ring_band_color_density(
+            (cx_roi, cy_roi), r_scaled, roi_morphed, band_width=self.RING_BAND_WIDTH + 2,
+        )
+
+        if density > self.RING_BAND_COLOR_THRESHOLD:
+            center = ((cx_roi + x1) / scale, (cy_roi + y1) / scale)
+            ts.roi_miss_count = 0
+            ts._ring_outer_radius = r  # keep current radius alive
+            self._log_detection("ROI_fast", target_color, center, r, 100)
+            return self._finalize(center, 100.0, ts, target_color, scale)
+
+        # Fast verify failed → fall through to full Hough in _try_roi
+        return None
+
+    # ================================================================
     #  ROI / global dispatch
     # ================================================================
 
@@ -121,79 +169,186 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         x1, y1, x2, y2 = roi
         roi_morphed = morphed[y1:y2, x1:x2]
+
+        # HoughCircles on ROI mask — fast (~1-2 ms on 150×150)
         return self._detect_and_finalize(roi_morphed, ts, target_color, scale,
-                                         offset=(x1, y1), context="ROI")
+                                          offset=(x1, y1), context="ROI")
 
     def _try_global(self, morphed, ts, target_color, scale):
         return self._detect_and_finalize(morphed, ts, target_color, scale,
-                                         offset=(0, 0), context="global")
+                                          offset=(0, 0), context="global")
 
     # ================================================================
-    #  core: two-stage detection
+    #  core: HoughCircles + concentric validation
     # ================================================================
 
-    def _detect_and_finalize(self, binary, ts, target_color, scale,
+    def _detect_and_finalize(self, mask, ts, target_color, scale,
                               offset, context):
-        min_area = getattr(self.detector, "min_area", 100)
+        h, w = mask.shape[:2]
+        max_radius = max(min(w, h) * 9 // 20, 80)
+        dp = self.HOUGH_DP
+        param2 = self.HOUGH_PARAM2
+        if context == "ROI":
+            dp = 1.2
+            param2 = 10
 
-        contours, _ = cv2.findContours(
-            binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        if not contours:
+        circles = cv2.HoughCircles(
+            mask, cv2.HOUGH_GRADIENT, dp=dp,
+            minDist=self.HOUGH_MIN_DIST, param1=100, param2=param2,
+            minRadius=6, maxRadius=max_radius,
+        )
+        if circles is None:
             self._info(f"[HeuristicRing] {context}: target={target_color.name} "
-                       f"mask_morphed={cv2.countNonZero(binary)}px no contours")
+                       f"hough: no circles found")
             if context == "ROI":
                 ts.roi_miss_count = getattr(ts, "roi_miss_count", 0) + 1
+            if getattr(ts, "roi_miss_count", 0) >= 3:
+                ts._ring_outer_radius = None
             return None
 
-        largest = max(contours, key=cv2.contourArea)
-        area = cv2.contourArea(largest)
+        circles = np.round(circles[0]).astype(int)
 
-        if area < min_area:
+        groups = self._group_concentric(circles)
+        if not groups:
             self._info(f"[HeuristicRing] {context}: target={target_color.name} "
-                       f"largest_area={area:.0f} < min_area={min_area} "
-                       f"total_contours={len(contours)}")
+                       f"hough={len(circles)} circles, 0 concentric groups")
             if context == "ROI":
                 ts.roi_miss_count = getattr(ts, "roi_miss_count", 0) + 1
+            if getattr(ts, "roi_miss_count", 0) >= 3:
+                ts._ring_outer_radius = None
             return None
 
-        center, conf = self._evaluate_contour(largest, target_color, scale, offset)
+        best_center, best_conf, best_outer_r = None, 0, 0
+        ox, oy = offset
+        gap_px = getattr(self.detector, "ring_gap_px", self.RING_GAP_PX_DEFAULT)
 
-        self._log_detection(context, target_color, center, area, conf)
+        for group_center_crop, radii in groups:
+            conf = self._evaluate_ring_group(
+                group_center_crop, radii, mask, gap_px,
+            )
+            if conf > best_conf:
+                best_conf = conf
+                best_center = (
+                    (group_center_crop[0] + ox) / scale,
+                    (group_center_crop[1] + oy) / scale,
+                )
+                best_outer_r = max(radii) / scale
+
+        if best_center is None:
+            self._info(f"[HeuristicRing] {context}: target={target_color.name} "
+                       f"hough={len(circles)} circles groups={len(groups)} "
+                       f"all failed verification")
+            if context == "ROI":
+                ts.roi_miss_count = getattr(ts, "roi_miss_count", 0) + 1
+            if getattr(ts, "roi_miss_count", 0) >= 3:
+                ts._ring_outer_radius = None
+            return None
+
+        ts._ring_outer_radius = best_outer_r
+        self._log_detection(context, target_color, best_center, best_outer_r, best_conf)
 
         if context == "ROI":
             ts.roi_miss_count = 0
 
-        return self._finalize(center, conf, ts, target_color, scale)
+        return self._finalize(best_center, best_conf, ts, target_color, scale)
 
-    def _evaluate_contour(self, contour, target_color, scale, offset):
-        """Try Stage B (fitEllipse) first; fall back to Stage A (moments)."""
-        area = cv2.contourArea(contour)
-        peri = cv2.arcLength(contour, True)
-        circularity = (4.0 * np.pi * area / (peri * peri)) if peri > 0 else 0.0
-        ox, oy = offset
+    # ================================================================
+    #  concentric grouping
+    # ================================================================
 
-        # --- Stage B: complete ring ---
-        if len(contour) >= 5 and circularity > self.CIRCULARITY_MIN:
-            try:
-                ellipse = cv2.fitEllipse(contour)
-                (ecx, ecy), (ea, eb), _ = ellipse
-                if ea > 0 and eb > 0:
-                    axis_ratio = max(ea, eb) / min(ea, eb)
-                    if axis_ratio <= self.AXIS_RATIO_MAX:
-                        center = ((ecx + ox) / scale, (ecy + oy) / scale)
-                        return center, 100.0
-            except cv2.error:
-                pass
+    def _group_concentric(self, circles):
+        """Group Hough circles by center proximity. Returns [(avg_center, radii), ...]."""
+        if len(circles) < self.CONCENTRIC_MIN_RINGS:
+            return []
 
-        # --- Stage A: heuristic centroid ---
-        M = cv2.moments(contour)
-        if M["m00"] == 0:
-            return None, 0.0
-        cx = M["m10"] / M["m00"]
-        cy = M["m01"] / M["m00"]
-        center = ((cx + ox) / scale, (cy + oy) / scale)
-        return center, 60.0
+        used = [False] * len(circles)
+        raw_groups = []
+        for i in range(len(circles)):
+            if used[i]:
+                continue
+            cx1, cy1, r1 = circles[i]
+            group = [(float(cx1), float(cy1), float(r1))]
+            used[i] = True
+            for j in range(len(circles)):
+                if used[j]:
+                    continue
+                cx2, cy2, r2 = circles[j]
+                if np.hypot(cx1 - cx2, cy1 - cy2) < 15:
+                    group.append((float(cx2), float(cy2), float(r2)))
+                    used[j] = True
+            raw_groups.append(group)
+
+        groups = []
+        for group in raw_groups:
+            if len(group) < self.CONCENTRIC_MIN_RINGS:
+                continue
+            avg_cx = sum(c[0] for c in group) / len(group)
+            avg_cy = sum(c[1] for c in group) / len(group)
+            radii = sorted(c[2] for c in group)
+            groups.append(((avg_cx, avg_cy), radii))
+
+        return groups
+
+    # ================================================================
+    #  ring band color density
+    # ================================================================
+
+    def _ring_band_color_density(self, center, r, mask, band_width=None):
+        """Color pixel density on an annulus of [r - band_width, r + band_width].
+
+        Returns fraction of annulus pixels that are >0 in mask.
+        """
+        if band_width is None:
+            band_width = self.RING_BAND_WIDTH
+        h, w = mask.shape
+        cx, cy = int(center[0]), int(center[1])
+        r_outer = max(int(r + band_width), 2)
+        r_inner = max(int(r - band_width), 1)
+        if r_inner >= r_outer:
+            return 0.0
+
+        annulus = np.zeros((h, w), dtype=np.uint8)
+        cv2.circle(annulus, (cx, cy), r_outer, 255, -1)
+        cv2.circle(annulus, (cx, cy), r_inner, 0, -1)
+
+        annulus_px = cv2.countNonZero(annulus)
+        if annulus_px == 0:
+            return 0.0
+        intersection = cv2.bitwise_and(mask, mask, mask=annulus)
+        color_px = cv2.countNonZero(intersection)
+        return color_px / annulus_px
+
+    def _evaluate_ring_group(self, center, radii, mask, gap_px):
+        """Score a concentric circle group by verifying each ring band.
+        """
+        if len(radii) < self.CONCENTRIC_MIN_RINGS:
+            return 0
+
+        confirmed = 0
+        total = len(radii)
+        for r in radii:
+            density = self._ring_band_color_density(
+                center, r, mask, band_width=self.RING_BAND_WIDTH,
+            )
+            if density > self.RING_BAND_COLOR_THRESHOLD:
+                confirmed += 1
+
+        if confirmed < self.CONCENTRIC_MIN_RINGS:
+            return 0
+
+        # gap consistency bonus: expected gap between adjacent rings
+        gap_ok = 0
+        radii_sorted = sorted(radii)
+        for i in range(len(radii_sorted) - 1):
+            gap = radii_sorted[i + 1] - radii_sorted[i]
+            if gap > 0 and abs(gap - gap_px) < gap_px * 0.5:
+                gap_ok += 1
+
+        ratio = confirmed / total
+        gap_bonus = 0.0
+        if gap_ok >= self.CONCENTRIC_MIN_RINGS - 1:
+            gap_bonus = 10.0
+        return min(60.0 + ratio * 30.0 + gap_bonus, 100.0)
 
     # ================================================================
     #  finalize / kalman / fallback
@@ -260,13 +415,9 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         if force or frame % self._LOG_INTERVAL == 0:
             log_print(msg)
 
-    def _log_detection(self, context, target_color, center, area, conf):
-        stage = "COMPLETE" if conf >= 100 else "HEURISTIC"
-        prev = self._prev_stage
-        self._prev_stage = stage
-        force = (prev is not None and prev != stage)
-        msg = (f"[HeuristicRing] {context}: {stage} "
+    def _log_detection(self, context, target_color, center, outer_r, conf):
+        msg = (f"[HeuristicRing] {context}: "
                f"target={target_color.name} "
                f"center=({center[0]:.0f},{center[1]:.0f}) "
-               f"area={area:.0f} conf={conf}")
-        self._info(msg, force=force)
+               f"outer_r={outer_r:.0f} conf={conf:.0f}")
+        self._info(msg, force=False)
