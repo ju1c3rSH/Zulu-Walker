@@ -26,12 +26,12 @@ FAST_CIRCLE:
   ellipse_min_contour_points: 5
   ema_alpha: 30
   kernel_close: 7
-  kernel_open: 3
-  max_roi_miss: 6
+  kernel_open: 5
+  max_roi_miss: 5
   min_area: 100
   min_circularity: 50
-  roi_size: 161
-  smooth_window: 6
+  roi_size: 150
+  smooth_window: 5
   sv_fallback_s: 50
   sv_fallback_v: 50
   sv_min_samples: 10

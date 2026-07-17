@@ -149,8 +149,8 @@ edge_drawing_circle:
   ed_gradient_threshold: 36
   edge_morph_kernel: 3
   edge_morph_iterations: 1
-  color_match_threshold: 0.6
-  min_circularity: 0.75
+  color_match_threshold: 0.35
+  min_circularity: 0.5
   min_area: 100
   roi_size: 150
   max_roi_miss: 5
