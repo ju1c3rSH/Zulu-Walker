@@ -10,7 +10,7 @@ CARGO_METHOD_PARAM_DEFS: Dict[str, List[ParamDef]] = {
     "FAST_CIRCLE": [
         ParamDef("roi_size",                "ROI Size",         150,   50,  500,  10),
         ParamDef("max_roi_miss",            "Max ROI Miss",       5,    1,   30,   1),
-        ParamDef("min_circularity",         "Min Circ",          75,   10,  100,   1,  scale=0.01),
+        ParamDef("min_circularity",         "Min Circ",          50,   10,  100,   1,  scale=0.01),
         ParamDef("min_area",                "Min Area",         100,   10, 2000,  10),
         ParamDef("kernel_open",             "Kernel Open",        5,    1,   31,   2,  odd=True),
         ParamDef("kernel_close",            "Kernel Close",       7,    1,   31,   2,  odd=True),
@@ -34,7 +34,7 @@ CARGO_METHOD_PARAM_DEFS: Dict[str, List[ParamDef]] = {
         ParamDef("edge_morph_iterations",   "ED Close Iter",      1,    1,    5,   1),
         ParamDef("color_match_threshold",   "Color Match",       35,   10,  100,   1,  scale=0.01),
         ParamDef("min_area",                "Min Area",         100,   10, 2000,  10),
-        ParamDef("min_circularity",         "Min Circ",          75,   10,  100,   1,  scale=0.01),
+        ParamDef("min_circularity",         "Min Circ",          50,   10,  100,   1,  scale=0.01),
         ParamDef("edge_min_pixels",         "Edge MinPx",        20,    5,  200,   5),
         ParamDef("ellipse_min_contour_points", "Ellipse MinPts",  5,    5,   50,   5),
         ParamDef("ellipse_max_axis_ratio",  "Ellipse AxisR",    150,  100,  300,  10,  scale=0.01),
