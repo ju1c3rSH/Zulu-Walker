@@ -17,12 +17,12 @@ HEURISTIC_RING:
   ed_gradient_threshold: 28
   ed_min_path_length: 87
   ed_nfa_validation: 0
-  edge_morph_iterations: 1
-  edge_morph_kernel: 3
+  edge_morph_iterations: 2
+  edge_morph_kernel: 5
   max_roi_miss: 5
-  min_area: 150
+  min_area: 50
   ring_gap_px: 18
-  roi_size: 147
+  roi_size: 350
   smooth_window: 5
 SHARED:
   max_lost_frames: 10
