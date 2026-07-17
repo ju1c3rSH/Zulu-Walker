@@ -157,12 +157,14 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         )
 
         if max(density_outer, density_inner) > self.RING_BAND_COLOR_THRESHOLD:
-            # refine center using color-mask moments (ring moves within ROI)
-            band_w = max(int(r_scaled * 1.5), 3)
+            # refine center using color-mask moments (thin ring band)
+            ref_band = max(int(r_scaled * 0.3), self.RING_BAND_WIDTH)
+            if r_scaled + ref_band > min(roi_h, roi_w) // 2:
+                return None  # ring too large for ROI — fall through to full detection
             annulus = np.zeros_like(roi_mask)
-            cv2.circle(annulus, (roi_w // 2, roi_h // 2), int(r_scaled + band_w), 255, -1)
+            cv2.circle(annulus, (roi_w // 2, roi_h // 2), int(r_scaled + ref_band), 255, -1)
             cv2.circle(annulus, (roi_w // 2, roi_h // 2),
-                       max(int(r_scaled * self.INNER_RADIUS_RATIO - band_w), 1), 0, -1)
+                       max(int(r_scaled * self.INNER_RADIUS_RATIO - ref_band), 1), 0, -1)
             intersect = cv2.bitwise_and(roi_mask, annulus)
             M = cv2.moments(intersect)
             if M["m00"] > 0:
@@ -231,7 +233,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                 (ecx, ecy), (ea, eb), _ = cv2.fitEllipse(cnt)
                 axis_ratio = max(ea, eb) / max(min(ea, eb), 1)
                 if axis_ratio <= self.AXIS_RATIO_MAX:
-                    outer_r = (ea + eb) / 4.0
+                    outer_r = (ea + eb) / 2.0
                     base_conf = 60
             except cv2.error:
                 pass
@@ -256,8 +258,8 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             if best_density < self.RING_BAND_COLOR_THRESHOLD:
                 continue
 
-            shape_penalty = 1.0 - max(axis_ratio - 1.0, 0) * 0.3
-            score = best_density + shape_penalty * 0.05 + base_conf * 0.0005
+            circ_score = 1.0 / max(axis_ratio, 1.0)
+            score = circ_score + best_density * 0.05
             if score > best_score:
                 best_score = score
                 best_center = (ecx, ecy)
@@ -276,6 +278,19 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         ecx, ecy = best_center
         outer_r = best_outer_r
+
+        ref_band = max(int(outer_r * 0.3), self.RING_BAND_WIDTH)
+        cm_h, cm_w = color_mask.shape
+        if outer_r + ref_band <= min(cm_h, cm_w) // 2:
+            annulus = np.zeros_like(color_mask)
+            cv2.circle(annulus, (int(ecx), int(ecy)), int(outer_r + ref_band), 255, -1)
+            cv2.circle(annulus, (int(ecx), int(ecy)),
+                       max(int(outer_r * self.INNER_RADIUS_RATIO - ref_band), 1), 0, -1)
+            intersect = cv2.bitwise_and(color_mask, annulus)
+            M = cv2.moments(intersect)
+            if M["m00"] > 0:
+                ecx = M["m10"] / M["m00"]
+                ecy = M["m01"] / M["m00"]
 
         hough_rings = self._verify_concentric(edges, (ecx, ecy), outer_r)
         conf = min(60 + hough_rings * 20, 100)
