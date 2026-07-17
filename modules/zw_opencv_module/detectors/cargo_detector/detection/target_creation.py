@@ -10,6 +10,7 @@ def create_cargo_item(
     index: int = 0,
     radius: Optional[float] = None,
     is_predicted: bool = False,
+    confidence: float = 100.0,
 ) -> CargoItem:
     return CargoItem(
         index=index,
@@ -18,4 +19,5 @@ def create_cargo_item(
         coordinate=(int(center[0]), int(center[1])),
         radius=radius,
         is_predicted=is_predicted,
+        confidence=confidence,
     )
