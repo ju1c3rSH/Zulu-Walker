@@ -30,12 +30,11 @@ def log_print(msg: str = "", *args, **kwargs) -> None:
         pass
     try:
         from utils.debug_console import DebugConsole
-        DebugConsole().log(msg)
-    except Exception:
-        pass
-    try:
-        sys.__stdout__.write(line)
-        sys.__stdout__.flush()
+        dc = DebugConsole()
+        dc.log(msg)
+        if not dc._running:
+            sys.__stdout__.write(line)
+            sys.__stdout__.flush()
     except Exception:
         pass
 
