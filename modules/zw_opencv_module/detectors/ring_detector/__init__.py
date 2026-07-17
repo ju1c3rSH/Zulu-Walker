@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from typing import Optional, Tuple, Dict, Any
 from collections import deque
+from utils.log_util import log_print
 
 try:
     cv2.ximgproc.createEdgeDrawing
@@ -12,6 +13,12 @@ except AttributeError:
 from ...models.color import Color
 from ...models.ring import RingTarget
 from .detection import RingDetectMethod
+
+_METHOD_TO_CONFIG_KEY = {
+    RingDetectMethod.FAST_RING: "FAST_RING",
+    RingDetectMethod.EDGE_DRAWING_RING: "EDGE_DRAWING_RING",
+    RingDetectMethod.HEURISTIC_RING: "HEURISTIC_RING",
+}
 
 
 class _TrackingState:
@@ -82,7 +89,7 @@ class RingDetector:
         self.max_lost_frames = 10
         self.roi_size = 350
         self.max_roi_miss = 5
-        self.min_area = 50
+        self.min_area = 1500
         self.smooth_window = 5
         self.kalman_enabled = False
         self.force_global = False
@@ -111,6 +118,7 @@ class RingDetector:
 
         self._methods: Dict[RingDetectMethod, Any] = {}
         self._init_detection_methods()
+        self._load_params_from_config()
 
     def _init_edge_drawing(self):
         if not _HAS_XIMGPROC:
@@ -136,6 +144,37 @@ class RingDetector:
             RingDetectMethod.EDGE_DRAWING_RING: EdgeDrawingRingMethod(detector=self),
             RingDetectMethod.HEURISTIC_RING: HeuristicRingMethod(detector=self),
         }
+
+    def _load_params_from_config(self):
+        try:
+            from .debug.config import RingConfig
+            import os
+            config = RingConfig()
+            data = config.load()
+
+            method_key = _METHOD_TO_CONFIG_KEY.get(self.detect_method)
+            sections = [method_key, "SHARED"] if method_key else ["SHARED"]
+
+            for section in sections:
+                if section not in data or not isinstance(data[section], dict):
+                    continue
+                defs = config.get_param_defs(section)
+                pdef_map = {p.name: p for p in defs}
+                for param_name, raw_value in data[section].items():
+                    pdef = pdef_map.get(param_name)
+                    if pdef is None:
+                        continue
+                    actual = raw_value * pdef.scale
+                    if pdef.scale == 1.0:
+                        actual = int(actual)
+                    if hasattr(self, param_name):
+                        setattr(self, param_name, actual)
+
+            self._update_ed_params()
+            log_print(f"[RingDetector] parameters loaded from config "
+                      f"(path={config.path}, exists={os.path.exists(config.path)})")
+        except Exception as e:
+            log_print(f"[RingDetector] failed to load params from config: {e}")
 
     def _get_tracking(self, color: Color) -> _TrackingState:
         if color not in self._tracking:
