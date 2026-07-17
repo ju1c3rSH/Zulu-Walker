@@ -432,15 +432,18 @@ class MissionCoordinator:
         if target_found:
             flags |= VisualFlags.TARGET_FOUND
 
+        confidence = data.get("confidence", 100.0)
         if not self._ready_latched:
-            if self.visual_sm.is_tracking() and target_found \
-               and abs(ctx.percent_error_x) <= _ALIGN_CENTER_THRESHOLD and abs(ctx.percent_error_y) <= _ALIGN_CENTER_THRESHOLD:
-                self._ready_frames += 1
-                if self._ready_frames % 5 == 0:
-                    from utils.debug_console import DebugConsole
-                    DebugConsole().log(
-                        f"[TrackSM] ready_frames={self._ready_frames}/{_READY_THRESHOLD}"
-                    )
+            in_position = (abs(ctx.percent_error_x) <= _ALIGN_CENTER_THRESHOLD
+                           and abs(ctx.percent_error_y) <= _ALIGN_CENTER_THRESHOLD)
+            if self.visual_sm.is_tracking() and target_found and in_position:
+                if confidence >= 100.0:
+                    self._ready_frames += 1
+                    if self._ready_frames % 5 == 0:
+                        from utils.debug_console import DebugConsole
+                        DebugConsole().log(
+                            f"[TrackSM] ready_frames={self._ready_frames}/{_READY_THRESHOLD}"
+                        )
             else:
                 prev = self._ready_frames
                 self._ready_frames = max(0, self._ready_frames - 1)

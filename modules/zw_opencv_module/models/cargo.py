@@ -26,6 +26,7 @@ class CargoItem:
     available: bool = True
     zone: int = CargoZone.RAW
     is_predicted: bool = False
+    confidence: float = 100.0
 
     def update_position(self, coord: Tuple[int, int]) -> None:
         self.coordinate = coord

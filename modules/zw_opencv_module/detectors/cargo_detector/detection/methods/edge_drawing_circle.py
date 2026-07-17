@@ -70,26 +70,30 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         sub_img, offset = roi
         sub_hsv = cv2.cvtColor(sub_img, cv2.COLOR_BGR2HSV)
 
-        center, radius = self._detect_circle(sub_img, sub_hsv, target_color)
+        center, radius, conf = self._detect_circle(sub_img, sub_hsv, target_color)
         if center is None:
             ts.roi_miss_count += 1
             return None
 
         center = (center[0] + offset[0], center[1] + offset[1])
-        return self._finalize(center, radius, ts, target_color, scale)
+        return self._finalize(center, radius, conf, ts, target_color, scale)
 
     def _try_global(self, frame: np.ndarray, hsv: np.ndarray,
                     ts, target_color: Color, scale: float) -> Optional[CargoItem]:
-        center, radius = self._detect_circle(frame, hsv, target_color)
+        center, radius, conf = self._detect_circle(frame, hsv, target_color)
         if center is None:
             return None
 
-        return self._finalize(center, radius, ts, target_color, scale)
+        return self._finalize(center, radius, conf, ts, target_color, scale)
 
-    def _detect_circle(self, bgr: np.ndarray, hsv: np.ndarray,
-                       target_color: Color) -> Tuple[Optional[Tuple[float, float]], Optional[float]]:
+    def _run_edge_pipeline(self, bgr: np.ndarray, hsv: np.ndarray,
+                           target_color: Color
+                           ) -> Optional[Tuple[List, np.ndarray]]:
+        """Edge detection -> morph -> contours -> color_mask.
+        Returns (contours, color_mask) or None on failure.
+        """
         if self.detector.ed is None:
-            return None, None
+            return None
 
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
@@ -103,10 +107,10 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             edges = self.detector.ed.getEdgeImage()
             if edges is None or cv2.countNonZero(edges) < self.detector.edge_min_pixels:
                 log_print("EdgeDrawing: No edges detected or too few edges.")
-                return None, None
+                return None
         except cv2.error:
             log_print("EdgeDrawing: Error occurred while detecting edges.")
-            return None, None
+            return None
 
         morph_k = self.detector.edge_morph_kernel
         if morph_k % 2 == 0:
@@ -122,11 +126,22 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             log_print("EdgeDrawing: No contours detected.")
-            return None, None
+            return None
 
         color_mask = self._build_color_mask(hsv, target_color)
         if color_mask is None:
-            return None, None
+            return None
+
+        return contours, color_mask
+
+    def _detect_circle(self, bgr: np.ndarray, hsv: np.ndarray,
+                       target_color: Color
+                       ) -> Tuple[Optional[Tuple[float, float]], Optional[float], Optional[float]]:
+        result = self._run_edge_pipeline(bgr, hsv, target_color)
+        if result is None:
+            return None, None, None
+
+        contours, color_mask = result
 
         candidates = []
         for contour in contours:
@@ -142,7 +157,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                 mask_px = cv2.countNonZero(color_mask)
                 log_print(f"[EdgeDraw] target={target_color.name} color_mask={mask_px}px "
                       f"contours={len(contours)} candidates=0")
-            return None, None
+            return None, None, None
 
         best = self._select_best_candidate(candidates)
         if not hasattr(self.detector, '_ed_log_frame'):
@@ -154,7 +169,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                   f"contours={len(contours)} candidates={len(candidates)} "
                   f"best: area={best['area']:.1f} circularity={best['circularity']:.3f} "
                   f"color_score={best['color_score']:.3f}")
-        return best["center"], best["radius"]
+        return best["center"], best["radius"], 100.0
 
     def _build_color_mask(self, hsv: np.ndarray,
                           target_color: Color) -> Optional[np.ndarray]:
@@ -351,7 +366,8 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         return best
 
     def _finalize(self, center: Tuple[float, float], radius: float,
-                  ts, target_color: Color, scale: float) -> Optional[CargoItem]:
+                  confidence: float, ts, target_color: Color,
+                  scale: float) -> Optional[CargoItem]:
         if scale < 1.0:
             center = (center[0] / scale, center[1] / scale)
             radius = radius / scale
@@ -365,7 +381,8 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         ts._radius_history.append(radius)
 
         final_center = smoothed if smoothed is not None else center
-        return self._build_cargo_item(final_center, target_color, radius)
+        return self._build_cargo_item(final_center, target_color, radius,
+                                      confidence=confidence)
 
     def _kalman_predict(self, ts,
                         measurement: Optional[Tuple[float, float]]
@@ -387,20 +404,23 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                           scale: float) -> Optional[CargoItem]:
         center = self._kalman_predict(ts, None)
         if center is not None:
-            return self._build_cargo_item(center, target_color, is_predicted=True)
+            return self._build_cargo_item(center, target_color, is_predicted=True,
+                                          confidence=0.0)
 
         if len(ts._center_history) > 0:
             avg = (
                 sum(c[0] for c in ts._center_history) / len(ts._center_history),
                 sum(c[1] for c in ts._center_history) / len(ts._center_history),
             )
-            return self._build_cargo_item(avg, target_color, is_predicted=True)
+            return self._build_cargo_item(avg, target_color, is_predicted=True,
+                                          confidence=0.0)
 
         return None
 
     def _build_cargo_item(self, center: Tuple[float, float], target_color: Color,
                           radius: Optional[float] = None,
-                          is_predicted: bool = False) -> CargoItem:
+                          is_predicted: bool = False,
+                          confidence: float = 100.0) -> CargoItem:
         from ..target_creation import create_cargo_item
         return create_cargo_item(center, target_color, radius=radius,
-                                 is_predicted=is_predicted)
+                                 is_predicted=is_predicted, confidence=confidence)

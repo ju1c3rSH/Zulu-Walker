@@ -71,6 +71,7 @@ class TrackCargoProcessor(Processor):
                 "radius": item.radius,
                 "target_color": target_color,
                 "is_predicted": item.is_predicted,
+                "confidence": item.confidence,
             },
         )
 
@@ -86,6 +87,8 @@ class TrackCargoProcessor(Processor):
         is_predicted = data.get("is_predicted", False)
         if is_predicted:
             return frame
+
+        confidence = data.get("confidence", 100.0)
 
         coordinate = data.get("coordinate")
         radius = data.get("radius")
@@ -105,6 +108,8 @@ class TrackCargoProcessor(Processor):
         cv2.circle(frame, (int(cx), int(cy)), 4, color_bgr, -1)
 
         label = _COLOR_NAMES.get(target_color, "CARGO")
+        if confidence < 100.0:
+            label = f"{label}(H)"
         cv2.putText(frame, label, (int(cx) + 10, int(cy) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_bgr, 2)
 
@@ -116,7 +121,7 @@ class TrackCargoProcessor(Processor):
         cv2.line(frame, (center_x, center_y), (int(cx), int(cy)), (0, 255, 255), 1,
                  cv2.LINE_AA)
 
-        info = f"ERR x:{pe_x:+d} y:{pe_y:+d}"
+        info = f"ERR x:{pe_x:+d} y:{pe_y:+d} conf:{confidence:.0f}"
         cv2.putText(frame, info, (10, frame_h - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
 
