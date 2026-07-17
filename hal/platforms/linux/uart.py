@@ -88,6 +88,9 @@ class LinuxUart:
         self._receiver_thread.start()
 
     def _receiver_loop(self) -> None:
+        from utils.cpu_affinity import bind_current_thread
+        bind_current_thread("uart_receiver")
+
         while self._running and self.is_connected:
             data = self.receive_all()
             if data and self._receiver_callback:

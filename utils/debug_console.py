@@ -90,6 +90,9 @@ class DebugConsole:
     # ---- render loop ----
 
     def _render_loop(self) -> None:
+        from utils.cpu_affinity import bind_current_thread
+        bind_current_thread("debug_console")
+
         layout = self._build_layout()
         try:
             with Live(layout, console=self._console, screen=True,
@@ -197,6 +200,9 @@ class DebugConsole:
     # ---- key listener ----
 
     def _key_listener(self) -> None:
+        from utils.cpu_affinity import bind_current_thread
+        bind_current_thread("debug_console")
+
         try:
             import msvcrt
             while self._running:

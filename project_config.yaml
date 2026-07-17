@@ -21,6 +21,16 @@ cameras:
     fps: 30
     camera_stream_queue_size: 2
 
+cpu_affinity:
+  enabled: true
+  vision_processing: [4, 5, 6, 7]
+  camera_capture: [0, 1, 2, 3]
+  main_loop: [4, 5, 6, 7]
+  heartbeat: [0, 1]
+  uart_receiver: [0, 1]
+  debug_console: [0, 1]
+  opencv_threads: 4
+
 uart_defaults:
   port: "/dev/ttyS4"
   baudrate: 921600
