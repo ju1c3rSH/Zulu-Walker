@@ -97,7 +97,9 @@ class FastRingMethod(BaseRingDetectionMethod):
             ox, oy = offset
             orig_cx = (cx + ox) / scale
             orig_cy = (cy + oy) / scale
-            outer_candidates.append(((orig_cx, orig_cy), area, axis_ratio))
+            orig_a = a / scale
+            orig_b = b / scale
+            outer_candidates.append(((orig_cx, orig_cy), area, axis_ratio, (orig_a, orig_b), angle))
 
         if not hasattr(self.detector, '_ring_log_frame'):
             self.detector._ring_log_frame = 0
@@ -112,6 +114,17 @@ class FastRingMethod(BaseRingDetectionMethod):
 
         outer_candidates.sort(key=lambda x: x[1], reverse=True)
         center = outer_candidates[0][0]
+        best_area = outer_candidates[0][1] / (scale * scale)
+        best_axes = outer_candidates[0][3]
+        best_angle = outer_candidates[0][4]
+
+        self.detector._last_ring_meta[target_color] = {
+            'center': center,
+            'outer_radius': (best_axes[0] + best_axes[1]) / 2.0,
+            'area': best_area,
+            'axes': best_axes,
+            'angle': best_angle,
+        }
 
         if frame % 60 == 0:
             log_print(f"[FastRing] target={target_color.name} "
@@ -145,6 +158,8 @@ class FastRingMethod(BaseRingDetectionMethod):
         return result
 
     def _fallback_predict(self, ts, target_color):
+        self.detector._last_ring_meta.pop(target_color, None)
+
         result, ts.tracking_initialized, ts.lost_frames, ts._last_predict_time = kalman_update(
             ts.kf, None,
             ts.tracking_initialized, ts.lost_frames,
