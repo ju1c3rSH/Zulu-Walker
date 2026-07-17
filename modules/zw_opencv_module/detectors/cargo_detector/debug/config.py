@@ -33,7 +33,7 @@ CARGO_METHOD_PARAM_DEFS: Dict[str, List[ParamDef]] = {
         ParamDef("edge_morph_kernel",       "ED Close K",         3,    1,   15,   2,  odd=True),
         ParamDef("edge_morph_iterations",   "ED Close Iter",      1,    1,    5,   1),
         ParamDef("color_match_threshold",   "Color Match",       20,   10,  100,   1,  scale=0.01),
-        ParamDef("min_area",                "Min Area",        3000,   10, 10000,  10),
+        ParamDef("min_area",                "Min Area",        4000,   10, 10000,  10),
         ParamDef("min_circularity",         "Min Circ",          50,   10,  100,   1,  scale=0.01),
         ParamDef("edge_min_pixels",         "Edge MinPx",        20,    5,  200,   5),
         ParamDef("ellipse_min_contour_points", "Ellipse MinPts",  5,    5,   50,   5),

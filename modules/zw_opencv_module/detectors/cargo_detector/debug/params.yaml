@@ -12,7 +12,7 @@ EDGE_DRAWING_CIRCLE:
   low_light_min_pixels: 50
   low_light_s_divider: 3
   low_light_v_divider: 3
-  min_area: 3000
+  min_area: 4000
   min_circularity: 50
   relaxed_s: 10
   relaxed_v: 35

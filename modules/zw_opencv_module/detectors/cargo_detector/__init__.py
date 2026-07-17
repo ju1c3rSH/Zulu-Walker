@@ -131,7 +131,7 @@ class CargoDetector:
         self.roi_size = 150
         self.max_roi_miss = 5
         self.min_circularity = 0.5
-        self.min_area = 3000
+        self.min_area = 4000
         self.smooth_window = 5
         self.kernel_open = 5
         self.kernel_close = 7
