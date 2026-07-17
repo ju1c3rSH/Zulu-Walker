@@ -26,7 +26,8 @@ class FrameComposer:
         self.labels = labels or []
 
     def compose(
-        self, frames: List[np.ndarray], camera_ids: List[str] = None
+        self, frames: List[np.ndarray], camera_ids: List[str] = None,
+        fps_list: List[float] = None,
     ) -> np.ndarray:
         """
         将多个帧融合为一个画面
@@ -34,6 +35,7 @@ class FrameComposer:
         Args:
             frames: 帧列表
             camera_ids: 相机ID列表（用于标签）
+            fps_list: 各相机FPS值列表（用于显示）
 
         Returns:
             np.ndarray: 融合后的画面
@@ -44,13 +46,13 @@ class FrameComposer:
         labels = camera_ids or self.labels
 
         if self.layout == "grid":
-            return self._grid_layout(frames, labels)
+            return self._grid_layout(frames, labels, fps_list)
         elif self.layout == "horizontal":
-            return self._horizontal_layout(frames, labels)
+            return self._horizontal_layout(frames, labels, fps_list)
         elif self.layout == "vertical":
-            return self._vertical_layout(frames, labels)
+            return self._vertical_layout(frames, labels, fps_list)
         else:
-            return self._grid_layout(frames, labels)
+            return self._grid_layout(frames, labels, fps_list)
 
     def _create_empty_frame(self) -> np.ndarray:
         """创建空白帧"""
@@ -66,12 +68,35 @@ class FrameComposer:
         )
         return frame
 
+    @staticmethod
+    def _draw_fps_in_rect(
+        frame: np.ndarray, x1: int, y1: int, x2: int, y2: int, fps: float
+    ) -> None:
+        if fps <= 0:
+            return
+        text = f"FPS: {fps:.1f}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.5
+        thickness = 1
+        (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
+        pad = 3
+        fx = x1 + pad
+        fy = y2 - pad
+        cv2.rectangle(
+            frame,
+            (fx, fy - th - pad),
+            (fx + tw + pad, fy + baseline),
+            (0, 0, 0), -1,
+        )
+        cv2.putText(frame, text, (fx, fy), font, scale, (255, 255, 255), thickness)
+
     def _resize_single_frame(self, frame: np.ndarray) -> np.ndarray:
         """调整单个帧的尺寸"""
         return cv2.resize(frame, self.output_size)
 
     def _grid_layout(
-        self, frames: List[np.ndarray], labels: List[str] = None
+        self, frames: List[np.ndarray], labels: List[str] = None,
+        fps_list: List[float] = None,
     ) -> np.ndarray:
         """网格布局"""
         n = len(frames)
@@ -132,10 +157,15 @@ class FrameComposer:
                     1,
                 )
 
+            # 添加FPS
+            if fps_list and i < len(fps_list) and fps_list[i] > 0:
+                self._draw_fps_in_rect(output, x1, y1, x2, y2, fps_list[i])
+
         return output
 
     def _horizontal_layout(
-        self, frames: List[np.ndarray], labels: List[str] = None
+        self, frames: List[np.ndarray], labels: List[str] = None,
+        fps_list: List[float] = None,
     ) -> np.ndarray:
         """水平布局"""
         n = len(frames)
@@ -165,10 +195,14 @@ class FrameComposer:
                     1,
                 )
 
+            if fps_list and i < len(fps_list) and fps_list[i] > 0:
+                self._draw_fps_in_rect(output, x1, 0, x2, cell_height, fps_list[i])
+
         return output
 
     def _vertical_layout(
-        self, frames: List[np.ndarray], labels: List[str] = None
+        self, frames: List[np.ndarray], labels: List[str] = None,
+        fps_list: List[float] = None,
     ) -> np.ndarray:
         """垂直布局"""
         n = len(frames)
@@ -197,5 +231,8 @@ class FrameComposer:
                     (255, 255, 255),
                     1,
                 )
+
+            if fps_list and i < len(fps_list) and fps_list[i] > 0:
+                self._draw_fps_in_rect(output, 0, y1, cell_width, y2, fps_list[i])
 
         return output
