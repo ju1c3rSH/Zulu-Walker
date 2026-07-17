@@ -54,7 +54,7 @@ class RingDebugRunner:
         shared_params = data.get("SHARED", {})
         all_params = {**method_params, **shared_params}
 
-        self.detector.update_params(all_params)
+        self._apply_params(all_params)
 
         for pdef in self._get_active_defs():
             if pdef.name in all_params:
@@ -67,6 +67,18 @@ class RingDebugRunner:
                 self.window.set_method_index(method_idx)
             else:
                 self.window.set_method_index(0)
+
+    def _apply_params(self, all_params: dict):
+        """Apply raw YAML params to detector with proper scale factors."""
+        for pdef in self._get_active_defs():
+            raw = all_params.get(pdef.name)
+            if raw is None:
+                continue
+            actual = raw * pdef.scale
+            if pdef.scale == 1.0:
+                actual = int(actual)
+            setattr(self.detector, pdef.name, actual)
+        self.detector._update_ed_params()
 
     def _on_param_changed(self, name: str, raw_value: int):
         for p in self._get_active_defs():
@@ -113,7 +125,7 @@ class RingDebugRunner:
             raw = all_params.get(p.name, p.default)
             self.window._raw_params[p.name] = raw
 
-        self.detector._update_ed_params()
+        self._apply_params(all_params)
         self.window.setup()
 
     def _get_active_defs(self):
@@ -152,17 +164,12 @@ class RingDebugRunner:
     def _collect_intermediates(self) -> Dict[int, np.ndarray]:
         steps = {}
         idx = 0
-        if self._current_method_key == "EDGE_DRAWING_RING":
-            if self.detector._last_edge_preview is not None:
-                steps[idx] = self.detector._last_edge_preview
-                idx += 1
-        if self._current_method_key != "EDGE_DRAWING_RING":
-            if self.detector._last_mask is not None:
-                steps[idx] = self.detector._last_mask
-                idx += 1
-            if self.detector._last_morphed is not None:
-                steps[idx] = self.detector._last_morphed
-                idx += 1
+        if self.detector._last_edge_preview is not None:
+            steps[idx] = self.detector._last_edge_preview
+            idx += 1
+        if self.detector._last_mask is not None:
+            steps[idx] = self.detector._last_mask
+            idx += 1
         return steps
 
     def _save_params(self):
@@ -180,7 +187,7 @@ class RingDebugRunner:
         display = frame.copy()
         for color in _COLORS:
             item = self.detector.detect_ring(frame, color)
-            if item is not None:
+            if item is not None and not item.is_predicted:
                 cx, cy = item.coordinate
                 color_bgr = {
                     Color.RED: (0, 0, 255),
