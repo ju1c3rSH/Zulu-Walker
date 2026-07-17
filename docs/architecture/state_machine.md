@@ -348,7 +348,7 @@ TEMP 放完第一批最后一个（_PlaceTempState，batch=1→2）
 
 **`update()` 调用时机**（在 `MissionCoordinator` 中）：
 
-每次外部事件处理后立即调用 `mission_sm.run_to_completion()`，确保 `on_execute` 及时检查状态并完成级联转换。
+**MissionSM update**: 每次外部事件处理后立即调用 `mission_sm.run_to_completion()`，确保 `on_execute` 及时检查状态并完成级联转换。
 
 ```python
 # 每个事件处理器末尾
@@ -359,9 +359,41 @@ self.mission_sm.on_action_done(action_id, result)
 self.mission_sm.run_to_completion()
 ```
 
+**VisualSM update**: 由 `coordinator.loop()` 内的 `drain_results` → `_process_vision_results` → `_handle_track_result` 触发。
+与 MissionSM **运行在同一主线程**，而非相机处理线程。
+
+```python
+# coordinator.loop() 每 tick 执行
+def loop(self):
+    for all_results in self._vision_manager.drain_results():
+        self._process_vision_results(all_results)  # ← 其中调 visual_sm.update()
+    with self._sm_lock:
+        while self._sm_queue:
+            self._sm_queue.popleft()()
+    self.mission_sm.run_to_completion()
+```
+
 ---
 
 ## 4. VisualStateMachine
+
+### 线程归属
+
+VisualSM **运行在主线程**（与 MissionSM 同线程），而非相机处理线程。
+
+```
+视觉数据流:
+  Camera 采集线程 → queue.Queue → VisionManager._process_loop (相机线程)
+    → _pending_results.append(all_results) [deque]
+    → coordinator.loop() → drain_results() [主线程]
+      → _process_vision_results → _handle_track_result
+        → visual_sm.update()        ← 主线程
+        → _send(visual_servo_frame) ← 主线程
+```
+
+- `update()` 由主线程每 tick 调用一次（约 300Hz），每次处理一帧视觉结果
+- `start()` / `stop()` 可能由 UART 接收线程（通过 EventBus → `_on_mcu_cmd`）触发，持有 `visual_sm._lock` (RLock)
+- 不存在跨线程 `update()` 争用，因为 `update()` 只在主线程被执行
 
 ### 状态
 
