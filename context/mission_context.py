@@ -42,11 +42,11 @@ _VISUAL_STATE_TO_INT = {
 }
 
 _READY_THRESHOLD = 10
-# percent_error_x = ((cx - w/2) / (w/2)) * 5000
-# threshold=80  →  偏差 ≈ 80 * (w/2) / 5000 = 5.12 px @ 640x480
-_DISCOVERY_CENTER_THRESHOLD = 80
-# Align: pe_x threshold 250  →  偏差 ≈ 250 * (w/2) / 5000 = 16 px @ 640x480
-_ALIGN_CENTER_THRESHOLD = 280
+# percent_error = ((cx - w/2) / max(w,h)/2) * 5000
+# threshold=250  →  偏差 ≈ 250 * max/2 / 5000 = 16 px @ 640x480 (X/Y 同尺度)
+_DISCOVERY_CENTER_THRESHOLD = 300
+# threshold=280  →  偏差 ≈ 280 * max/2 / 5000 = 17.9 px @ 640x480
+_ALIGN_CENTER_THRESHOLD = 300
 _HEARTBEAT_INTERVAL = 0.1
 _HEARTBEAT_TIMEOUT = 0.3
 
