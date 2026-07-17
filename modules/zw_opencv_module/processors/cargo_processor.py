@@ -57,8 +57,9 @@ class TrackCargoProcessor(Processor):
                 matched.update_position((cx, cy))
 
         frame_h, frame_w = frame.shape[:2]
-        pe_x = int(((cx - frame_w / 2.0) / (frame_w / 2.0)) * 5000.0)
-        pe_y = int(((cy - frame_h / 2.0) / (frame_h / 2.0)) * 5000.0)
+        half = max(frame_w, frame_h) / 2.0
+        pe_x = int(((cx - frame_w / 2.0) / half) * 5000.0)
+        pe_y = int(((cy - frame_h / 2.0) / half) * 5000.0)
 
         return VisionResult(
             task_name=self.name,
