@@ -48,8 +48,9 @@ class RingDiscoveryProcessor(Processor):
 
         cx, cy = ring.coordinate
         h, w = frame.shape[:2]
-        pe_x = int(((cx - w / 2.0) / (w / 2.0)) * 5000.0)
-        pe_y = int(((cy - h / 2.0) / (h / 2.0)) * 5000.0)
+        half = max(w, h) / 2.0
+        pe_x = int(((cx - w / 2.0) / half) * 5000.0)
+        pe_y = int(((cy - h / 2.0) / half) * 5000.0)
 
         return VisionResult(
             task_name=self.name,
