@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import concurrent.futures
-import logging
 import queue
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from utils.log_util import log_print
 
 
 class LinuxCamera:
@@ -75,65 +76,124 @@ class LinuxCamera:
     def _open_once(self) -> cv2.VideoCapture:
         cap = cv2.VideoCapture(self._source, cv2.CAP_V4L2)
         if not cap.isOpened():
-            logger.warning("V4L2 open failed for %s, trying default backend", self._source)
+            log_print(f"[WARN] [Camera:{self._camera_id}] V4L2 open failed for {self._source}, trying default backend")
             cap = cv2.VideoCapture(self._source)
         if not cap.isOpened():
             raise RuntimeError(f"Camera {self._camera_id}: device not accessible")
         return cap
 
-    def start(self) -> None:
-        timeout = 5.0
-        for attempt in (1, 2):
-            result: list[cv2.VideoCapture] = []
-            exc: list[BaseException] = []
-
-            def worker():
-                try:
-                    result.append(self._open_once())
-                except KeyboardInterrupt:
-                    raise
-                except SystemExit:
-                    raise
-                except BaseException as e:
-                    exc.append(e)
-
-            t = threading.Thread(
-                target=worker,
-                daemon=True,
-                name=f"cam-open-{self._camera_id}",
+    def _subprocess_warmup(self, timeout: float) -> bool:
+        script = Path(__file__).parent / "camera_warmup.py"
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(script), str(self._source)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
-            t.start()
-            t.join(timeout=timeout)
-
-            if t.is_alive():
-                logger.warning(
-                    "Camera %s: open timed out after %.1fs (attempt %d/2)",
-                    self._camera_id, timeout, attempt,
-                )
-                if attempt == 2:
-                    raise concurrent.futures.TimeoutError(
-                        f"Camera {self._camera_id}: V4L2 open timed out"
-                    )
-                time.sleep(1)
-            elif exc:
-                if isinstance(exc[0], (KeyboardInterrupt, SystemExit)):
-                    raise exc[0]
-                if attempt == 2:
-                    raise RuntimeError(
-                        f"Camera {self._camera_id}: open failed"
-                    ) from exc[0]
-                time.sleep(1)
+            proc.wait(timeout=timeout)
+            ok = proc.returncode == 0
+            if ok:
+                log_print(f"[INFO] [Camera:{self._camera_id}] warmup subprocess succeeded")
             else:
-                self._cap = result[0]
-                break
+                log_print(f"[WARN] [Camera:{self._camera_id}] warmup subprocess exited with code {proc.returncode}")
+            return ok
+        except KeyboardInterrupt:
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    log_print(f"[ERROR] [Camera:{self._camera_id}] warmup subprocess did not die after kill")
+            raise
+        except subprocess.TimeoutExpired:
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                log_print(f"[WARN] [Camera:{self._camera_id}] warmup subprocess killed after {timeout:.0f}s timeout")
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    log_print(f"[ERROR] [Camera:{self._camera_id}] warmup subprocess did not die after kill")
+            return False
+        except Exception as e:
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                log_print(f"[WARN] [Camera:{self._camera_id}] warmup subprocess killed due to error: {e}")
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    log_print(f"[ERROR] [Camera:{self._camera_id}] warmup subprocess did not die after kill")
+            return False
+
+    def _open_once_direct(self, timeout: float):
+        # Known limitation: on timeout the worker daemon thread may remain
+        # alive inside a blocking cv2.VideoCapture call until process exit.
+        # This is acceptable only as a last-resort fallback.
+        log_print(f"[INFO] [Camera:{self._camera_id}] trying direct open, timeout={timeout:.0f}s")
+        result: list = []
+        exc: list = []
+
+        def worker():
+            try:
+                result.append(self._open_once())
+            except BaseException as e:
+                exc.append(e)
+
+        t = threading.Thread(
+            target=worker,
+            daemon=True,
+            name=f"cam-open-{self._camera_id}",
+        )
+        t.start()
+        t.join(timeout=timeout)
+
+        if t.is_alive():
+            log_print(f"[WARN] [Camera:{self._camera_id}] direct open timed out after {timeout:.0f}s")
+            return None
+        if exc:
+            log_print(f"[WARN] [Camera:{self._camera_id}] direct open thread raised {type(exc[0]).__name__}: {exc[0]}")
+            e = exc[0]
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise e
+            raise RuntimeError(
+                f"Camera {self._camera_id}: open failed"
+            ) from e
+        cap = result[0] if result else None
+        if cap is not None:
+            log_print(f"[INFO] [Camera:{self._camera_id}] direct open succeeded")
+        return cap
+
+    def start(self) -> None:
+        for attempt, warmup_timeout in enumerate((12.0, 20.0, 35.0), 1):
+            log_print(f"[INFO] [Camera:{self._camera_id}] warmup attempt {attempt}/3, timeout={warmup_timeout:.0f}s")
+            if self._subprocess_warmup(warmup_timeout):
+                try:
+                    self._cap = self._open_once()
+                    if self._cap.isOpened():
+                        log_print(f"[INFO] [Camera:{self._camera_id}] opened after warmup round {attempt}")
+                        break
+                    else:
+                        log_print(f"[WARN] [Camera:{self._camera_id}] warmup succeeded but cap not open (attempt {attempt})")
+                except RuntimeError as e:
+                    log_print(f"[WARN] [Camera:{self._camera_id}] open after warmup failed (attempt {attempt}): {e}")
+            else:
+                log_print(f"[WARN] [Camera:{self._camera_id}] warmup timed out (attempt {attempt}/3)")
+            backoff = 2.0 * attempt
+            log_print(f"[INFO] [Camera:{self._camera_id}] backoff {backoff:.0f}s before retry")
+            time.sleep(backoff)
         else:
-            raise RuntimeError(f"Camera {self._camera_id}: all open attempts failed")
+            log_print(f"[WARN] [Camera:{self._camera_id}] all warmup rounds failed, trying direct open as last resort")
+            self._cap = self._open_once_direct(10.0)
+            if self._cap is None:
+                raise RuntimeError(
+                    f"Camera {self._camera_id}: all open attempts failed"
+                )
 
         if not self._cap.isOpened():
             raise RuntimeError(f"Camera {self._camera_id}: opened but not accessible")
 
         if not self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG')):
-            logger.debug("Camera %s: failed to set FOURCC=MJPG", self._camera_id)
+            log_print(f"[DEBUG] [Camera:{self._camera_id}] failed to set FOURCC=MJPG")
 
         for prop, name in [
             (cv2.CAP_PROP_FRAME_WIDTH, "width"),
@@ -142,7 +202,7 @@ class LinuxCamera:
         ]:
             value = {"width": self._width, "height": self._height, "fps": self._fps}[name]
             if not self._cap.set(prop, value):
-                logger.debug("Camera %s: failed to set %s=%s", self._camera_id, name, value)
+                log_print(f"[DEBUG] [Camera:{self._camera_id}] failed to set {name}={value}")
 
         actual = self._cap.get(cv2.CAP_PROP_FPS)
         self._actual_fps = actual if actual > 0 else self._fps
@@ -150,15 +210,14 @@ class LinuxCamera:
         self._actual_height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         if (self._actual_width, self._actual_height) != (self._width, self._height):
-            logger.warning(
-                "Camera %s: requested resolution %dx%d, got %dx%d",
-                self._camera_id, self._width, self._height,
-                self._actual_width, self._actual_height,
+            log_print(
+                f"[WARN] [Camera:{self._camera_id}] requested resolution {self._width}x{self._height}, "
+                f"got {self._actual_width}x{self._actual_height}"
             )
         if abs(self._actual_fps - self._fps) > 1:
-            logger.warning(
-                "Camera %s: requested fps %.1f, got %.1f",
-                self._camera_id, self._fps, self._actual_fps,
+            log_print(
+                f"[WARN] [Camera:{self._camera_id}] requested fps {self._fps:.1f}, "
+                f"got {self._actual_fps:.1f}"
             )
 
         self._running = True
@@ -183,7 +242,7 @@ class LinuxCamera:
                     except queue.Empty:
                         pass
             else:
-                logger.error("Camera %s: read failed", self._camera_id)
+                log_print(f"[ERROR] [Camera:{self._camera_id}] read failed")
 
     def _bind_capture_cores(self) -> None:
         from utils.cpu_affinity import bind_current_thread
