@@ -106,6 +106,7 @@ class RingDetector:
         self._tracking: Dict[Color, _TrackingState] = {}
         self._active_tracking: Optional[_TrackingState] = None
         self._active_color: Optional[Color] = None
+        self._last_ring_meta: Dict[Color, dict] = {}
 
         self.color_ranges = {
             Color.RED: [
@@ -113,7 +114,7 @@ class RingDetector:
                 (np.array([170, 15, 25]), np.array([180, 255, 255])),
             ],
             Color.GREEN: [(np.array([40, 15, 25]), np.array([80, 255, 255]))],
-            Color.BLUE: [(np.array([100, 15, 25]), np.array([130, 255, 255]))],
+            Color.BLUE: [(np.array([100, 50, 50]), np.array([130, 255, 255]))],
         }
 
         self._methods: Dict[RingDetectMethod, Any] = {}
