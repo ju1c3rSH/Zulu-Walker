@@ -1,6 +1,10 @@
 # 视觉数据流坑记：FrameResult 回调不触发
 
-> 最后更新: 2026-07-14
+> 最后更新: 2026-07-17
+> ⚠️ **历史文档说明**：本文记载的 `FrameResult` → `_on_vision_results` 回调路径是**重构前的历史路径**。
+> 当前架构已改为 `_pending_results` deque 传递视觉结果，`MissionCoordinator` 不再订阅 `FrameResult` 事件。
+> 详见 `docs/architecture/thread_tick_topology.md` §3-4。
+>
 > 现象: QRCodeProcessor 正常返回 VisionResult，但 `_on_vision_results` → `_handle_qr_result` 回调链无反应，控制台持续输出 `AttributeError: 'float' object has no attribute 'success'`
 
 ---
@@ -127,7 +131,7 @@ flowchart TD
 |------|------|
 | `task_manager.py:104-152` | `run_tasks_serial` 签名 `all_results` → `context`；内部建独立 `task_results` dict；返回纯 VisionResult 结果 |
 | `vision_manager.py:253-265` | `Camera.process_frame()` 拆包 `(processed_frame, task_results)` |
-| `mission_context.py:31,329-342` | 加 `VisionResult` import + `isinstance` 守卫 |
+| `mission_context.py:31,377-388` | 加 `VisionResult` import + `isinstance` 守卫；`_on_vision_results` 已重构为 `_process_vision_results`，从 `drain_results()` 消费而非 EventBus `FrameResult` |
 
 ### 3.4 关键设计决策
 
@@ -148,3 +152,9 @@ flowchart TD
 | `_on_vision_results` 消费 | `VisionResult` 迭代 | `isinstance` 兜底 |
 
 所有类型注解现在与实际运行时类型一致。
+
+> **当前架构变更** (2026-07 重构后):
+> - `CameraManager.process_all()` 返回的结果不再通过 `EventBus.publish(FrameResult)` 分发
+> - 改为 `VisionManager._pending_results` deque → 主线程 `coordinator.loop()` → `drain_results()`
+> - `_on_vision_results` 已被移除，替代为 `_process_vision_results`
+> - 详见 `thread_tick_topology.md` §3-4
