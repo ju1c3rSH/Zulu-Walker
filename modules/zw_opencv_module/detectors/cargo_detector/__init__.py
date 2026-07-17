@@ -81,7 +81,11 @@ class CargoDetector:
         self.color_match_threshold = 0.35
 
         # FastCircle 方法内部可调参数
-        self.sv_percentile = 20
+        # sv_percentile: 粗筛掩码内取 S/V 通道的第 N 百分位作为自适应下界
+        #   值越低 → 下界越低 → 细筛更宽松（包容更多光照变化）
+        #   值越高 → 下界越高 → 细筛更严格（精确但易漏）
+        #   与 config.py ParamDef 和 params.yaml 保持同一值
+        self.sv_percentile = 15
         self.ema_alpha = 0.3
         self.coarse_min_pixels = 50
         self.coarse_ratio_threshold = 0.30
@@ -117,7 +121,7 @@ class CargoDetector:
 
         self.roi_size = 150
         self.max_roi_miss = 5
-        self.min_circularity = 0.45
+        self.min_circularity = 0.5
         self.min_area = 100
         self.smooth_window = 5
         self.kernel_open = 5
@@ -144,6 +148,10 @@ class CargoDetector:
         self._methods: Dict[DetectMethod, Any] = {}
         self._init_detection_methods()
 
+        # 从 config.py ParamDef + params.yaml 统一加载覆盖默认值
+        # 确保 CargoDetector 与 Debug UI 使用同一套参数定义
+        self._load_params_from_config()
+
     def _init_edge_drawing(self):
         if not _HAS_XIMGPROC:
             return
@@ -168,6 +176,39 @@ class CargoDetector:
             DetectMethod.EDGE_DRAWING_CIRCLE: EdgeDrawingCircleMethod(detector=self),
             DetectMethod.HEURISTIC_EDGE: HeuristicEdgeCircleMethod(detector=self),
         }
+
+    def _load_params_from_config(self):
+        """从 config.py ParamDef 默认值 + params.yaml 覆盖值加载所有参数。
+
+        确保 CargoDetector 与 Debug UI 使用同一套参数定义。
+        配置文件不存在时静默回退到 __init__ 硬编码值。
+        """
+        try:
+            from .debug.config import CargoConfig
+            import os
+            config = CargoConfig()
+            data = config.load()
+
+            for method_key, method_params in data.items():
+                if method_key == "_method_index":
+                    continue
+                defs = config.get_param_defs(method_key)
+                pdef_map = {p.name: p for p in defs}
+                for param_name, raw_value in method_params.items():
+                    pdef = pdef_map.get(param_name)
+                    if pdef is None:
+                        continue
+                    actual = raw_value * pdef.scale
+                    if pdef.scale == 1.0:
+                        actual = int(actual)
+                    if hasattr(self, param_name):
+                        setattr(self, param_name, actual)
+
+            self._update_ed_params()
+            log_print(f"[CargoDetector] parameters loaded from config "
+                      f"(path={config.path}, exists={os.path.exists(config.path)})")
+        except Exception as e:
+            log_print(f"[CargoDetector] failed to load params from config: {e}")
 
     def _get_tracking(self, color: Color) -> _TrackingState:
         if color not in self._tracking:
