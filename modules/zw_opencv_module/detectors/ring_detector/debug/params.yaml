@@ -1,25 +1,31 @@
-FAST_RING:
-  roi_size: 150
-  max_roi_miss: 5
-  min_area: 150
-  smooth_window: 5
 EDGE_DRAWING_RING:
   blur_kernel: 3
   blur_sigma: 150
-  ed_min_path_length: 50
   ed_gradient_threshold: 36
-  edge_morph_kernel: 3
+  ed_min_path_length: 50
   edge_morph_iterations: 1
+  edge_morph_kernel: 3
   min_area: 150
-HEURISTIC_RING:
-  roi_size: 150
+FAST_RING:
   max_roi_miss: 5
   min_area: 150
+  roi_size: 150
   smooth_window: 5
-  blur_kernel: 3
-  blur_sigma: 150
+HEURISTIC_RING:
+  blur_kernel: 11
+  blur_sigma: 277
+  ed_gradient_threshold: 28
+  ed_min_path_length: 87
+  ed_nfa_validation: 0
+  edge_morph_iterations: 1
+  edge_morph_kernel: 3
+  max_roi_miss: 5
+  min_area: 150
+  ring_gap_px: 18
+  roi_size: 147
+  smooth_window: 5
 SHARED:
   max_lost_frames: 10
   q_base: 20
   q_vel_base: 15
-_method_index: 1
+_method_index: 2
