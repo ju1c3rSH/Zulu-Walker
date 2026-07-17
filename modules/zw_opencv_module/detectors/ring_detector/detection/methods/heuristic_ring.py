@@ -40,6 +40,12 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     HOUGH_PARAM2 = 8
     HOUGH_MIN_DIST = 8
 
+    HOUGH_ALT_DP = 1.5
+    HOUGH_ALT_PARAM2 = 0.95
+    HOUGH_ALT_MIN_RADIUS = 10
+    HOUGH_ALT_PARAM1 = 100
+    HOUGH_ALT_MIN_DIST = 30
+
     def __init__(self, detector=None):
         super().__init__(name="heuristic_ring", detector=detector)
 
@@ -66,6 +72,8 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         # ── EdgeDrawing edge image ──
         edges = self._build_edge_image(small)
 
+        self._alt_img = self._build_alt_processed(small)
+
         self.detector._last_mask = color_mask
         self.detector._last_edge_preview = edges
 
@@ -76,6 +84,9 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         if not getattr(self.detector, "force_global", False):
             if ts.last_center is not None:
+                result = self._try_alt_hough(color_mask, ts, target_color, scale)
+                if result is not None:
+                    return result
                 result = self._fast_roi_verify(color_mask, ts, target_color, scale, small_hw)
                 if result is not None:
                     return result
@@ -85,6 +96,10 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                 return result
 
         result = self._try_global(edges, color_mask, ts, target_color, scale)
+        if result is not None:
+            return result
+
+        result = self._try_alt_hough(color_mask, ts, target_color, scale)
         if result is not None:
             return result
 
@@ -110,6 +125,24 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ek, ek))
         edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=ei)
         return edges
+
+    def _build_alt_processed(self, small: np.ndarray) -> np.ndarray:
+        eroded = cv2.erode(small, None, iterations=2)
+        kernel_7 = np.ones((7, 7), np.uint8)
+        dilated = cv2.dilate(eroded, kernel_7, iterations=1)
+
+        gray = cv2.cvtColor(dilated, cv2.COLOR_BGR2GRAY)
+
+        kernel_5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        gradient = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel_5)
+
+        result = cv2.GaussianBlur(gradient, (7, 7), 3, 3)
+        result = cv2.convertScaleAbs(result, alpha=4, beta=0)
+        result = cv2.GaussianBlur(result, (7, 7), 3, 3)
+
+        _, thresh = cv2.threshold(result, 70, 255, cv2.THRESH_BINARY)
+        thresh = cv2.GaussianBlur(thresh, (9, 9), 3, 3)
+        return thresh
 
     # ================================================================
     #  color mask
@@ -200,6 +233,56 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     def _try_global(self, edges, color_mask, ts, target_color, scale):
         return self._detect_and_finalize(edges, color_mask, ts, target_color, scale,
                                           offset=(0, 0), context="global")
+
+    def _try_alt_hough(self, color_mask, ts, target_color, scale):
+        alt = getattr(self, "_alt_img", None)
+        if alt is None:
+            return None
+
+        h, w = alt.shape
+        max_radius = int(min(h, w) * 0.35)
+
+        circles = cv2.HoughCircles(
+            alt, cv2.HOUGH_GRADIENT_ALT, dp=self.HOUGH_ALT_DP,
+            minDist=self.HOUGH_ALT_MIN_DIST, param1=self.HOUGH_ALT_PARAM1,
+            param2=self.HOUGH_ALT_PARAM2,
+            minRadius=self.HOUGH_ALT_MIN_RADIUS, maxRadius=max_radius,
+        )
+        if circles is None:
+            return None
+
+        circles_coords = circles[0]
+        best_center, best_score, best_r = None, 0, 0
+
+        for hcx, hcy, hr in circles_coords:
+            density_outer = self._ring_band_color_density(
+                (hcx, hcy), hr, color_mask, band_width=self.RING_BAND_WIDTH,
+            )
+            density_inner = self._ring_band_color_density(
+                (hcx, hcy), hr * self.INNER_RADIUS_RATIO, color_mask,
+                band_width=self.RING_BAND_WIDTH,
+            )
+            best_density = max(density_outer, density_inner)
+            if best_density < self.RING_BAND_COLOR_THRESHOLD:
+                continue
+
+            score = best_density
+            if score > best_score:
+                best_score = score
+                best_center = (hcx, hcy)
+                best_r = hr
+
+        if best_center is None:
+            return None
+
+        hcx, hcy = best_center
+        center = (hcx / scale, hcy / scale)
+        outer_r_orig = best_r / scale
+        conf = min(60 + int(best_score * 100), 100)
+
+        ts._ring_outer_radius = outer_r_orig
+        self._log_detection("alt_hough", target_color, center, outer_r_orig, conf)
+        return self._finalize(center, conf, ts, target_color, scale)
 
     # ================================================================
     #  core: contours from edge image + color verification
@@ -315,7 +398,6 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         return self._finalize(center, conf, ts, target_color, scale)
 
     def _verify_concentric(self, edges, center, outer_r):
-        """Run HoughCircles on edge image around candidate to count concentric rings."""
         cx, cy = int(center[0]), int(center[1])
         roi_r = int(outer_r * 2.5)
         x1 = max(0, cx - roi_r)
@@ -325,14 +407,20 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         if x2 <= x1 or y2 <= y1:
             return 0
 
-        roi = edges[y1:y2, x1:x2]
+        alt = getattr(self, "_alt_img", None)
+        if alt is not None:
+            roi = alt[y1:y2, x1:x2]
+        else:
+            roi = edges[y1:y2, x1:x2]
+
         local_cx = cx - x1
         local_cy = cy - y1
         max_r = min(roi.shape) // 2
 
         circles = cv2.HoughCircles(
-            roi, cv2.HOUGH_GRADIENT, dp=self.HOUGH_DP,
-            minDist=self.HOUGH_MIN_DIST, param1=100, param2=self.HOUGH_PARAM2,
+            roi, cv2.HOUGH_GRADIENT_ALT, dp=self.HOUGH_ALT_DP,
+            minDist=self.HOUGH_ALT_MIN_RADIUS, param1=self.HOUGH_ALT_PARAM1,
+            param2=self.HOUGH_ALT_PARAM2,
             minRadius=4, maxRadius=int(max_r),
         )
         if circles is None:
