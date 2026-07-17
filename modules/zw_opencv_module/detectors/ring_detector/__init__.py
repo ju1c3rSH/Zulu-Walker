@@ -65,12 +65,13 @@ class RingDetector:
 
         self.ed = None
         # ED params must be assigned BEFORE _init_edge_drawing() calls _update_ed_params()
-        self.ed_min_path_length = 50
+        self.ed_min_path_length = 20
         self.ed_gradient_threshold = 36
-        self.ed_nfa_validation = True
+        self.ed_nfa_validation = False
         self.edge_morph_kernel = 3
         self.edge_morph_iterations = 1
         self._init_edge_drawing()
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         if _HAS_XIMGPROC:
             self.detect_method = RingDetectMethod.HEURISTIC_RING
         else:
@@ -81,8 +82,10 @@ class RingDetector:
         self.max_lost_frames = 10
         self.roi_size = 150
         self.max_roi_miss = 5
-        self.min_area = 150
+        self.min_area = 80
         self.smooth_window = 5
+        self.kalman_enabled = False
+        self.force_global = True
         self._ring_log_frame = 0
         self.ring_gap_px = 10
 
@@ -99,11 +102,11 @@ class RingDetector:
 
         self.color_ranges = {
             Color.RED: [
-                (np.array([0, 50, 60]), np.array([10, 255, 255])),
-                (np.array([170, 50, 60]), np.array([180, 255, 255])),
+                (np.array([0, 15, 25]), np.array([10, 255, 255])),
+                (np.array([170, 15, 25]), np.array([180, 255, 255])),
             ],
-            Color.GREEN: [(np.array([40, 50, 60]), np.array([80, 255, 255]))],
-            Color.BLUE: [(np.array([100, 50, 60]), np.array([130, 255, 255]))],
+            Color.GREEN: [(np.array([40, 15, 25]), np.array([80, 255, 255]))],
+            Color.BLUE: [(np.array([100, 15, 25]), np.array([130, 255, 255]))],
         }
 
         self._methods: Dict[RingDetectMethod, Any] = {}
@@ -145,7 +148,7 @@ class RingDetector:
     def set_detect_method(self, method: RingDetectMethod) -> bool:
         if method == self.detect_method:
             return True
-        if method == RingDetectMethod.EDGE_DRAWING_RING and self.ed is None:
+        if method in (RingDetectMethod.EDGE_DRAWING_RING, RingDetectMethod.HEURISTIC_RING) and self.ed is None:
             return False
         self.detect_method = method
         self._reset_all_tracking()
