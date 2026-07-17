@@ -13,14 +13,14 @@ FAST_RING:
   smooth_window: 5
 HEURISTIC_RING:
   blur_kernel: 7
-  blur_sigma: 255
-  ed_gradient_threshold: 42
-  ed_min_path_length: 93
+  blur_sigma: 253
+  ed_gradient_threshold: 22
+  ed_min_path_length: 132
   ed_nfa_validation: 0
   edge_morph_iterations: 2
   edge_morph_kernel: 3
   max_roi_miss: 7
-  min_area: 1500
+  min_area: 1612
   ring_gap_px: 10
   roi_size: 350
   smooth_window: 10
