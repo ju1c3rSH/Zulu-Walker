@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import signal
 import subprocess
 import sys
 import threading
@@ -85,6 +86,7 @@ class LinuxCamera:
     def _subprocess_warmup(self, timeout: float) -> bool:
         script = Path(__file__).parent / "camera_warmup.py"
         proc = None
+        old_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
         try:
             proc = subprocess.Popen(
                 [sys.executable, str(script), str(self._source)],
@@ -98,14 +100,6 @@ class LinuxCamera:
             else:
                 log_print(f"[WARN] [Camera:{self._camera_id}] warmup subprocess exited with code {proc.returncode}")
             return ok
-        except KeyboardInterrupt:
-            if proc is not None and proc.poll() is None:
-                proc.kill()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    log_print(f"[ERROR] [Camera:{self._camera_id}] warmup subprocess did not die after kill")
-            raise
         except subprocess.TimeoutExpired:
             if proc is not None and proc.poll() is None:
                 proc.kill()
@@ -124,6 +118,8 @@ class LinuxCamera:
                 except subprocess.TimeoutExpired:
                     log_print(f"[ERROR] [Camera:{self._camera_id}] warmup subprocess did not die after kill")
             return False
+        finally:
+            signal.signal(signal.SIGINT, old_handler)
 
     def _open_once_direct(self, timeout: float):
         # Known limitation: on timeout the worker daemon thread may remain
@@ -164,7 +160,7 @@ class LinuxCamera:
         return cap
 
     def start(self) -> None:
-        for attempt, warmup_timeout in enumerate((12.0, 20.0, 35.0), 1):
+        for attempt, warmup_timeout in enumerate((10.0, 12.0, 15.0), 1):
             log_print(f"[INFO] [Camera:{self._camera_id}] warmup attempt {attempt}/3, timeout={warmup_timeout:.0f}s")
             if self._subprocess_warmup(warmup_timeout):
                 try:
