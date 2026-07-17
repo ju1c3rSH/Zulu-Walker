@@ -46,22 +46,23 @@ class CargoDebugRunner:
     def _load_config(self):
         data = self.config.load()
         method_idx = data.get("_method_index", 0)
-        self._current_method_key = ["FAST_CIRCLE", "EDGE_DRAWING_CIRCLE", "EDGE_DRAWING_CIRCLE"][method_idx]
+        new_method_key = ["FAST_CIRCLE", "EDGE_DRAWING_CIRCLE", "EDGE_DRAWING_CIRCLE"][method_idx]
 
-        method_params = data.get(self._current_method_key, {})
-        shared_params = data.get("SHARED", {})
-        all_params = {**method_params, **shared_params}
-
-        for pdef in self._get_active_defs():
-            if pdef.name in all_params:
-                raw = all_params[pdef.name]
-                actual = raw * pdef.scale
-                if pdef.scale == 1.0:
-                    actual = int(actual)
-                setattr(self.detector, pdef.name, actual)
-                self.window.set_param(pdef.name, raw)
-
-        self.detector._update_ed_params()
+        if new_method_key != self._current_method_key:
+            self._switch_to_method(new_method_key)
+        else:
+            method_params = data.get(self._current_method_key, {})
+            shared_params = data.get("SHARED", {})
+            all_params = {**method_params, **shared_params}
+            for pdef in self._get_active_defs():
+                if pdef.name in all_params:
+                    raw = all_params[pdef.name]
+                    actual = raw * pdef.scale
+                    if pdef.scale == 1.0:
+                        actual = int(actual)
+                    setattr(self.detector, pdef.name, actual)
+                    self.window.set_param(pdef.name, raw)
+            self.detector._update_ed_params()
 
         methods = self.detector.get_supported_methods()
         if 0 <= method_idx < len(methods):

@@ -48,17 +48,20 @@ class RingDebugRunner:
         method_idx = data.get("_method_index", 2)
         method_keys = list(_METHOD_KEY_MAP.values())
         if 0 <= method_idx < len(method_keys):
-            self._current_method_key = method_keys[method_idx]
+            new_method_key = method_keys[method_idx]
+        else:
+            new_method_key = self._current_method_key
 
-        method_params = data.get(self._current_method_key, {})
-        shared_params = data.get("SHARED", {})
-        all_params = {**method_params, **shared_params}
-
-        self._apply_params(all_params)
-
-        for pdef in self._get_active_defs():
-            if pdef.name in all_params:
-                self.window.set_param(pdef.name, all_params[pdef.name])
+        if new_method_key != self._current_method_key:
+            self._switch_to_method(new_method_key)
+        else:
+            method_params = data.get(self._current_method_key, {})
+            shared_params = data.get("SHARED", {})
+            all_params = {**method_params, **shared_params}
+            self._apply_params(all_params)
+            for pdef in self._get_active_defs():
+                if pdef.name in all_params:
+                    self.window.set_param(pdef.name, all_params[pdef.name])
 
         methods = self.detector.get_supported_methods()
         if 0 <= method_idx < len(methods):
