@@ -103,6 +103,9 @@ class VisionManager:
         self._process_thread.start()
 
     def _process_loop(self) -> None:
+        from utils.cpu_affinity import bind_current_thread
+        bind_current_thread("vision_processing")
+
         while self._running:
             try:
                 profiler.start("total")

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import os
 import time
 from queue import Queue
 from threading import Thread
@@ -75,16 +74,12 @@ class CameraStream:
         """Total frames dropped due to queue overflow."""
         return self._frames_dropped
 
-    def _set_thread_affinity(self, cores):
-        """设置当前线程的 CPU 亲和性（小核心）"""
-        try:
-            os.sched_setaffinity(0, cores)
-        except (AttributeError, OSError, PermissionError):
-            pass  # Windows 或权限不足时忽略
+    def _bind_capture_cores(self):
+        from utils.cpu_affinity import bind_current_thread
+        bind_current_thread("camera_capture")
 
     def _update(self):
-        # 绑定到小核心 (RK3588: 0-3 是小核心 A55)
-        self._set_thread_affinity([0, 1, 2, 3])
+        self._bind_capture_cores()
 
         while self.running:
             ret, frame = self.cap.read()
