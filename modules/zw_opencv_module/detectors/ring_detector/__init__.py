@@ -68,8 +68,8 @@ class RingDetector:
         self.ed_min_path_length = 20
         self.ed_gradient_threshold = 36
         self.ed_nfa_validation = False
-        self.edge_morph_kernel = 3
-        self.edge_morph_iterations = 1
+        self.edge_morph_kernel = 5
+        self.edge_morph_iterations = 2
         self._init_edge_drawing()
         self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         if _HAS_XIMGPROC:
@@ -80,12 +80,12 @@ class RingDetector:
         self.q_base = 0.2
         self.q_vel_base = 0.15
         self.max_lost_frames = 10
-        self.roi_size = 150
+        self.roi_size = 350
         self.max_roi_miss = 5
-        self.min_area = 80
+        self.min_area = 50
         self.smooth_window = 5
         self.kalman_enabled = False
-        self.force_global = True
+        self.force_global = False
         self._ring_log_frame = 0
         self.ring_gap_px = 10
 
