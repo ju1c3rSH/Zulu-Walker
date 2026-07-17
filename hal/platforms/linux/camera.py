@@ -5,7 +5,6 @@ import logging
 import queue
 import threading
 import time
-from datetime import datetime, timedelta
 from typing import Optional
 
 import cv2
@@ -42,6 +41,8 @@ class LinuxCamera:
 
         self._cap: Optional[cv2.VideoCapture] = None
         self._actual_fps = fps
+        self._actual_width = width
+        self._actual_height = height
 
     @property
     def camera_id(self) -> str:
@@ -62,6 +63,14 @@ class LinuxCamera:
     @property
     def sensor_height_mm(self) -> Optional[float]:
         return self._sensor_height_mm
+
+    @property
+    def actual_width(self) -> int:
+        return self._actual_width
+
+    @property
+    def actual_height(self) -> int:
+        return self._actual_height
 
     def _open_once(self) -> cv2.VideoCapture:
         cap = cv2.VideoCapture(self._source, cv2.CAP_V4L2)
@@ -123,6 +132,9 @@ class LinuxCamera:
         if not self._cap.isOpened():
             raise RuntimeError(f"Camera {self._camera_id}: opened but not accessible")
 
+        if not self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG')):
+            logger.debug("Camera %s: failed to set FOURCC=MJPG", self._camera_id)
+
         for prop, name in [
             (cv2.CAP_PROP_FRAME_WIDTH, "width"),
             (cv2.CAP_PROP_FRAME_HEIGHT, "height"),
@@ -134,6 +146,21 @@ class LinuxCamera:
 
         actual = self._cap.get(cv2.CAP_PROP_FPS)
         self._actual_fps = actual if actual > 0 else self._fps
+        self._actual_width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self._actual_height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        if (self._actual_width, self._actual_height) != (self._width, self._height):
+            logger.warning(
+                "Camera %s: requested resolution %dx%d, got %dx%d",
+                self._camera_id, self._width, self._height,
+                self._actual_width, self._actual_height,
+            )
+        if abs(self._actual_fps - self._fps) > 1:
+            logger.warning(
+                "Camera %s: requested fps %.1f, got %.1f",
+                self._camera_id, self._fps, self._actual_fps,
+            )
+
         self._running = True
         self._capture_thread = threading.Thread(
             target=self._capture_loop,
