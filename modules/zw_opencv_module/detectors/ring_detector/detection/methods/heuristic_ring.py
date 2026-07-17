@@ -281,16 +281,24 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         ref_band = max(int(outer_r * 0.3), self.RING_BAND_WIDTH)
         cm_h, cm_w = color_mask.shape
-        if outer_r + ref_band <= min(cm_h, cm_w) // 2:
+        ref_outer_r = max(outer_r, min(cm_h, cm_w) * 0.08)
+        if ref_outer_r + ref_band <= min(cm_h, cm_w) // 2:
             annulus = np.zeros_like(color_mask)
-            cv2.circle(annulus, (int(ecx), int(ecy)), int(outer_r + ref_band), 255, -1)
-            cv2.circle(annulus, (int(ecx), int(ecy)),
-                       max(int(outer_r * self.INNER_RADIUS_RATIO - ref_band), 1), 0, -1)
-            intersect = cv2.bitwise_and(color_mask, annulus)
-            M = cv2.moments(intersect)
-            if M["m00"] > 0:
-                ecx = M["m10"] / M["m00"]
-                ecy = M["m01"] / M["m00"]
+            for _ in range(3):
+                annulus.fill(0)
+                cv2.circle(annulus, (int(ecx), int(ecy)), int(ref_outer_r + ref_band), 255, -1)
+                cv2.circle(annulus, (int(ecx), int(ecy)),
+                           max(int(ref_outer_r * self.INNER_RADIUS_RATIO - ref_band), 1), 0, -1)
+                intersect = cv2.bitwise_and(color_mask, annulus)
+                M = cv2.moments(intersect)
+                if M["m00"] == 0:
+                    break
+                new_ecx = M["m10"] / M["m00"]
+                new_ecy = M["m01"] / M["m00"]
+                if abs(new_ecx - ecx) < 0.5 and abs(new_ecy - ecy) < 0.5:
+                    ecx, ecy = new_ecx, new_ecy
+                    break
+                ecx, ecy = new_ecx, new_ecy
 
         hough_rings = self._verify_concentric(edges, (ecx, ecy), outer_r)
         conf = min(60 + hough_rings * 20, 100)
