@@ -1,5 +1,4 @@
-﻿import concurrent.futures
-import logging
+﻿import logging
 
 from utils.log_util import log_print
 
@@ -31,7 +30,7 @@ def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> Linu
     )
     try:
         cam.start()
-    except (concurrent.futures.TimeoutError, RuntimeError, Exception) as e:
+    except (RuntimeError, Exception) as e:
         logger.error("Camera '%s' failed to start (skipped): %s", camera_id, e)
         return None
 
