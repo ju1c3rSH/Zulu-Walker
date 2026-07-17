@@ -33,7 +33,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
     AXIS_RATIO_MAX = 2.0
     RING_GAP_PX_DEFAULT = 10
-    RING_BAND_COLOR_THRESHOLD = 0.05
+    RING_BAND_COLOR_THRESHOLD = 0.10
     RING_BAND_WIDTH = 8
     INNER_RADIUS_RATIO = 0.55
     HOUGH_DP = 2.0
@@ -206,6 +206,9 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             center = ((cx_roi + x1) / scale, (cy_roi + y1) / scale)
             ts.roi_miss_count = 0
             ts._ring_outer_radius = r
+
+            self._store_ring_meta(target_color, center, r, None, None, 0.0)
+
             self._log_detection("ROI_fast", target_color, center, r, 100)
             return self._finalize(center, 100.0, ts, target_color, scale)
 
@@ -281,6 +284,9 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         conf = min(60 + int(best_score * 100), 100)
 
         ts._ring_outer_radius = outer_r_orig
+
+        self._store_ring_meta(target_color, center, outer_r_orig, None, None, 0.0)
+
         self._log_detection("alt_hough", target_color, center, outer_r_orig, conf)
         return self._finalize(center, conf, ts, target_color, scale)
 
@@ -304,6 +310,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             return None
 
         best_center, best_score, best_outer_r = None, 0, 0
+        best_axes, best_angle, best_area = None, 0.0, 0.0
         gap_px = getattr(self.detector, "ring_gap_px", self.RING_GAP_PX_DEFAULT)
 
         for cnt in contours:
@@ -312,8 +319,9 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                 continue
 
             ecx, ecy, outer_r, base_conf = None, None, None, 0
+            axis_ratio = 999.0
             try:
-                (ecx, ecy), (ea, eb), _ = cv2.fitEllipse(cnt)
+                (ecx, ecy), (ea, eb), angle = cv2.fitEllipse(cnt)
                 axis_ratio = max(ea, eb) / max(min(ea, eb), 1)
                 if axis_ratio <= self.AXIS_RATIO_MAX:
                     outer_r = (ea + eb) / 2.0
@@ -347,6 +355,13 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                 best_score = score
                 best_center = (ecx, ecy)
                 best_outer_r = outer_r
+                best_area = area
+                if base_conf >= 60:
+                    best_axes = (ea, eb)
+                    best_angle = angle
+                else:
+                    best_axes = None
+                    best_angle = 0.0
                 # track best axis_ratio for logging
                 best_axis = axis_ratio if base_conf >= 60 else 999
 
@@ -393,6 +408,10 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         if context == "ROI":
             ts.roi_miss_count = 0
         ts._ring_outer_radius = outer_r_orig
+
+        self._store_ring_meta(target_color, center, outer_r_orig, best_area / (scale * scale),
+                              (best_axes[0] / scale, best_axes[1] / scale) if best_axes else None,
+                              best_angle)
 
         self._log_detection(context, target_color, center, outer_r_orig, conf)
         return self._finalize(center, conf, ts, target_color, scale)
@@ -491,6 +510,8 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         if not getattr(self.detector, "kalman_enabled", True):
             return None
 
+        self.detector._last_ring_meta.pop(target_color, None)
+
         result, ts.tracking_initialized, ts.lost_frames, ts._last_predict_time = kalman_update(
             ts.kf, None,
             ts.tracking_initialized, ts.lost_frames,
@@ -529,6 +550,15 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         frame = self._tick()
         if force or frame % self._LOG_INTERVAL == 0:
             log_print(msg)
+
+    def _store_ring_meta(self, target_color, center, outer_radius, area, axes, angle):
+        self.detector._last_ring_meta[target_color] = {
+            'center': center,
+            'outer_radius': outer_radius,
+            'area': area,
+            'axes': axes,
+            'angle': angle,
+        }
 
     def _log_detection(self, context, target_color, center, outer_r, conf):
         msg = (f"[HeuristicRing] {context}: "
