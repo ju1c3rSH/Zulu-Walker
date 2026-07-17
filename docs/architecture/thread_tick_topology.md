@@ -1,6 +1,6 @@
 # 线程 / Tick / 状态机 拓扑
 
-> 最后更新: 2026-07-09
+> 最后更新: 2026-07-17
 > 分支: feat/thread-safe-sm-tick
 
 ---
@@ -9,8 +9,8 @@
 
 | 线程 | 频率 | 触发方式 | 主循环延迟 | 核心职责 |
 |------|------|---------|-----------|---------|
-| **Main** | **~300 Hz** | `select.select` 定时挂起 | `0.00333` (3.33ms) | 模块 loop + `coordinator.loop()` + 出队 SM 事件 |
-| **Camera Process** | Camera FPS (目标 120~300) | `_process_loop` busy poll | 无帧时 1ms sleep | 采集 → 检测 → 发伺服帧 → publish FrameResult |
+| **Main** | **~300 Hz** | `time.sleep(0.00333)` 阻塞休眠 | `0.00333` (3.33ms) | 模块 loop + `coordinator.loop()` + 出队 SM 事件 |
+| **Camera Process** | Camera FPS (目标 120~300) | `_process_loop` busy poll | 无帧时 1ms sleep | 采集 → 检测 → results 入 deque |
 | **Heartbeat** | **10 Hz** | `time.sleep(0.1)` | — | 发心跳帧，检测 MCU 超时 |
 | **UART Receiver** | 事件驱动 | Serial 数据回调 | — | 帧解析 → EventBus publish |
 
@@ -19,7 +19,7 @@
 ## 2. 主循环流向图
 
 ```
-MAIN THREAD (~300 Hz, select.select 3.33ms)
+MAIN THREAD (~300 Hz, time.sleep 3.33ms)
 ┌─────────────────────────────────────────────────────────┐
 │  ModuleManager.run_main_loop(coordinator)               │
 │                                                         │
@@ -36,7 +36,7 @@ MAIN THREAD (~300 Hz, select.select 3.33ms)
 │         ├─ update() → on_execute → 可能 cascade 转场   │
 │         └─ 循环直到状态稳定 (max_steps=10)              │
 │                                                         │
-│    select.select([], [], [], 0.00333)  ← ~300Hz tick   │
+    │    time.sleep(0.00333)  ← ~300Hz tick (阻塞, 精度受 GIL 影响)  │
 └─────────────────────────────────────────────────────────┘
 
 COORDINATOR.LOOP() 内部展开：
@@ -63,34 +63,50 @@ COORDINATOR.LOOP() 内部展开：
 ## 3. 事件入队 & 消费路径
 
 ```
-UART RECEIVER THREAD                CAMERA PROCESS THREAD
-─────────────────────────           ────────────────────────
-Serial data callback                _process_loop
-  └─ FrameParser.feed(data)           └─ process_all()
-       └─ _handle_frame(frame)              └─ publish(FrameResult)
-            │                                    │
-            │ EventBus.publish                   │
-            ▼                                    ▼
-      ┌──────────────────────────────────────────────┐
-      │            EVENT BUS (同步分发)                │
-      │  订阅者被发布者线程直接调用                      │
-      └──────────────────────────────────────────────┘
-            │                    │
-            ▼                    ▼
-     _on_arrived(evt)     _on_vision_results(evt)
-     _on_action_done(evt)   │
-     _on_mcu_cmd(evt)       ├─ "qr_detect"
-     _on_emergency(evt)     │   → _on_qr_result_event
-     _on_heartbeat(evt)     │     → _enqueue_sm(lambda)
-     _on_request_sync(evt)  │
-     _on_qr_result_event    ├─ "track_cargo/ring_*"
-       (从 camera 线程来)     │   → _handle_track_result(data)
-                            │     → visual_sm.update()    ← 直接调！
-                            │     → _send(伺服帧)          ← 直接发！
-                            │     → 如果 latch 触发
-                            │       → _enqueue_sm(lambda)
-                            │
-                            ▼
+UART RECEIVER THREAD
+─────────────────────────
+Serial data callback
+  └─ FrameParser.feed(data)
+       └─ _handle_frame(frame)
+            │
+            │ EventBus.publish    ← 同步分发，订阅者在接收线程上被调
+            ▼
+      ┌──────────────────────────────────┐
+      │         EVENT BUS                │
+      │  发布者线程直接调用订阅者          │
+      └──────────────────────────────────┘
+            │
+            ├─ _on_arrived(evt)          → _enqueue_sm(lambda)
+            ├─ _on_action_done(evt)      → _enqueue_sm(lambda)
+            ├─ _on_mcu_cmd(evt)          → _enqueue_sm(lambda)
+            ├─ _on_emergency(evt)        → _enqueue_sm(lambda)
+            ├─ _on_heartbeat(evt)        → 更新时间戳 (no SM)
+            └─ _on_request_sync(evt)     → pass
+
+
+CAMERA PROCESS THREAD
+─────────────────────────
+_process_loop
+  └─ process_all()
+       └─ _pending_results.append(all_results)   ← deque (maxlen=5)
+            │
+            │ (无 EventBus 发布，纯 deque 传递)
+            ▼
+      ┌──────────────────────────────────┐
+      │     _pending_results deque        │
+      │  单写者(相机线程) / 单读者(主线程) │
+      └──────────────────────────────────┘
+            │
+            │ coordinator.loop() drain_results()
+            ▼
+      _process_vision_results()
+        ├─ qr_detect       → _handle_qr_result → _enqueue_sm(lambda)
+        └─ track_cargo/    → _handle_track_result(data)
+           ring_discovery     ├─ visual_sm.update()   ← 主线程上调用！
+                              ├─ _send(伺服帧)        ← 主线程上发送！
+                              └─ latch 触发时
+                                   → _enqueue_sm(lambda)
+
                       ┌────────────────┐
                       │   _sm_queue    │  ← 线程安全队列 (_sm_lock)
                       │  Deque[Fn]     │
@@ -104,39 +120,36 @@ Serial data callback                _process_loop
 
 ---
 
-## 4. 视觉伺服数据路径（300fps 关键路径）
+## 4. 视觉伺服数据路径（经主循环中转）
 
 ```
-CAMERA PROCESS THREAD  (高频，不经过主循环)
+MAIN THREAD  — coordinator.loop() 内 (~300Hz tick 边界)
 ┌─────────────────────────────────────────────────────────┐
-│  process_all()                                          │
-│    → per camera: get_frame()                            │
-│    → run_tasks_serial()                                 │
-│    → VisionResult { task_name, success, result_data }   │
-│                                                         │
-│  publish(FrameResult)                                   │
-│    → _on_vision_results()                               │
-│      → _handle_track_result(data)                       │
-│                                                         │
-│        visual_sm.context.percent_error_x = ...  立即    │
-│        visual_sm.context.percent_error_y = ...  立即    │
-│        visual_sm.update()                        立即    │
-│                                                         │
-│        build_visual_servo_data_frame(pe_x, pe_y,        │
-│          flags, visual_state)                           │
-│        _send(frame)  ← 直发 UART，不走队列！           │
-│                                                         │
-│        if ready_latched:                                │
-│          _enqueue_sm(_apply_visual_status)  ← 仅 SM    │
-│            入队                                        │
+│  coordinator.loop()                                     │
+│  ├─ drain_results()   ← 从 deque 取视觉结果             │
+│  │   └─ _process_vision_results(all_results)            │
+│  │       ├─ qr_detect → _enqueue_sm(lambda)             │
+│  │       └─ track_cargo / ring_discovery                │
+│  │            → _handle_track_result(data)              │
+│  │              │                                       │
+│  │              ├─ visual_sm.context 字段写入   ← 主线程 │
+│  │              ├─ visual_sm.update()           ← 主线程 │
+│  │              ├─ build_visual_servo_data_frame(...)   │
+│  │              ├─ _send(伺服帧)                ← 主线程 │
+│  │              └─ latch 触发 → _enqueue_sm(lambda)     │
+│  │                                                      │
+│  ├─ drain _sm_queue（消费事件 lambda）                    │
+│  └─ mission_sm.run_to_completion()                      │
 └─────────────────────────────────────────────────────────┘
 
- 伺服帧发送路径:
-   Camera Thread → _send() → uart_interface.send_raw()
+  伺服帧发送路径:
+     Main Thread → _send() → uart_interface.send_raw()
                               └─ with _write_lock:
-                                   serial_controller.send_bytes(frame)
+                                   uart.send(frame)
 
- 延迟: ~0.1ms (不经过主循环)
+  延迟: ~1.7ms (半 tick avg) ~ 3.33ms (整 tick worst)
+  ⚠️ 注意: 视觉伺服数据经过主循环 tick 边界发送，非直发。
+     这是当前架构的已知瓶颈，若需更低延迟需改为相机线程直发。
 ```
 
 ---
@@ -163,15 +176,17 @@ CAMERA PROCESS THREAD  (高频，不经过主循环)
 │  MissionStateMachine│   │  VisualStateMachine       │
 │  18 states, 16 evts │   │  5 states (IDLE/SEARCH/   │
 │                     │   │   TRACKING/RECOVERY/FAIL)  │
-│  操作线程: MAIN     │   │  操作线程: CAMERA          │
+│  操作线程: MAIN     │   │  操作线程: MAIN             │
 │  入队方式:           │   │                            │
-│    _enqueue_sm(lambda)│  │  update() 由相机线程直接调  │
-│    loop() 出队 +     │   │  start()/stop() 由 UART   │
-│    run_to_completion │   │  线程 (有 RLock)            │
+│    _enqueue_sm(lambda)│  │  update() 由主线程 loop() 内 │
+│    loop() 出队 +     │   │  drain_results → _handle_  │
+│    run_to_completion │   │  track_result 调用          │
+│                     │   │  start()/stop() 由 UART     │
+│                     │   │  线程 (有 RLock)             │
 │                     │   │                            │
 │  context:            │   │  context:                  │
 │    MissionContext    │   │    VisualContext           │
-│    (dataclass)      │   │    (读写均在同一线程)      │
+│    (dataclass)      │   │    (主线程独占读写)         │
 └────────────────────┘    └──────────────────────────┘
 ```
 
@@ -270,7 +285,7 @@ uart._write_lock:
 | 路径 | 延迟 | 瓶颈 |
 |------|------|------|
 | **UART 帧 → SM 处理** | **~1.7ms**（平均半 tick） | 主循环 tick 3.33ms |
-| **视觉帧 → 伺服帧发送** | **~0.1ms**（直发） | 无（不经过主循环） |
+| **视觉帧 → 伺服帧发送** | **~1.7ms**（经主循环中转） | 主循环 tick 3.33ms |
 | **视觉 latch → SM 转场** | **~1.7ms + 0ms** | 入队等 tick + 出队后立即转场 |
 | **PLACE_ROUGH 1s 定时** | **±1.7ms**（半 tick） | 主循环 tick 3.33ms |
 | **心跳超时检测** | **~0.3s + ~1.7ms** | heartbeat_interval + tick |
@@ -280,10 +295,10 @@ uart._write_lock:
 
 | 循环 | 基准速率 | 精度机制 | 实际精度 |
 |------|---------|---------|---------|
-| Main loop | ~300 Hz (3.33ms) | `select.select` → `ppoll/nanosleep` | ~1ms（依赖内核 HZ） |
+| Main loop | ~300 Hz (3.33ms) | `time.sleep(0.00333)` | ~±1-5ms（受 GIL 影响） |
 | Camera process | Camera FPS | 总线空转 + 1ms idle sleep | ~帧间隔 |
 | Heartbeat | 10 Hz | `time.sleep(0.1)` | ~±10ms（受 GIL 影响） |
-| Visual SM update | 每帧 | 相机线程直接调 | 帧间隔 |
+| Visual SM update | 每 tick (~3.33ms) | 主线程 drain_results → _handle_track_result | ~3.33ms tick 边界 |
 | Mission SM run_to_completion | 每 tick | 主线程 coordinator.loop | 3.33ms tick 边界 |
 
 ---
@@ -300,8 +315,8 @@ _send(frame) 可被多线程调用，线程安全：
   └─────────────────────────────────────────┘
 
   ┌─ Camera Thread ─────────────────────────┐
-  │  _handle_track_result() → 伺服帧 (高频) │
-  │  _handle_discovery_result() → 伺服帧    │
+  │  (仅采集 + 检测，结果入 deque)           │
+  │  不发 UART 帧                           │
   └─────────────────────────────────────────┘
 
   ┌─ Heartbeat Thread ──────────────────────┐
@@ -322,8 +337,8 @@ _send(frame) 可被多线程调用，线程安全：
 ──────────────────────────────────────────────────────────────────────────
 _sm_queue                  任意线程           主线程 loop()          _sm_lock
 MissionContext             主线程 (仅)         主线程 / 心跳线程     mission_sm._lock
-VisualContext              相机线程            相机线程 / 主线程     无锁（单写者模式）
-_ready_frames/latched      相机线程            相机线程              无锁（单线程）
+VisualContext              主线程 (仅)         主线程 (仅)           无锁（主线程独占）
+_ready_frames/latched      主线程              主线程                无锁（主线程独占）
 uart._current_zone         UART 接收线程       任意线程              uart._state_lock
 _last_mcu_heartbeat        UART 接收线程       心跳线程              无锁（单调时间戳，良性竞争）
 _heartbeat_seq             心跳线程 (仅)        心跳线程              无锁（单写者）
@@ -333,11 +348,11 @@ _heartbeat_seq             心跳线程 (仅)        心跳线程              �
 
 ## 10. 关键观察
 
-1. **伺服帧是唯一真正高频的路由**（相机线程直发，不受主循环限制）
+1. **伺服帧经过主循环中转**（非直发，受 ~300Hz tick 限制，延迟 ~1.7ms avg / 3.33ms worst）
 2. **MissionSM 是单线程模型**（所有操作通过 `_enqueue_sm` 串行化到主线程）
-3. **VisualSM 是例外**（相机线程直接 `update()`，因为需要逐帧跟踪判定）
-4. **锁争用风险点**: `uart._write_lock` 在相机线程高频发帧时被持续持有，心跳线程可能短暂等待
-5. **300Hz 主循环精度依赖内核**: 如果内核 `HZ < 1000`，`select.select` 精度会退化。当前平台约 300Hz，所以 `MAIN_LOOP_DELAY = 0.00333`。升级内核后可降到 `0.001`。
+3. **VisualSM 与 MissionSM 同在主线程**（通过 `drain_results` → `_process_vision_results` 调用 `visual_sm.update()`），消除了跨线程锁争用，但引入了 tick 延迟
+4. **锁争用风险点**: `uart._write_lock` 在主线程发伺服帧 + 心跳线程 10Hz 发心跳时竞争，频率适中
+5. **300Hz 主循环精度**: `time.sleep(0.00333)` 阻塞，精度受 GIL 和内核调度影响，非 `select.select`
 
 ---
 
