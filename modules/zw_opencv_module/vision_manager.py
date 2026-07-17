@@ -41,9 +41,7 @@ class VisionManager:
         self._result_callbacks: List[Callable[[Dict], None]] = []
         self._event_bus = None
 
-        self._fps_frame_count = 0
-        self._fps_start_time = time.time()
-        self._fps = 0.0
+        self._fps_data: Dict[str, dict] = {}
 
         self._composed_frame = None
         self._any_fresh = False
@@ -112,14 +110,6 @@ class VisionManager:
                 self._composed_frame = composed
                 self._any_fresh = any_fresh
 
-                if any_fresh:
-                    self._fps_frame_count += 1
-                    elapsed = time.time() - self._fps_start_time
-                    if elapsed >= 1.0:
-                        self._fps = self._fps_frame_count / elapsed
-                        self._fps_frame_count = 0
-                        self._fps_start_time = time.time()
-
                 if self.ffmpeg_pusher and composed is not None:
                     self.ffmpeg_pusher.push_frame_sync(composed)
 
@@ -147,22 +137,36 @@ class VisionManager:
         frames = []
         all_results: Dict[str, Dict] = {}
         pipeline_ids = []
+        fps_values = []
         any_fresh = False
 
         for pid, pipe in list(self._pipelines.items()):
-            frame, results = pipe.process_frame(fps=self._fps)
+            cur_fps = self._fps_data.get(pid, {}).get("fps", 0.0)
+            frame, results = pipe.process_frame(fps=cur_fps)
+
             if frame is not None:
                 any_fresh = True
+                d = self._fps_data.setdefault(
+                    pid, {"count": 0, "start": time.time(), "fps": 0.0}
+                )
+                d["count"] += 1
+                elapsed = time.time() - d["start"]
+                if elapsed >= 1.0:
+                    d["fps"] = d["count"] / elapsed
+                    d["count"] = 0
+                    d["start"] = time.time()
             else:
                 frame = self._make_placeholder()
+
             frames.append(frame)
             pipeline_ids.append(pid)
             all_results[pid] = results
+            fps_values.append(self._fps_data.get(pid, {}).get("fps", 0.0))
 
         if not frames:
             return None, all_results, False
 
-        composed = self.frame_composer.compose(frames, pipeline_ids)
+        composed = self.frame_composer.compose(frames, pipeline_ids, fps_list=fps_values)
         return composed, all_results, any_fresh
 
     def compose_frame(self) -> Optional[np.ndarray]:
