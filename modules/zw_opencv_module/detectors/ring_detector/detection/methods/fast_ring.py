@@ -157,11 +157,11 @@ class FastRingMethod(BaseRingDetectionMethod):
             cx, cy = result
             ts.last_center = (cx, cy)
             ts._center_history.append((cx, cy))
-            return create_ring_target(result, target_color, 100.0)
+            return create_ring_target(result, target_color, 100.0, is_predicted=True)
 
         if ts._center_history:
             cx = sum(p[0] for p in ts._center_history) / len(ts._center_history)
             cy = sum(p[1] for p in ts._center_history) / len(ts._center_history)
-            return create_ring_target((cx, cy), target_color, 100.0)
+            return create_ring_target((cx, cy), target_color, 100.0, is_predicted=True)
 
         return None
