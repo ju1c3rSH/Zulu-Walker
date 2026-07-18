@@ -35,6 +35,7 @@ class ErrorCode(IntEnum):
     VISUAL_FAIL_FROM_MCU = 30
     ALIGN_RAW_TIMEOUT = 40
     RING_DISCOVERY_TIMEOUT = 50
+    CARGO_DISCOVERY_TIMEOUT = 60
     EMERGENCY_STOP = 99
 
 
@@ -60,6 +61,7 @@ class MissionState:
     FINISHED = 16
     ERROR = 17
     RING_DISCOVERY = 18
+    CARGO_DISCOVERY = 19
 
 
 class VisualState:
@@ -413,6 +415,27 @@ class _RingDiscoveryState(State):
         pass
 
 
+class _CargoDiscoveryState(State):
+    def on_enter(self, ctx: MissionContext, from_state: str) -> None:
+        from utils.debug_console import DebugConsole
+        DebugConsole().set("mission_state", "CARGO_DISCOVERY")
+        log_print("[MissionSM] Enter CARGO_DISCOVERY")
+        ctx.discovery_done = False
+        ctx.discovery_active = False
+        ctx.state_entry_time = time()
+
+    def on_execute(self, ctx: MissionContext) -> Optional[str]:
+        if ctx.discovery_done:
+            return MissionStateNames[MissionState.ALIGN_TEMP]
+        if ctx.state_entry_time + 360.0 < time():
+            ctx.error_code = ErrorCode.CARGO_DISCOVERY_TIMEOUT
+            return MissionStateNames[MissionState.ERROR]
+        return None
+
+    def on_exit(self, ctx: MissionContext, to_state: str) -> None:
+        ctx.discovery_active = False
+
+
 class _NavToRoughState(State):
     def on_enter(self, ctx: MissionContext, from_state: str) -> None:
         from utils.debug_console import DebugConsole
@@ -601,6 +624,7 @@ MissionStateNames = {
     MissionState.FINISHED: "FINISHED",
     MissionState.ERROR: "ERROR",
     MissionState.RING_DISCOVERY: "RING_DISCOVERY",
+    MissionState.CARGO_DISCOVERY: "CARGO_DISCOVERY",
     MissionState.PICK_ROUGH: "PICK_ROUGH",
 }
 
@@ -620,6 +644,7 @@ class MissionStateMachine(BaseStateMachine):
         PICK_DONE = "PICK_DONE"                 # PICK_{RAW,ROUGH} -> CHECK_LOAD
         ARRIVED_ROUGH = "ARRIVED_ROUGH"         # NAV_TO_ROUGH -> ALIGN_ROUGH
         ARRIVED_TEMP = "ARRIVED_TEMP"           # NAV_TO_TEMP -> ALIGN_TEMP
+        ARRIVED_TEMP_BATCH2 = "ARRIVED_TEMP_BATCH2"
         RETURNED_HOME = "RETURNED_HOME"         # RETURN_HOME -> FINISHED
         RESET = "RESET"                         # ERROR -> WAIT_START
         ERROR = "ERROR"                         # any -> ERROR
@@ -643,6 +668,10 @@ class MissionStateMachine(BaseStateMachine):
         self.register_state(MissionStateNames[MissionState.PICK_RAW], _PickRawState())
         self.register_state(MissionStateNames[MissionState.CHECK_LOAD], _CheckLoadState())
         self.register_state(MissionStateNames[MissionState.RING_DISCOVERY], _RingDiscoveryState())
+        self.register_state(
+            MissionStateNames[MissionState.CARGO_DISCOVERY],
+            _CargoDiscoveryState()
+        )
         self.register_state(MissionStateNames[MissionState.NAV_TO_ROUGH], _NavToRoughState())
         self.register_state(MissionStateNames[MissionState.ALIGN_ROUGH], _AlignRoughState())
         self.register_state(MissionStateNames[MissionState.PLACE_ROUGH], _PlaceRoughState())
@@ -698,6 +727,13 @@ class MissionStateMachine(BaseStateMachine):
             event=self.Events.ARRIVED_TEMP
         )
 
+        # NAV_TO_TEMP -> CARGO_DISCOVERY (batch 2)
+        self.register_transition(
+            MissionStateNames[MissionState.NAV_TO_TEMP],
+            MissionStateNames[MissionState.CARGO_DISCOVERY],
+            event=self.Events.ARRIVED_TEMP_BATCH2
+        )
+
         # NAV_TO_RAW_SECOND -> ALIGN_RAW (second batch)
         self.register_transition(
             MissionStateNames[MissionState.NAV_TO_RAW_SECOND],
@@ -743,6 +779,7 @@ class MissionStateMachine(BaseStateMachine):
             MissionState.PLACE_TEMP, MissionState.PICK_ROUGH,
             MissionState.NAV_TO_RAW_SECOND, MissionState.RETURN_HOME,
             MissionState.RING_DISCOVERY,
+            MissionState.CARGO_DISCOVERY,
         ]:
             self.register_transition(
                 MissionStateNames[sid],
@@ -784,6 +821,8 @@ class MissionStateMachine(BaseStateMachine):
                 return self.trigger(self.Events.ARRIVED_ROUGH)
         elif zone_id == Zone.TEMP:
             if state == MissionStateNames[MissionState.NAV_TO_TEMP]:
+                if self.context.current_batch == 2:
+                    return self.trigger(self.Events.ARRIVED_TEMP_BATCH2)
                 return self.trigger(self.Events.ARRIVED_TEMP)
         elif zone_id == Zone.START:
             if state == MissionStateNames[MissionState.RETURN_HOME]:
