@@ -33,9 +33,10 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
     AXIS_RATIO_MAX = 2.0
     RING_GAP_PX_DEFAULT = 10
-    RING_BAND_COLOR_THRESHOLD = 0.10
+    RING_BAND_COLOR_THRESHOLD = 0.03
     RING_BAND_WIDTH = 8
     INNER_RADIUS_RATIO = 0.55
+    MAX_SHIFT_RATIO = 0.5
     HOUGH_DP = 2.0
     HOUGH_PARAM2 = 8
     HOUGH_MIN_DIST = 8
@@ -201,8 +202,11 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             intersect = cv2.bitwise_and(roi_mask, annulus)
             M = cv2.moments(intersect)
             if M["m00"] > 0:
-                cx_roi = int(M["m10"] / M["m00"])
-                cy_roi = int(M["m01"] / M["m00"])
+                new_cx = M["m10"] / M["m00"]
+                new_cy = M["m01"] / M["m00"]
+                if np.hypot(new_cx - roi_w // 2, new_cy - roi_h // 2) <= r_scaled * self.MAX_SHIFT_RATIO:
+                    cx_roi = int(new_cx)
+                    cy_roi = int(new_cy)
             center = ((cx_roi + x1) / scale, (cy_roi + y1) / scale)
             ts.roi_miss_count = 0
             ts._ring_outer_radius = r
@@ -393,6 +397,9 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                     break
                 new_ecx = M["m10"] / M["m00"]
                 new_ecy = M["m01"] / M["m00"]
+                shift = np.hypot(new_ecx - ecx, new_ecy - ecy)
+                if shift > outer_r * self.MAX_SHIFT_RATIO:
+                    break
                 if abs(new_ecx - ecx) < 0.5 and abs(new_ecy - ecy) < 0.5:
                     ecx, ecy = new_ecx, new_ecy
                     break
