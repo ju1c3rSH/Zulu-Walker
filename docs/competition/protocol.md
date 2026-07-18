@@ -69,6 +69,7 @@ Checksum  = Type 到 Payload 所有字节的异或（XOR）
 | 0x06 | `CMD_STOP_VISUAL` | 无 | 紧急停止所有视觉任务 |
 | 0x07 | `CMD_START_RING_DISCOVERY` | `color_id(1B)` | 启动色环发现，指定目标颜色 |
 | 0x08 | `CMD_DISCOVERY_DONE` | 无 | 三色映射完成，退出发现阶段 |
+| 0x09 | `CMD_START_CARGO_STACKING_DISCOVERY` | `color_id(1B)` | 启动码垛货物发现，指定目标颜色。MCU → OP，用法与 CMD_START_RING_DISCOVERY 相同 |
 
 > **注意**：视觉任务的日常启停由 Orange Pi 根据 MissionSM 状态变化自动管理，MCU 不需要发送 CMD 来开关任务。详见 `docs/architecture/state_machine.md` §2 区域自动控制。
 
@@ -292,7 +293,8 @@ OP: RING_DISCOVERY → ALIGN_ROUGH/TEMP → PLACE_ROUGH/TEMP（瞬时级联）
 ## 版本历史
 
 | 版本 | 日期 | 变更 |
-|---|---|---|
+|---|---|---|---|
+| **v1.3** | 2026-07-18 | 新增 `CMD_START_CARGO_STACKING_DISCOVERY(0x09)` — 码垛阶段货物检测，复用 COLOR_RESULT/DISCOVERY_DONE 协议 |
 | **v1.2** | 2026-07-04 | ① 删除 `CMD_START_COLOR_DETECT(0x02)`、`CMD_TRACK_TARGET(0x03)`、`CMD_TRACK_TOP(0x05)` — 视觉任务启停改为区域自动控制；② `CMD_TRACK_RING(0x04)` 不再需要，一并删除；③ `COLOR_RESULT` 确认 payload 为 `color_id + confidence`（v1.1 已改）；④ 新增 §7.2~7.4 时序补充；⑤ 新增 §9 代码映射 |
 | **v1.1** | 2026-07-03 | ① `COLOR_RESULT` 移除 `slot_idx`；② `CMD_START_COLOR_DETECT` 移除 `slot_idx`；③ 移除 `CMD_SET_EXPOSURE`；④ 时序 B 新增颜色检测步骤；⑤ `HEARTBEAT` 增加 MCU→OP 时 `visual_state=0` |
 | **v1.0** | — | 初版协议定义 |
