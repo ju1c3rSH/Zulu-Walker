@@ -7,7 +7,7 @@ from ..._shared.base_debug_window import BaseDebugWindow
 
 
 class CargoDebugWindow(BaseDebugWindow):
-    _STAGE_NAMES = ["Auto", "ROI", "Global", "Blob", "Fallback"]
+    _STAGE_NAMES = ["Auto", "ROI", "Edge", "Blob", "Fallback"]
     _METHOD_NAMES = ["FAST_CIRCLE", "EDGE_DRAWING_CIRCLE", "HEURISTIC_EDGE"]
     _PREVIEW_LABELS = {
         0: "Original",

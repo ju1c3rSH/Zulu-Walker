@@ -8,23 +8,21 @@ from .....models.color import Color
 
 
 class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
-    """Two-stage cargo circle detection using EdgeDrawing + Heuristic fallback.
+    """Three-stage cargo circle detection.
 
-    Stage 1 (confidence=100):
-        EdgeDrawing -> contours -> fitEllipse + color moments + color score.
-        Same as EdgeDrawingCircleMethod.
+    Stage 1 (confidence=100):  fitEllipse from EdgeDrawing contours
+        - EdgeDrawing -> contours -> fitEllipse (center used directly, no color-moments refinement)
+        - Color score verified but NOT used to shift center
 
-    Stage 2 (confidence=60):
-        When Stage 1 yields no valid candidate:
-        - Moments centroid from existing contours
-        - Relaxed color threshold
-        - Handles partial/fragmented circles
-
-    Stage 3 (confidence=60):
-        When Stage 2 also fails (or edge pipeline produces no contours):
+    Stage 2 (confidence=60):  color blob centroid
         - findContours directly on raw color_mask
         - Moments centroid from largest color blob
-        - No edge dependency, handles occlusion and low contrast
+        - Pure area-based, no edge dependency
+
+    Stage 3 (confidence=40):  heuristic moments from edge contours
+        - Moments centroid from existing edge contours
+        - Relaxed color threshold
+        - Handles partial/fragmented circles
 
     Fallback:
         Kalman prediction or history average (is_predicted=True, confidence=0)
@@ -33,7 +31,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
     COLOR_BLOB_MIN_AREA = 2000
     STAGE1_CONFIDENCE = 100.0
     STAGE2_CONFIDENCE = 60.0
-    STAGE3_CONFIDENCE = 60.0
+    STAGE3_CONFIDENCE = 40.0
 
     def __init__(self, name: str = "heuristic_edge", detector=None):
         super().__init__(name=name, detector=detector)
@@ -51,7 +49,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
 
         contours, color_mask = result
 
-        # === Stage 1: full ellipse evaluation ===
+        # === Stage 1: fitEllipse evaluation ===
         candidates = []
         for contour in contours:
             candidate = self._evaluate_contour(contour, color_mask, hsv, target_color)
@@ -62,21 +60,21 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
             best = self._select_best_candidate(candidates)
             return best["center"], best["radius"], self.STAGE1_CONFIDENCE
 
-        # === Stage 2: heuristic moments fallback ===
-        stage2_candidates = []
+        # === Stage 2: color blob centroid ===
+        blob_result = self._try_color_blob(color_mask)
+        if blob_result is not None:
+            return blob_result[0], blob_result[1], self.STAGE2_CONFIDENCE
+
+        # === Stage 3: heuristic moments from edge contours ===
+        stage3_candidates = []
         for contour in contours:
             candidate = self._evaluate_heuristic(contour, color_mask, target_color)
             if candidate is not None:
-                stage2_candidates.append(candidate)
+                stage3_candidates.append(candidate)
 
-        if stage2_candidates:
-            best = max(stage2_candidates, key=lambda c: c["area"])
-            return best["center"], best["radius"], self.STAGE2_CONFIDENCE
-
-        # === Stage 3: color blob centroid (no edge dependency) ===
-        result = self._try_color_blob(color_mask)
-        if result is not None:
-            return result
+        if stage3_candidates:
+            best = max(stage3_candidates, key=lambda c: c["area"])
+            return best["center"], best["radius"], self.STAGE3_CONFIDENCE
 
         return None, None, None
 
@@ -88,7 +86,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
             return None
         best = max(blob_contours, key=cv2.contourArea)
         area = cv2.contourArea(best)
-        if area < self.detector.color_blob_min_area:
+        if area < self.COLOR_BLOB_MIN_AREA:
             return None
         M = cv2.moments(best)
         if M["m00"] <= 0:
@@ -96,7 +94,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
         cx = M["m10"] / M["m00"]
         cy = M["m01"] / M["m00"]
         radius = np.sqrt(area / np.pi)
-        return (cx, cy), radius, self.STAGE3_CONFIDENCE
+        return (cx, cy), radius, self.STAGE2_CONFIDENCE
 
     def _try_color_blob_from_hsv(self, hsv: np.ndarray, target_color: Color
                                  ) -> Tuple[Optional[Tuple[float, float]], Optional[float], Optional[float]]:
