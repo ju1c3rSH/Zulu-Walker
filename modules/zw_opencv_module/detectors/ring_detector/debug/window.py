@@ -21,6 +21,7 @@ class RingDebugWindow(BaseDebugWindow):
         super().__init__(title="Ring Debug", method_count=3, **kwargs)
         self._show_circle = False
         self._ring_data: Dict = {}
+        self._stage_value = 0
 
     def setup(self):
         super().setup()
@@ -34,6 +35,7 @@ class RingDebugWindow(BaseDebugWindow):
         )
 
     def _set_stage(self, value: int):
+        self._stage_value = value
         if self.on_change:
             self.on_change("force_stage", value)
 
@@ -102,3 +104,11 @@ class RingDebugWindow(BaseDebugWindow):
                     (frame.shape[1] - 160, 42),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45,
                     (255, 200, 0), 1)
+
+        sv_stage = self._stage_value
+        if 0 <= sv_stage < len(self._STAGE_NAMES):
+            stage_text = f"Stage: {self._STAGE_NAMES[sv_stage]}"
+            cv2.putText(frame, stage_text,
+                        (frame.shape[1] - 160, 62),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (200, 255, 100), 1)

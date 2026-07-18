@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 from .base import Processor, VisionResult
 from ..detectors.cargo_detector import CargoDetector
+from ..detectors.cargo_detector.detection import DetectMethod
 from ..models import Color
 
 
@@ -125,6 +126,15 @@ class TrackCargoProcessor(Processor):
         info = f"ERR x:{pe_x:+d} y:{pe_y:+d} conf:{confidence:.0f}"
         cv2.putText(frame, info, (10, frame_h - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+
+        method_name = self.detector.detect_method.name
+        method_text = f"Method: {method_name}"
+        (tw, _), _ = cv2.getTextSize(
+            method_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+        cv2.putText(frame, method_text,
+                    (frame_w - tw - 10, 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (0, 255, 255), 1)
 
         return frame
 
