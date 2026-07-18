@@ -25,6 +25,7 @@ from modules.zw_uart_module.protocol import (
     build_color_result_frame,
     CMD_START_QR, CMD_STOP_VISUAL,
     CMD_START_RING_DISCOVERY, CMD_DISCOVERY_DONE,
+    CMD_START_CARGO_STACKING_DISCOVERY,
     VisualFlags,
 )
 from modules.zw_opencv_module.models.color import Color
@@ -190,6 +191,9 @@ class MissionCoordinator:
         bridge.when_enter("RING_DISCOVERY",
             self._deactivate_all_visual)
 
+        bridge.when_enter("CARGO_DISCOVERY",
+            self._deactivate_all_visual)
+
         bridge.when_enter({
             "NAV_TO_RAW", "NAV_TO_ROUGH", "NAV_TO_TEMP",
             "NAV_TO_RAW_SECOND",
@@ -235,6 +239,14 @@ class MissionCoordinator:
             captured = color
             self._enqueue_sm(lambda c=captured: self._handle_ring_discovery_cmd(c))
 
+        elif cmd == CMD_START_CARGO_STACKING_DISCOVERY:
+            try:
+                color_id = args[0] if len(args) >= 1 else 0
+                color = Color(color_id)
+            except (ValueError, KeyError):
+                return
+            self._enqueue_sm(lambda c=color: self._handle_cargo_stacking_cmd(c))
+
         elif cmd == CMD_DISCOVERY_DONE:
             self._enqueue_sm(lambda: self.mission_sm.on_discovery_done())
 
@@ -247,6 +259,19 @@ class MissionCoordinator:
         self._discovery_ready_latched = False
         self._discovery_color_sent = False
         self._activate_task("ring_discovery", color)
+        self.mission_sm.context.discovery_color = color
+        self.mission_sm.context.discovery_active = True
+        self.mission_sm.run_to_completion()
+
+    def _handle_cargo_stacking_cmd(self, color: Color) -> None:
+        if self.mission_sm.current_state != MissionStateNames[MissionState.CARGO_DISCOVERY]:
+            return
+        self.visual_sm.stop()
+        self.visual_sm.start()
+        self._discovery_ready_frames = 0
+        self._discovery_ready_latched = False
+        self._discovery_color_sent = False
+        self._activate_task("track_cargo", color)
         self.mission_sm.context.discovery_color = color
         self.mission_sm.context.discovery_active = True
         self.mission_sm.run_to_completion()
@@ -512,6 +537,7 @@ class MissionCoordinator:
                 ErrorCode.CHECK_LOAD_TIMEOUT,
                 ErrorCode.ALIGN_RAW_TIMEOUT,
                 ErrorCode.RING_DISCOVERY_TIMEOUT,
+                ErrorCode.CARGO_DISCOVERY_TIMEOUT,
             ) and ctx.error_code != self._last_error_code:
                 self._last_error_code = ctx.error_code
                 self._send(build_status_from_vision_frame(

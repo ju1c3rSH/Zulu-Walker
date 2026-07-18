@@ -46,6 +46,7 @@ CMD_START_QR = 0x01             # Start QR detection
 CMD_STOP_VISUAL = 0x06          # No arg — emergency stop all visual tasks
 CMD_START_RING_DISCOVERY = 0x07 # MCU -> OP: start ring discovery, args: color_id(1B)
 CMD_DISCOVERY_DONE = 0x08       # MCU -> OP: ring discovery complete, no args
+CMD_START_CARGO_STACKING_DISCOVERY = 0x09  # MCU -> OP: start cargo stacking discovery, args: color_id(1B)
 
 class VisualFlags:
     """Bit flags for STATUS_FROM_VISION."""
