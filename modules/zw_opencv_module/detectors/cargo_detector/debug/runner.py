@@ -70,6 +70,9 @@ class CargoDebugRunner:
             self.window.set_method_index(method_idx)
 
     def _on_param_changed(self, name: str, raw_value: int):
+        if name == "force_stage":
+            self.detector.force_stage = raw_value
+            return
         all_defs = self._get_active_defs()
         for p in all_defs:
             if p.name == name:
@@ -119,6 +122,7 @@ class CargoDebugRunner:
 
         self.detector._update_ed_params()
         self.window.setup()
+        self.detector.force_stage = 0
 
     def _get_active_defs(self):
         method_defs = CARGO_METHOD_PARAM_DEFS.get(self._current_method_key, [])
@@ -139,7 +143,9 @@ class CargoDebugRunner:
 
             result = self._process_frame(frame)
             intermediates = self._collect_intermediates()
-            self.window.update(frame=frame, result=result, intermediates=intermediates)
+            self.window.update(frame=frame, result=result,
+                               intermediates=intermediates,
+                               cargo_data=self.detector._last_cargo_meta.copy())
             self.window.refresh()
 
             if self._save_pending and time.time() - self._last_save_time > 0.5:
@@ -156,17 +162,18 @@ class CargoDebugRunner:
     def _collect_intermediates(self) -> Dict[int, np.ndarray]:
         steps = {}
         idx = 0
-        if self._current_method_key == "FAST_CIRCLE":
-            if self.detector._last_mask is not None:
-                steps[idx] = self.detector._last_mask
-                idx += 1
-            if self.detector._last_morphed is not None:
-                steps[idx] = self.detector._last_morphed
-                idx += 1
-        elif self._current_method_key == "EDGE_DRAWING_CIRCLE":
-            if self.detector._last_edge_preview is not None:
-                steps[idx] = self.detector._last_edge_preview
-                idx += 1
+        if self.detector._last_edge_preview is not None:
+            steps[idx] = self.detector._last_edge_preview
+            idx += 1
+        if self.detector._last_mask is not None:
+            steps[idx] = self.detector._last_mask
+            idx += 1
+        if self.detector._last_morphed is not None:
+            steps[idx] = self.detector._last_morphed
+            idx += 1
+        if self.detector._last_alt_img is not None:
+            steps[idx] = self.detector._last_alt_img
+            idx += 1
         return steps
 
     def _save_params(self):

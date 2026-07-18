@@ -22,15 +22,20 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         small, scale = self._scale_frame(frame)
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
 
-        result = self._try_roi(small, hsv, ts, target_color, scale)
-        if result is not None:
-            return result
-
-        result = self._try_global(small, hsv, ts, target_color, scale)
-        if result is not None:
-            return result
-
-        return self._fallback_predict(ts, target_color, scale)
+        fs = self.detector.force_stage if hasattr(self.detector, 'force_stage') else 0
+        if fs == 0 or fs == 1:
+            result = self._try_roi(small, hsv, ts, target_color, scale)
+            if result is not None and fs == 1:
+                return result
+        else:
+            result = None
+        if result is None and (fs == 0 or fs == 2 or fs == 3):
+            result = self._try_global(small, hsv, ts, target_color, scale)
+            if result is not None and (fs == 2 or fs == 3):
+                return result
+        if result is None and (fs == 0 or fs == 4):
+            result = self._fallback_predict(ts, target_color, scale)
+        return result
 
     def _scale_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, float]:
         h, w = frame.shape[:2]
@@ -124,12 +129,18 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
 
         self.detector._last_edge_preview = morphed.copy()
 
+        color_mask = self._build_color_mask(hsv, target_color)
+        if color_mask is not None:
+            self.detector._last_mask = color_mask
+            kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            self.detector._last_morphed = cv2.morphologyEx(
+                color_mask, cv2.MORPH_CLOSE, kernel_morph, iterations=2)
+
         contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             log_print("EdgeDrawing: No contours detected.")
             return None
 
-        color_mask = self._build_color_mask(hsv, target_color)
         if color_mask is None:
             return None
 
@@ -385,6 +396,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         ts._radius_history.append(radius)
 
         final_center = smoothed if smoothed is not None else center
+        self._store_cargo_meta(target_color, final_center, radius)
         return self._build_cargo_item(final_center, target_color, radius,
                                       confidence=confidence)
 
