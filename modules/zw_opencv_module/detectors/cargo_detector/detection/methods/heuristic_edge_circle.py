@@ -20,7 +20,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
         - Relaxed color threshold
         - Handles partial/fragmented circles
 
-    Stage 3 (confidence=35):
+    Stage 3 (confidence=60):
         When Stage 2 also fails (or edge pipeline produces no contours):
         - findContours directly on raw color_mask
         - Moments centroid from largest color blob
@@ -41,6 +41,10 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
     def _detect_circle(self, bgr: np.ndarray, hsv: np.ndarray,
                        target_color: Color
                        ) -> Tuple[Optional[Tuple[float, float]], Optional[float], Optional[float]]:
+        fs = self.detector.force_stage if hasattr(self.detector, 'force_stage') else 0
+        if fs == 3:
+            return self._try_color_blob_from_hsv(hsv, target_color)
+
         result = self._run_edge_pipeline(bgr, hsv, target_color)
         if result is None:
             return self._try_color_blob_from_hsv(hsv, target_color)
@@ -84,7 +88,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
             return None
         best = max(blob_contours, key=cv2.contourArea)
         area = cv2.contourArea(best)
-        if area < self.COLOR_BLOB_MIN_AREA:
+        if area < self.detector.color_blob_min_area:
             return None
         M = cv2.moments(best)
         if M["m00"] <= 0:
