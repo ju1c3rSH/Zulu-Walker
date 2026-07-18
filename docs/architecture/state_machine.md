@@ -109,7 +109,7 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 
 ## 3. MissionStateMachine
 
-### 状态列表（19 状态，0~18 连续，须与 STM32 固件同步）
+### 状态列表（20 状态，0~19 连续，须与 STM32 固件同步）
 
 | ID | 名称 | 含义 |
 |----|------|------|
@@ -132,6 +132,7 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 | 16 | `FINISHED` | 任务完成 |
 | 17 | `ERROR` | 异常 |
 | 18 | `RING_DISCOVERY` | 色环发现：建立颜色→坐标映射 |
+| 19 | `CARGO_DISCOVERY` | 码垛货物发现：第二批次 TEMP 区使用 CargoDetector 建立颜色→坐标映射 |
 
 > **第二批策略**：仅 `NAV_TO_RAW_SECOND` 是独立状态。第二批的 ROUGH/TEMP 导航仍使用 `NAV_TO_ROUGH` / `NAV_TO_TEMP`，由 MCU 自行通过 `current_batch` 同步区分回程路径；`ALIGN_*` / `PICK_*` / `PLACE_*` / `CHECK_LOAD` 全部复用首批状态，行为由 `current_batch_order`（颜色顺序）和 `current_batch`（平放/码垛）参数化驱动。
 
@@ -148,7 +149,8 @@ MCU 通过 STATUS_FROM_VISION 同步获得 cargo_count 和当前状态
 | `ARRIVED_ROUGH` | MCU (`TYPE_ARRIVED zone=ROUGH`) | NAV_TO_ROUGH → RING_DISCOVERY |
 | `DISCOVERY_DONE` | OP (on_execute 内部决策) | RING_DISCOVERY → ALIGN_ROUGH / ALIGN_TEMP |
 | `PLACE_DONE` | MCU (`ACTION_DONE action_id=ActionId.PLACE_ROUGH / ActionId.PLACE_TEMP`) | PLACE_* → 下一状态 |
-| `ARRIVED_TEMP` | MCU (`TYPE_ARRIVED zone=TEMP`) | NAV_TO_TEMP → RING_DISCOVERY |
+| `ARRIVED_TEMP` | MCU (`TYPE_ARRIVED zone=TEMP`, batch=1) | NAV_TO_TEMP → RING_DISCOVERY |
+| `ARRIVED_TEMP_BATCH2` | MCU (`TYPE_ARRIVED zone=TEMP`, batch=2) | NAV_TO_TEMP → CARGO_DISCOVERY |
 | `ALL_PLACED` | OP/Coordinator | 批次完成 |
 | `RETURNED_HOME` | MCU (`TYPE_ARRIVED zone=START`) | RETURN_HOME → FINISHED |
 | `RESET` | MCU/OP | ERROR → WAIT_START |
@@ -213,9 +215,9 @@ stateDiagram-v2
     CHECK_LOAD --> ALIGN_ROUGH: step<3
     CHECK_LOAD --> NAV_TO_TEMP: step>=3
 
-    %% ===== 第二批：暂存 (复用 PLACE_TEMP) =====
-    NAV_TO_TEMP --> RING_DISCOVERY: ARRIVED_TEMP
-    RING_DISCOVERY --> ALIGN_TEMP: DISCOVERY_DONE
+    %% ===== 第二批：暂存 — 码垛发现 (复用 PLACE_TEMP) =====
+    NAV_TO_TEMP --> CARGO_DISCOVERY: ARRIVED_TEMP_BATCH2
+    CARGO_DISCOVERY --> ALIGN_TEMP: DISCOVERY_DONE
     ALIGN_TEMP --> PLACE_TEMP: on_execute
     PLACE_TEMP --> ALIGN_TEMP: cargo>0
     PLACE_TEMP --> RETURN_HOME: cargo=0 / batch=2
@@ -240,6 +242,7 @@ stateDiagram-v2
     PLACE_TEMP --> ERROR
     NAV_TO_RAW_SECOND --> ERROR
     RING_DISCOVERY --> ERROR
+    CARGO_DISCOVERY --> ERROR
     RETURN_HOME --> ERROR
 ```
 
@@ -281,10 +284,14 @@ ROUGH 区 — 取料阶段 (picking_from_rough=True):
 TEMP 区 — 发现阶段:
   NAV_TO_TEMP → RING_DISCOVERY → ALIGN_TEMP
 
-TEMP 区 — 放置阶段:
+TEMP 区 — 批次二发现阶段:
+  NAV_TO_TEMP → CARGO_DISCOVERY → ALIGN_TEMP
+
+TEMP 区 — 放置阶段（批次一/二复用）:
   ALIGN_TEMP → PLACE_TEMP [×3]
   cargo_count: 3→2→1→0
-  → RETURN_HOME → FINISHED
+  batch=1 → NAV_TO_RAW_SECOND（切 batch=2）
+  batch=2 → RETURN_HOME
 ```
 
 **`on_execute` 决策逻辑**：
@@ -298,6 +305,8 @@ TEMP 区 — 放置阶段:
 | `_RingDiscoveryState` | `discovery_done && zone=ROUGH` | `ALIGN_ROUGH` |
 | `_RingDiscoveryState` | `discovery_done && zone=TEMP` | `ALIGN_TEMP` |
 | `_RingDiscoveryState` | `timeout 30s` | `ERROR` |
+| `_CargoDiscoveryState` | `discovery_done` | `ALIGN_TEMP` |
+| `_CargoDiscoveryState` | `timeout 360s` | `ERROR` |
 | `_CheckLoadState` | `zone=RAW, step<3` | `ALIGN_RAW` |
 | `_CheckLoadState` | `zone=RAW, step>=3` | `NAV_TO_ROUGH` |
 | `_CheckLoadState` | `zone=ROUGH, step<3` | `ALIGN_ROUGH` |
@@ -326,7 +335,7 @@ TEMP 放完第一批最后一个（_PlaceTempState，batch=1→2）
    → NAV_TO_ROUGH（复用，MCU 自行根据 current_batch 区分路径）
    → RING_DISCOVERY → ALIGN_ROUGH 放料 [×3] → ALIGN_ROUGH 取回 [×3]
    → NAV_TO_TEMP（复用，MCU 自行根据 current_batch 区分路径）
-   → RING_DISCOVERY → ALIGN_TEMP → PLACE_TEMP [×3]（复用，batch=2 时由 _PlaceTempState 决定终态）
+   → CARGO_DISCOVERY → ALIGN_TEMP → PLACE_TEMP [×3]（复用，batch=2 时由 _PlaceTempState 决定终态）
   → RETURN_HOME → FINISHED
 ```
 
@@ -468,6 +477,7 @@ PLACE 成功
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| **v1.3** | 2026-07-18 | 新增 `CARGO_DISCOVERY(19)` 状态 + `ARRIVED_TEMP_BATCH2` 事件；第二批次 TEMP 区改为 CARGO_DISCOVERY（CargoDetector 扫描 3 色），不复用 RING_DISCOVERY |
 | **v1.0** | 2026-07-04 | 初始化：确定区域自动控制设计，定义状态↔任务映射表 |
 | **v1.1** | 2026-07-06 | 18 状态连续编号 0~17；删除 `NAV_TO_TEMP_SECOND` / `PLACE_TEMP_STACK`，仅保留 `NAV_TO_RAW_SECOND` 作为第二批独立状态；`_PlaceTempState.on_execute` 实现批次切换 + `cargo_count<0` 保护；mermaid 图重绘显示双批次流程；新增 `place_action_done` 机制说明 |
 | **v1.2** | 2026-07-08 | 新增 `RING_DISCOVERY(18)` 状态；NAV_TO_ROUGH/TEMP → RING_DISCOVERY；ALIGN_ROUGH/TEMP 改为无视觉伺服（camera 被 cargo 遮挡，靠 mapping+惯导）；新增 `run_to_completion()` 级联；on_execute 简化；事件列表移除 `READY_TO_PLACE`、新增 `DISCOVERY_DONE` |
