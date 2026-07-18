@@ -83,22 +83,6 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             self._info(f"[HeuristicRing] target={target_color.name} color_mask={mask_px}px (too sparse)")
             return self._fallback_predict(ts, target_color)
 
-        if not getattr(self.detector, "force_global", False):
-            if ts.last_center is not None:
-                result = self._try_global(edges, color_mask, ts, target_color, scale)
-                if result is not None:
-                    return result
-                result = self._try_alt_hough(color_mask, ts, target_color, scale)
-                if result is not None:
-                    return result
-                result = self._fast_roi_verify(color_mask, ts, target_color, scale, small_hw)
-                if result is not None:
-                    return result
-
-            result = self._try_roi(edges, color_mask, ts, target_color, scale, small_hw)
-            if result is not None:
-                return result
-
         result = self._try_global(edges, color_mask, ts, target_color, scale)
         if result is not None:
             return result
@@ -163,80 +147,8 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         return mask
 
     # ================================================================
-    #  fast ROI verify (tracking path, no Hough, no EdgeDrawing)
+    #  global dispatch
     # ================================================================
-
-    def _fast_roi_verify(self, color_mask, ts, target_color, scale, small_hw):
-        roi = self._decide_roi(ts, scale, small_hw)
-        if roi is None:
-            return None
-
-        x1, y1, x2, y2 = roi
-        roi_mask = color_mask[y1:y2, x1:x2]
-
-        r = getattr(ts, "_ring_outer_radius", None)
-        if r is not None and r < 25:
-            r = None
-        if r is None:
-            r = min(roi_mask.shape) // 3
-
-        roi_h, roi_w = roi_mask.shape
-        cx_roi = roi_w // 2
-        cy_roi = roi_h // 2
-        r_scaled = r * scale
-        density_outer = self._ring_band_color_density(
-            (cx_roi, cy_roi), r_scaled, roi_mask,
-            band_width=self.RING_BAND_WIDTH + 2,
-        )
-        density_inner = self._ring_band_color_density(
-            (cx_roi, cy_roi), r_scaled * self.INNER_RADIUS_RATIO, roi_mask,
-            band_width=self.RING_BAND_WIDTH + 2,
-        )
-
-        if max(density_outer, density_inner) > self.RING_BAND_NOISE_FLOOR:
-            best_density = max(density_outer, density_inner)
-            if best_density >= self.MOMENTS_MIN_DENSITY:
-                ref_band = max(int(r_scaled * 0.3), self.RING_BAND_WIDTH)
-                if r_scaled + ref_band > min(roi_h, roi_w) // 2:
-                    return None
-                annulus = np.zeros_like(roi_mask)
-                cv2.circle(annulus, (roi_w // 2, roi_h // 2), int(r_scaled + ref_band), 255, -1)
-                cv2.circle(annulus, (roi_w // 2, roi_h // 2),
-                           max(int(r_scaled * self.INNER_RADIUS_RATIO - ref_band), 1), 0, -1)
-                intersect = cv2.bitwise_and(roi_mask, annulus)
-                M = cv2.moments(intersect)
-                if M["m00"] > 0:
-                    cx_roi = int(M["m10"] / M["m00"])
-                    cy_roi = int(M["m01"] / M["m00"])
-            center = ((cx_roi + x1) / scale, (cy_roi + y1) / scale)
-            ts.roi_miss_count = 0
-            ts._ring_outer_radius = r
-
-            self._store_ring_meta(target_color, center, r, None, None, 0.0)
-
-            self._log_detection("ROI_fast", target_color, center, r, 100)
-            return self._finalize(center, 100.0, ts, target_color, scale)
-
-        return None
-
-    # ================================================================
-    #  ROI / global dispatch
-    # ================================================================
-
-    def _try_roi(self, edges, color_mask, ts, target_color, scale, small_hw):
-        roi = self._decide_roi(ts, scale, small_hw)
-        if roi is None:
-            max_miss = getattr(self.detector, "max_roi_miss", 5)
-            self._info(f"[HeuristicRing] ROI skipped: miss={ts.roi_miss_count}/{max_miss} "
-                       f"center={'none' if ts.last_center is None else 'known'}")
-            ts.roi_miss_count = getattr(ts, "roi_miss_count", 0) + 1
-            return None
-
-        x1, y1, x2, y2 = roi
-        roi_edges = edges[y1:y2, x1:x2]
-        roi_mask = color_mask[y1:y2, x1:x2]
-        return self._detect_and_finalize(roi_edges, roi_mask, ts, target_color, scale,
-                                          offset=(x1, y1), context="ROI")
 
     def _try_global(self, edges, color_mask, ts, target_color, scale):
         return self._detect_and_finalize(edges, color_mask, ts, target_color, scale,
@@ -290,7 +202,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         ts._ring_outer_radius = outer_r_orig
 
-        self._store_ring_meta(target_color, center, outer_r_orig, None, None, 0.0)
+        self._store_ring_meta(target_color, center, outer_r_orig, None, None, 0.0, method="alt_hough")
 
         self._log_detection("alt_hough", target_color, center, outer_r_orig, conf)
         return self._finalize(center, conf, ts, target_color, scale)
@@ -419,7 +331,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         self._store_ring_meta(target_color, center, outer_r_orig, best_area / (scale * scale),
                               (best_axes[0] / scale, best_axes[1] / scale) if best_axes else None,
-                              best_angle)
+                              best_angle, method=context)
 
         self._log_detection(context, target_color, center, outer_r_orig, conf)
         return self._finalize(center, conf, ts, target_color, scale)
@@ -559,13 +471,14 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         if force or frame % self._LOG_INTERVAL == 0:
             log_print(msg)
 
-    def _store_ring_meta(self, target_color, center, outer_radius, area, axes, angle):
+    def _store_ring_meta(self, target_color, center, outer_radius, area, axes, angle, method=""):
         self.detector._last_ring_meta[target_color] = {
             'center': center,
             'outer_radius': outer_radius,
             'area': area,
             'axes': axes,
             'angle': angle,
+            'method': method,
         }
 
     def _log_detection(self, context, target_color, center, outer_r, conf):
