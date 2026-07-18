@@ -253,28 +253,15 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
 
         radius = (axes[0] + axes[1]) / 4.0
 
-        refined_center = self._refine_center_with_color_moments(
-            center, axes, ellipse[2], color_mask
-        )
-        if refined_center is None:
-            log_print(
-                f"EdgeDrawing: Failed to refine center with color moments.\n"
-                f"  contour: area={area:.1f} peri={peri:.1f} "
-                f"circularity={circularity:.4f} axis_ratio={axis_ratio:.3f}\n"
-                f"  ellipse: center=({center[0]:.1f},{center[1]:.1f}) "
-                f"axes=({axes[0]:.1f},{axes[1]:.1f}) angle={ellipse[2]:.1f}"
-            )
-            refined_center = center
-
         color_score = self._compute_color_score(
-            refined_center, radius, color_mask
+            center, radius, color_mask
         )
         thresh = self.detector.color_match_threshold
         if target_color is not None:
             thresh = self.detector.color_match_threshold_per_color.get(target_color, thresh)
         if color_score < thresh:
             _h, _w = color_mask.shape[:2]
-            _x, _y = int(refined_center[0]), int(refined_center[1])
+            _x, _y = int(center[0]), int(center[1])
             _r = int(radius)
             _x1 = max(_x - _r, 0)
             _y1 = max(_y - _r, 0)
@@ -293,7 +280,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                 f"EdgeDrawing: Color score is below the threshold.\n"
                 f"  score={color_score:.3f} < threshold={thresh:.3f}  "
                 f"matched={_matched}/{_total_px:.0f} ({_matched / _total_px * 100:.1f}%)\n"
-                f"  center=({refined_center[0]:.1f},{refined_center[1]:.1f}) "
+                f"  center=({center[0]:.1f},{center[1]:.1f}) "
                 f"radius={radius:.1f}\n"
                 f"  contour: area={area:.1f} peri={peri:.1f} "
                 f"circularity={circularity:.4f} axis_ratio={axis_ratio:.3f} "
@@ -302,7 +289,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
             return None
 
         return {
-            "center": refined_center,
+            "center": center,
             "radius": radius,
             "area": area,
             "circularity": circularity,
