@@ -46,6 +46,10 @@ class LinuxCamera:
         self._actual_width = width
         self._actual_height = height
 
+        self._reconnect_threshold = 60
+        self._consecutive_failures = 0
+        self._reconnect_attempt = 0
+
     @property
     def camera_id(self) -> str:
         return self._camera_id
@@ -188,6 +192,17 @@ class LinuxCamera:
         if not self._cap.isOpened():
             raise RuntimeError(f"Camera {self._camera_id}: opened but not accessible")
 
+        self._configure_capture()
+
+        self._running = True
+        self._capture_thread = threading.Thread(
+            target=self._capture_loop,
+            daemon=True,
+            name=f"cam-capture-{self._camera_id}",
+        )
+        self._capture_thread.start()
+
+    def _configure_capture(self) -> None:
         if not self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG')):
             log_print(f"[DEBUG] [Camera:{self._camera_id}] failed to set FOURCC=MJPG")
 
@@ -216,19 +231,18 @@ class LinuxCamera:
                 f"got {self._actual_fps:.1f}"
             )
 
-        self._running = True
-        self._capture_thread = threading.Thread(
-            target=self._capture_loop,
-            daemon=True,
-            name=f"cam-capture-{self._camera_id}",
-        )
-        self._capture_thread.start()
-
     def _capture_loop(self) -> None:
         self._bind_capture_cores()
         while self._running:
+            if self._cap is None:
+                time.sleep(0.01)
+                continue
+
             ret, frame = self._cap.read()
             if ret:
+                self._consecutive_failures = 0
+                self._reconnect_attempt = 0
+                self._last_ok_time = time.time()
                 try:
                     self._frame_queue.put_nowait(frame)
                 except queue.Full:
@@ -238,7 +252,46 @@ class LinuxCamera:
                     except queue.Empty:
                         pass
             else:
-                log_print(f"[ERROR] [Camera:{self._camera_id}] read failed")
+                self._consecutive_failures += 1
+                self._cap_read_error()
+
+    def _cap_read_error(self) -> None:
+        opened = self._cap.isOpened() if self._cap is not None else False
+        gap = time.time() - self._last_ok_time if self._last_ok_time > 0 else -1.0
+        diag = f"opened={opened} gap={gap:.1f}s"
+        if isinstance(self._source, (str, Path)):
+            dev_exists = Path(str(self._source)).exists()
+            diag += f" dev={dev_exists}"
+
+        if self._consecutive_failures == 1:
+            log_print(f"[ERROR] [Camera:{self._camera_id}] read failed (consecutive=1, {diag})")
+        elif self._consecutive_failures % 30 == 0:
+            log_print(f"[ERROR] [Camera:{self._camera_id}] read failed ({self._consecutive_failures}, {diag})")
+
+        if self._consecutive_failures >= self._reconnect_threshold:
+            wait = min(0.5 * (2 ** self._reconnect_attempt), 5.0)
+            log_print(f"[WARN] [Camera:{self._camera_id}] reconnecting (attempt {self._reconnect_attempt + 1}, wait={wait:.1f}s)")
+            time.sleep(wait)
+
+            if self._cap is not None:
+                self._cap.release()
+                self._cap = None
+
+            try:
+                new_cap = self._open_once()
+                if new_cap.isOpened():
+                    self._cap = new_cap
+                    self._configure_capture()
+                    self._consecutive_failures = 0
+                    self._reconnect_attempt = 0
+                    gap = time.time() - self._last_ok_time if self._last_ok_time > 0 else -1.0
+                    log_print(f"[INFO] [Camera:{self._camera_id}] reconnected successfully (offline {gap:.1f}s)")
+                else:
+                    self._reconnect_attempt += 1
+                    log_print(f"[WARN] [Camera:{self._camera_id}] reconnect failed (device not opened)")
+            except Exception as e:
+                self._reconnect_attempt += 1
+                log_print(f"[ERROR] [Camera:{self._camera_id}] reconnect failed: {type(e).__name__}: {e}")
 
     def _bind_capture_cores(self) -> None:
         from utils.cpu_affinity import bind_current_thread
