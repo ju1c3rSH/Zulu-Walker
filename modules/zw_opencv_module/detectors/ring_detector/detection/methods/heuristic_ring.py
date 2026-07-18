@@ -75,28 +75,39 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         edges = self._build_edge_image(small)
 
         self._alt_img = self._build_alt_processed(small)
+        self.detector._last_alt_img = self._alt_img
 
         self.detector._last_mask = color_mask
         self.detector._last_edge_preview = edges
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        self.detector._last_morphed = cv2.morphologyEx(
+            color_mask, cv2.MORPH_CLOSE, kernel_morph, iterations=2)
 
         mask_px = cv2.countNonZero(color_mask)
         if mask_px < 5:
             self._info(f"[HeuristicRing] target={target_color.name} color_mask={mask_px}px (too sparse)")
             return self._fallback_predict(ts, target_color)
 
-        result = self._try_global(edges, color_mask, ts, target_color, scale)
-        if result is not None:
-            return result
-
-        result = self._try_alt_hough(color_mask, ts, target_color, scale)
-        if result is not None:
-            return result
-
-        result = self._try_color_blob(color_mask, ts, target_color, scale, small_hw)
-        if result is not None:
-            return result
-
-        return self._fallback_predict(ts, target_color)
+        fs = self.detector.force_stage
+        if fs == 0 or fs == 1:
+            result = self._try_global(edges, color_mask, ts, target_color, scale)
+            if result is not None and fs == 1:
+                return result
+        else:
+            result = None
+        if result is None:
+            if fs == 0 or fs == 2:
+                result = self._try_alt_hough(color_mask, ts, target_color, scale)
+                if result is not None and fs == 2:
+                    return result
+        if result is None:
+            if fs == 0 or fs == 3:
+                result = self._try_color_blob(color_mask, ts, target_color, scale, small_hw)
+                if result is not None and fs == 3:
+                    return result
+        if result is None and (fs == 0 or fs == 4):
+            result = self._fallback_predict(ts, target_color)
+        return result
 
     def _build_edge_image(self, small: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
@@ -220,7 +231,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         best = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(best)
-        if area < self.COLOR_BLOB_MIN_AREA:
+        if area < self.detector.color_blob_min_area:
             return None
 
         M = cv2.moments(best)
@@ -386,7 +397,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         circles = cv2.HoughCircles(
             roi, cv2.HOUGH_GRADIENT_ALT, dp=self.HOUGH_ALT_DP,
-            minDist=self.HOUGH_ALT_MIN_RADIUS, param1=self.HOUGH_ALT_PARAM1,
+            minDist=self.HOUGH_ALT_MIN_DIST, param1=self.HOUGH_ALT_PARAM1,
             param2=self.HOUGH_ALT_PARAM2,
             minRadius=4, maxRadius=int(max_r),
         )
