@@ -35,6 +35,7 @@ RING_METHOD_PARAM_DEFS: Dict[str, List[ParamDef]] = {
         ParamDef("edge_morph_kernel",     "ED Close K",         5,    1,   15,   2,  odd=True),
         ParamDef("edge_morph_iterations", "ED Close Iter",      2,    1,    5,   1),
         ParamDef("ring_gap_px",           "Ring Gap px",       10,    3,   60,   1),
+        ParamDef("color_blob_min_area",  "Blob Min Area",     80,   10,  500,  10),
     ],
 }
 
