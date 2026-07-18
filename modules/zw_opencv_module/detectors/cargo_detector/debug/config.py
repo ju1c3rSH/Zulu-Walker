@@ -46,6 +46,7 @@ CARGO_METHOD_PARAM_DEFS: Dict[str, List[ParamDef]] = {
         ParamDef("score_weight_color",      "Score Color",       50,   10,  100,   5,  scale=0.01),
         ParamDef("score_weight_circularity","Score Circ",        30,   10,  100,   5,  scale=0.01),
         ParamDef("score_weight_area",       "Score Area",        20,   10,  100,   5,  scale=0.01),
+        ParamDef("color_blob_min_area",     "Blob Min Area",   2000,  100,10000, 100),
     ],
 }
 

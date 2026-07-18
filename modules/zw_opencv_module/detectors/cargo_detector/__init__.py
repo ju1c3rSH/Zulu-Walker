@@ -139,6 +139,11 @@ class CargoDetector:
         self._last_mask = None
         self._last_morphed = None
         self._last_edge_preview = None
+        self._last_alt_img = None
+        self.force_stage = 0
+        self.color_blob_min_area = 2000
+
+        self._last_cargo_meta: Dict[Color, dict] = {}
 
         # 按颜色隔离的跟踪状态
         self._tracking: Dict[Color, _TrackingState] = {}
