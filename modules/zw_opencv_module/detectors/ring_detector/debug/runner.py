@@ -84,6 +84,9 @@ class RingDebugRunner:
         self.detector._update_ed_params()
 
     def _on_param_changed(self, name: str, raw_value: int):
+        if name == "force_stage":
+            self.detector.force_stage = raw_value
+            return
         for p in self._get_active_defs():
             if p.name == name:
                 actual = raw_value * p.scale
@@ -130,6 +133,7 @@ class RingDebugRunner:
 
         self._apply_params(all_params)
         self.window.setup()
+        self.detector.force_stage = 0
 
     def _get_active_defs(self):
         method_defs = RING_METHOD_PARAM_DEFS.get(self._current_method_key, [])
@@ -150,7 +154,9 @@ class RingDebugRunner:
 
             result = self._process_frame(frame)
             intermediates = self._collect_intermediates()
-            self.window.update(frame=frame, result=result, intermediates=intermediates)
+            self.window.update(frame=frame, result=result,
+                               intermediates=intermediates,
+                               ring_data=self.detector._last_ring_meta.copy())
             self.window.refresh()
 
             if self._save_pending and time.time() - self._last_save_time > 0.5:
@@ -172,6 +178,12 @@ class RingDebugRunner:
             idx += 1
         if self.detector._last_mask is not None:
             steps[idx] = self.detector._last_mask
+            idx += 1
+        if self.detector._last_morphed is not None:
+            steps[idx] = self.detector._last_morphed
+            idx += 1
+        if self.detector._last_alt_img is not None:
+            steps[idx] = self.detector._last_alt_img
             idx += 1
         return steps
 

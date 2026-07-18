@@ -102,6 +102,9 @@ class RingDetector:
         self._last_mask = None
         self._last_morphed = None
         self._last_edge_preview = None
+        self._last_alt_img = None
+        self.force_stage = 0
+        self.color_blob_min_area = 80
 
         self._tracking: Dict[Color, _TrackingState] = {}
         self._active_tracking: Optional[_TrackingState] = None
@@ -227,6 +230,7 @@ class RingDetector:
             "ed_nfa_validation": self.ed_nfa_validation,
             "edge_morph_kernel": self.edge_morph_kernel,
             "edge_morph_iterations": self.edge_morph_iterations,
+            "color_blob_min_area": self.color_blob_min_area,
         }
 
     def update_params(self, params: dict):
@@ -234,7 +238,7 @@ class RingDetector:
             "roi_size", "max_roi_miss", "min_area",
             "smooth_window", "blur_kernel", "ed_min_path_length",
             "ed_gradient_threshold", "edge_morph_kernel", "edge_morph_iterations",
-            "max_lost_frames", "ring_gap_px",
+            "max_lost_frames", "ring_gap_px", "color_blob_min_area",
         )
         for key in int_keys:
             if key in params:
