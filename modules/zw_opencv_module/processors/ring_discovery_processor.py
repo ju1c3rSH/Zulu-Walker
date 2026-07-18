@@ -157,6 +157,12 @@ class RingDiscoveryProcessor(Processor):
                         (text_x, int(cy) + 22 + line_h),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
 
+        method = meta.get('method', '')
+        if method:
+            cv2.putText(frame, f"Method: {method}",
+                        (text_x, int(cy) + 22 + line_h * 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1)
+
     @staticmethod
     def _compute_ring_hsv(frame: np.ndarray, center, outer_r):
         if outer_r <= 0:
