@@ -33,10 +33,10 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
     AXIS_RATIO_MAX = 2.0
     RING_GAP_PX_DEFAULT = 10
-    RING_BAND_COLOR_THRESHOLD = 0.03
+    RING_BAND_NOISE_FLOOR = 0.005
+    MOMENTS_MIN_DENSITY = 0.10
     RING_BAND_WIDTH = 8
     INNER_RADIUS_RATIO = 0.55
-    MAX_SHIFT_RATIO = 0.5
     HOUGH_DP = 2.0
     HOUGH_PARAM2 = 8
     HOUGH_MIN_DIST = 8
@@ -85,6 +85,9 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         if not getattr(self.detector, "force_global", False):
             if ts.last_center is not None:
+                result = self._try_global(edges, color_mask, ts, target_color, scale)
+                if result is not None:
+                    return result
                 result = self._try_alt_hough(color_mask, ts, target_color, scale)
                 if result is not None:
                     return result
@@ -190,23 +193,21 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             band_width=self.RING_BAND_WIDTH + 2,
         )
 
-        if max(density_outer, density_inner) > self.RING_BAND_COLOR_THRESHOLD:
-            # refine center using color-mask moments (thin ring band)
-            ref_band = max(int(r_scaled * 0.3), self.RING_BAND_WIDTH)
-            if r_scaled + ref_band > min(roi_h, roi_w) // 2:
-                return None  # ring too large for ROI — fall through to full detection
-            annulus = np.zeros_like(roi_mask)
-            cv2.circle(annulus, (roi_w // 2, roi_h // 2), int(r_scaled + ref_band), 255, -1)
-            cv2.circle(annulus, (roi_w // 2, roi_h // 2),
-                       max(int(r_scaled * self.INNER_RADIUS_RATIO - ref_band), 1), 0, -1)
-            intersect = cv2.bitwise_and(roi_mask, annulus)
-            M = cv2.moments(intersect)
-            if M["m00"] > 0:
-                new_cx = M["m10"] / M["m00"]
-                new_cy = M["m01"] / M["m00"]
-                if np.hypot(new_cx - roi_w // 2, new_cy - roi_h // 2) <= r_scaled * self.MAX_SHIFT_RATIO:
-                    cx_roi = int(new_cx)
-                    cy_roi = int(new_cy)
+        if max(density_outer, density_inner) > self.RING_BAND_NOISE_FLOOR:
+            best_density = max(density_outer, density_inner)
+            if best_density >= self.MOMENTS_MIN_DENSITY:
+                ref_band = max(int(r_scaled * 0.3), self.RING_BAND_WIDTH)
+                if r_scaled + ref_band > min(roi_h, roi_w) // 2:
+                    return None
+                annulus = np.zeros_like(roi_mask)
+                cv2.circle(annulus, (roi_w // 2, roi_h // 2), int(r_scaled + ref_band), 255, -1)
+                cv2.circle(annulus, (roi_w // 2, roi_h // 2),
+                           max(int(r_scaled * self.INNER_RADIUS_RATIO - ref_band), 1), 0, -1)
+                intersect = cv2.bitwise_and(roi_mask, annulus)
+                M = cv2.moments(intersect)
+                if M["m00"] > 0:
+                    cx_roi = int(M["m10"] / M["m00"])
+                    cy_roi = int(M["m01"] / M["m00"])
             center = ((cx_roi + x1) / scale, (cy_roi + y1) / scale)
             ts.roi_miss_count = 0
             ts._ring_outer_radius = r
@@ -270,7 +271,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                 band_width=self.RING_BAND_WIDTH,
             )
             best_density = max(density_outer, density_inner)
-            if best_density < self.RING_BAND_COLOR_THRESHOLD:
+            if best_density <= self.RING_BAND_NOISE_FLOOR:
                 continue
 
             score = best_density
@@ -315,6 +316,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         best_center, best_score, best_outer_r = None, 0, 0
         best_axes, best_angle, best_area = None, 0.0, 0.0
+        best_density_value = 0.0
         gap_px = getattr(self.detector, "ring_gap_px", self.RING_GAP_PX_DEFAULT)
 
         for cnt in contours:
@@ -350,7 +352,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                 band_width=self.RING_BAND_WIDTH,
             )
             best_density = max(density_outer, density_inner)
-            if best_density < self.RING_BAND_COLOR_THRESHOLD:
+            if best_density <= self.RING_BAND_NOISE_FLOOR:
                 continue
 
             circ_score = 1.0 / max(axis_ratio, 1.0)
@@ -360,6 +362,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                 best_center = (ecx, ecy)
                 best_outer_r = outer_r
                 best_area = area
+                best_density_value = best_density
                 if base_conf >= 60:
                     best_axes = (ea, eb)
                     best_angle = angle
@@ -381,29 +384,27 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         ecx, ecy = best_center
         outer_r = best_outer_r
 
-        ref_band = max(int(outer_r * 0.3), self.RING_BAND_WIDTH)
-        cm_h, cm_w = color_mask.shape
-        ref_outer_r = max(outer_r, min(cm_h, cm_w) * 0.08)
-        if ref_outer_r + ref_band <= min(cm_h, cm_w) // 2:
-            annulus = np.zeros_like(color_mask)
-            for _ in range(3):
-                annulus.fill(0)
-                cv2.circle(annulus, (int(ecx), int(ecy)), int(ref_outer_r + ref_band), 255, -1)
-                cv2.circle(annulus, (int(ecx), int(ecy)),
-                           max(int(ref_outer_r * self.INNER_RADIUS_RATIO - ref_band), 1), 0, -1)
-                intersect = cv2.bitwise_and(color_mask, annulus)
-                M = cv2.moments(intersect)
-                if M["m00"] == 0:
-                    break
-                new_ecx = M["m10"] / M["m00"]
-                new_ecy = M["m01"] / M["m00"]
-                shift = np.hypot(new_ecx - ecx, new_ecy - ecy)
-                if shift > outer_r * self.MAX_SHIFT_RATIO:
-                    break
-                if abs(new_ecx - ecx) < 0.5 and abs(new_ecy - ecy) < 0.5:
+        if best_density_value >= self.MOMENTS_MIN_DENSITY:
+            ref_band = max(int(outer_r * 0.3), self.RING_BAND_WIDTH)
+            cm_h, cm_w = color_mask.shape
+            ref_outer_r = max(outer_r, min(cm_h, cm_w) * 0.08)
+            if ref_outer_r + ref_band <= min(cm_h, cm_w) // 2:
+                annulus = np.zeros_like(color_mask)
+                for _ in range(3):
+                    annulus.fill(0)
+                    cv2.circle(annulus, (int(ecx), int(ecy)), int(ref_outer_r + ref_band), 255, -1)
+                    cv2.circle(annulus, (int(ecx), int(ecy)),
+                               max(int(ref_outer_r * self.INNER_RADIUS_RATIO - ref_band), 1), 0, -1)
+                    intersect = cv2.bitwise_and(color_mask, annulus)
+                    M = cv2.moments(intersect)
+                    if M["m00"] == 0:
+                        break
+                    new_ecx = M["m10"] / M["m00"]
+                    new_ecy = M["m01"] / M["m00"]
+                    if abs(new_ecx - ecx) < 0.5 and abs(new_ecy - ecy) < 0.5:
+                        ecx, ecy = new_ecx, new_ecy
+                        break
                     ecx, ecy = new_ecx, new_ecy
-                    break
-                ecx, ecy = new_ecx, new_ecy
 
         hough_rings = self._verify_concentric(edges, (ecx, ecy), outer_r)
         conf = min(60 + hough_rings * 20, 100)
