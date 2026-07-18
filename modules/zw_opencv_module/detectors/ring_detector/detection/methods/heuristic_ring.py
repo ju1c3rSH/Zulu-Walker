@@ -35,6 +35,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     RING_GAP_PX_DEFAULT = 10
     RING_BAND_NOISE_FLOOR = 0.005
     MOMENTS_MIN_DENSITY = 0.10
+    COLOR_BLOB_MIN_AREA = 80
     RING_BAND_WIDTH = 8
     INNER_RADIUS_RATIO = 0.55
     HOUGH_DP = 2.0
@@ -88,6 +89,10 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             return result
 
         result = self._try_alt_hough(color_mask, ts, target_color, scale)
+        if result is not None:
+            return result
+
+        result = self._try_color_blob(color_mask, ts, target_color, scale, small_hw)
         if result is not None:
             return result
 
@@ -206,6 +211,29 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         self._log_detection("alt_hough", target_color, center, outer_r_orig, conf)
         return self._finalize(center, conf, ts, target_color, scale)
+
+    def _try_color_blob(self, color_mask, ts, target_color, scale, small_hw):
+        contours, _ = cv2.findContours(
+            color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        best = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(best)
+        if area < self.COLOR_BLOB_MIN_AREA:
+            return None
+
+        M = cv2.moments(best)
+        if M["m00"] == 0:
+            return None
+        cx = M["m10"] / M["m00"]
+        cy = M["m01"] / M["m00"]
+        center = (cx / scale, cy / scale)
+
+        self._store_ring_meta(target_color, center, 0, area, None, 0.0, method="color_blob")
+        self._info(f"[HeuristicRing] color_blob: target={target_color.name} "
+                   f"center=({center[0]:.0f},{center[1]:.0f}) area={area:.0f}")
+        return create_ring_target(center, target_color, 30.0)
 
     # ================================================================
     #  core: contours from edge image + color verification
