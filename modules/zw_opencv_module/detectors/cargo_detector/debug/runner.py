@@ -14,7 +14,7 @@ from .window import CargoDebugWindow
 _METHOD_KEY_MAP = {
     DetectMethod.FAST_CIRCLE: "FAST_CIRCLE",
     DetectMethod.EDGE_DRAWING_CIRCLE: "EDGE_DRAWING_CIRCLE",
-    DetectMethod.HEURISTIC_EDGE: "EDGE_DRAWING_CIRCLE",
+    DetectMethod.HEURISTIC_EDGE: "HEURISTIC_EDGE",
 }
 
 _COLORS = [Color.RED, Color.GREEN, Color.BLUE]
@@ -46,7 +46,8 @@ class CargoDebugRunner:
     def _load_config(self):
         data = self.config.load()
         method_idx = data.get("_method_index", 0)
-        new_method_key = ["FAST_CIRCLE", "EDGE_DRAWING_CIRCLE", "EDGE_DRAWING_CIRCLE"][method_idx]
+        method_keys = list(_METHOD_KEY_MAP.values())
+        new_method_key = method_keys[method_idx] if 0 <= method_idx < len(method_keys) else "FAST_CIRCLE"
 
         if new_method_key != self._current_method_key:
             self._switch_to_method(new_method_key)
@@ -198,12 +199,86 @@ class CargoDebugRunner:
                     Color.BLUE: (255, 0, 0),
                 }[color]
                 cv2.circle(display, (cx, cy), 6, color_bgr, 2)
+                cv2.line(display, (cx - 10, cy), (cx + 10, cy), color_bgr, 1)
+                cv2.line(display, (cx, cy - 10), (cx, cy + 10), color_bgr, 1)
+                conf = item.confidence
+                _STAGE_LABEL = {100: '(E)', 60: '(B)', 40: '(H)'}
+                stage_tag = _STAGE_LABEL.get(int(conf), f'(?{conf:.0f})')
                 cv2.putText(
-                    display, f"{color.name} ({cx},{cy})",
-                    (cx + 10, cy - 10),
+                    display, f"{color.name}{stage_tag} ({cx:.0f},{cy:.0f})",
+                    (cx + 12, cy - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, color_bgr, 1,
                 )
+                self._draw_cargo_meta_overlay(display, color, (cx, cy), color_bgr)
         return display
+
+    def _draw_cargo_meta_overlay(self, display, color, coordinate, color_bgr):
+        meta = self.detector._last_cargo_meta.get(color)
+        if meta is None:
+            return
+
+        cx, cy = coordinate
+        outer_r = meta.get('outer_radius', 0) or 0
+
+        if outer_r > 0:
+            cv2.circle(display, (int(cx), int(cy)),
+                       int(outer_r), color_bgr, 2)
+
+        hsv_mean = self._compute_cargo_hsv(display, (cx, cy), outer_r)
+        text_x = int(cx) + 10
+        line_h = 18
+
+        if hsv_mean is not None:
+            cv2.putText(display,
+                        f"H:{hsv_mean[0]:.0f} S:{hsv_mean[1]:.0f} V:{hsv_mean[2]:.0f}",
+                        (text_x, int(cy) + 22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+
+        area = meta.get('area') or 0
+        if area > 0:
+            cv2.putText(display, f"Area: {area:.0f}",
+                        (text_x, int(cy) + 22 + line_h),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+
+    @staticmethod
+    def _compute_cargo_hsv(frame, center, outer_r):
+        if outer_r <= 0:
+            return None
+        cx, cy = int(center[0]), int(center[1])
+        r = int(outer_r)
+        pad = 4
+        x1 = max(0, cx - r - pad)
+        y1 = max(0, cy - r - pad)
+        x2 = min(frame.shape[1], cx + r + pad)
+        y2 = min(frame.shape[0], cy + r + pad)
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        roi = frame[y1:y2, x1:x2]
+        roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        local_cx = cx - x1
+        local_cy = cy - y1
+        band_w = max(4, r // 6)
+        r_outer = min(int(r + band_w), min(roi.shape[0], roi.shape[1]) // 2 - 1)
+        r_inner = max(int(r - band_w), 1)
+        if r_inner >= r_outer:
+            return None
+
+        annulus = np.zeros(roi.shape[:2], dtype=np.uint8)
+        cv2.circle(annulus, (local_cx, local_cy), r_outer, 255, -1)
+        cv2.circle(annulus, (local_cx, local_cy), r_inner, 0, -1)
+
+        mask = annulus > 0
+        if not mask.any():
+            return None
+        hsv_values = roi_hsv[mask]
+        if len(hsv_values) == 0:
+            return None
+        h_mean = float(np.mean(hsv_values[:, 0]))
+        s_mean = float(np.mean(hsv_values[:, 1]))
+        v_mean = float(np.mean(hsv_values[:, 2]))
+        return (h_mean, s_mean, v_mean)
 
     def _cleanup(self):
         self.window.close()
