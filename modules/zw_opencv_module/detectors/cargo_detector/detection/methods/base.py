@@ -16,11 +16,13 @@ class BaseDetectionMethod(ABC):
         pass
 
     def _store_cargo_meta(self, target_color: Color,
-                          center: Tuple[float, float], radius: float):
+                          center: Tuple[float, float], radius: float,
+                          confidence: float = 100.0):
         area = np.pi * radius * radius
         if hasattr(self.detector, '_last_cargo_meta'):
             self.detector._last_cargo_meta[target_color] = {
                 'center': center,
                 'outer_radius': radius,
                 'area': area,
+                'confidence': confidence,
             }
