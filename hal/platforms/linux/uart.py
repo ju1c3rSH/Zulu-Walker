@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
+import select
 import threading
-import time
 from typing import Callable, Optional
 
 import serial
@@ -93,14 +93,20 @@ class LinuxUart:
         bind_current_thread("uart_receiver")
 
         while self._running and self.is_connected:
-            data = self.receive_all()
-            if data and self._receiver_callback:
-                try:
-                    self._receiver_callback(data)
-                except Exception as e:
-                    logger.error("UART receiver callback error: %s", e)
-            else:
-                time.sleep(0.001)
+            try:
+                r, _, _ = select.select([self._serial], [], [], 0.1)
+                if not r:
+                    continue
+                data = self.receive_all()
+                if data and self._receiver_callback:
+                    try:
+                        self._receiver_callback(data)
+                    except Exception as e:
+                        logger.error("UART receiver callback error: %s", e)
+            except (select.error, OSError, ValueError) as e:
+                if self._running:
+                    logger.error("UART select error: %s", e)
+                break
 
     def stop_receiver(self) -> None:
         self._running = False
