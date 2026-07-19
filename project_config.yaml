@@ -24,10 +24,10 @@ cameras:
 cpu_affinity:
   enabled: true
   vision_processing: [4, 5, 6, 7]
-  camera_capture: [2]
-  main_loop: [1]
-  heartbeat: [3]
-  uart_receiver: [3]
+  camera_capture: [0]
+  main_loop: [1, 2]
+  heartbeat: [1]
+  uart_receiver: [1]
   debug_console: [1]
   opencv_threads: 4
 
