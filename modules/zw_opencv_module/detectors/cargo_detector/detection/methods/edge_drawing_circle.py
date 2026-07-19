@@ -29,11 +29,11 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
                 return result
         else:
             result = None
-        if result is None and (fs == 0 or fs == 2 or fs == 3):
+        if result is None and (fs == 0 or 2 <= fs <= 4):
             result = self._try_global(small, hsv, ts, target_color, scale)
-            if result is not None and (fs == 2 or fs == 3):
+            if result is not None and (2 <= fs <= 4):
                 return result
-        if result is None and (fs == 0 or fs == 4):
+        if result is None and (fs == 0 or fs == 5):
             result = self._fallback_predict(ts, target_color, scale)
         return result
 
@@ -383,7 +383,8 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         ts._radius_history.append(radius)
 
         final_center = smoothed if smoothed is not None else center
-        self._store_cargo_meta(target_color, final_center, radius)
+        self._store_cargo_meta(target_color, final_center, radius,
+                               confidence=confidence)
         return self._build_cargo_item(final_center, target_color, radius,
                                       confidence=confidence)
 

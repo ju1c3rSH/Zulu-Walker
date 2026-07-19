@@ -40,11 +40,14 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
                        target_color: Color
                        ) -> Tuple[Optional[Tuple[float, float]], Optional[float], Optional[float]]:
         fs = self.detector.force_stage if hasattr(self.detector, 'force_stage') else 0
+
         if fs == 3:
             return self._try_color_blob_from_hsv(hsv, target_color)
 
         result = self._run_edge_pipeline(bgr, hsv, target_color)
         if result is None:
+            if fs == 2 or fs == 4:
+                return None, None, None
             return self._try_color_blob_from_hsv(hsv, target_color)
 
         contours, color_mask = result
@@ -58,12 +61,20 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
 
         if candidates:
             best = self._select_best_candidate(candidates)
-            return best["center"], best["radius"], self.STAGE1_CONFIDENCE
+            if fs == 0 or fs == 2:
+                return best["center"], best["radius"], self.STAGE1_CONFIDENCE
+
+        if fs == 2:
+            return None, None, None
 
         # === Stage 2: color blob centroid ===
         blob_result = self._try_color_blob(color_mask)
         if blob_result is not None:
-            return blob_result[0], blob_result[1], self.STAGE2_CONFIDENCE
+            if fs == 0 or fs == 3:
+                return blob_result[0], blob_result[1], self.STAGE2_CONFIDENCE
+
+        if fs == 3:
+            return None, None, None
 
         # === Stage 3: heuristic moments from edge contours ===
         stage3_candidates = []
@@ -74,7 +85,8 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
 
         if stage3_candidates:
             best = max(stage3_candidates, key=lambda c: c["area"])
-            return best["center"], best["radius"], self.STAGE3_CONFIDENCE
+            if fs == 0 or fs == 4:
+                return best["center"], best["radius"], self.STAGE3_CONFIDENCE
 
         return None, None, None
 
