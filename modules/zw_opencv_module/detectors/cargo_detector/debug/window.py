@@ -7,7 +7,7 @@ from ..._shared.base_debug_window import BaseDebugWindow
 
 
 class CargoDebugWindow(BaseDebugWindow):
-    _STAGE_NAMES = ["Auto", "ROI", "Edge", "Blob", "Fallback"]
+    _STAGE_NAMES = ["Auto", "ROI", "fitEllipse", "Blob", "Heuristic", "Fallback"]
     _METHOD_NAMES = ["FAST_CIRCLE", "EDGE_DRAWING_CIRCLE", "HEURISTIC_EDGE"]
     _PREVIEW_LABELS = {
         0: "Original",
@@ -26,7 +26,7 @@ class CargoDebugWindow(BaseDebugWindow):
     def setup(self):
         super().setup()
         cv2.createTrackbar(
-            "Stage", self.title, 0, 4,
+            "Stage", self.title, 0, 5,
             lambda v: self._set_stage(v),
         )
         cv2.createTrackbar(
@@ -64,6 +64,7 @@ class CargoDebugWindow(BaseDebugWindow):
 
     def _build_circle_preview(self) -> np.ndarray:
         preview = self._frame.copy()
+        _STAGE_MAP = {100: 'fitEllipse', 60: 'Blob', 40: 'Heuristic'}
         for meta in self._cargo_data.values():
             area = meta.get('area', 0) or 0
             center = meta.get('center')
@@ -76,9 +77,19 @@ class CargoDebugWindow(BaseDebugWindow):
             cv2.circle(overlay, (cx, cy), r, (0, 255, 255), -1)
             cv2.addWeighted(overlay, 0.3, preview, 0.7, 0, dst=preview)
             cv2.circle(preview, (cx, cy), r, (0, 200, 200), 2)
+
+            cv2.line(preview, (cx - 8, cy), (cx + 8, cy), (0, 0, 255), 1)
+            cv2.line(preview, (cx, cy - 8), (cx, cy + 8), (0, 0, 255), 1)
+            cv2.circle(preview, (cx, cy), 3, (0, 0, 255), -1)
+
+            conf = meta.get('confidence', 0)
+            stage_label = _STAGE_MAP.get(conf, f'?({conf})')
+            cv2.putText(preview, f"{stage_label} ({cx},{cy})",
+                        (cx + 10, cy - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
             cv2.putText(preview, f"Area: {area:.0f}",
-                        (cx - 40, cy - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                        (cx - 40, cy + 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
         self._draw_preview_label(preview)
         return preview
 
@@ -107,8 +118,20 @@ class CargoDebugWindow(BaseDebugWindow):
 
         sv_stage = self._stage_value
         if 0 <= sv_stage < len(self._STAGE_NAMES):
-            stage_text = f"Stage: {self._STAGE_NAMES[sv_stage]}"
+            stage_text = f"Force: {self._STAGE_NAMES[sv_stage]}"
             cv2.putText(frame, stage_text,
                         (frame.shape[1] - 160, 62),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                        (200, 255, 100), 1)
+                        (0, 255, 255), 1)
+
+        _STAGE_MAP = {100: 'fitEllipse', 60: 'Blob', 40: 'Heuristic'}
+        for color, meta in self._cargo_data.items():
+            conf = meta.get('confidence', 0)
+            if conf <= 0:
+                continue
+            stage_label = _STAGE_MAP.get(conf, f'?({conf})')
+            text = f"{color.name}: {stage_label} ({conf:.0f}%)"
+            cv2.putText(frame, text,
+                        (frame.shape[1] - 160, 82 + 14 * list(self._cargo_data.keys()).index(color)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                        (255, 255, 0), 1)

@@ -29,11 +29,11 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
                 return result
         else:
             result = None
-        if result is None and (fs == 0 or fs == 2 or fs == 3):
+        if result is None and (fs == 0 or 2 <= fs <= 4):
             result = self._try_global(small, hsv, ts, target_color, scale)
-            if result is not None and (fs == 2 or fs == 3):
+            if result is not None and (2 <= fs <= 4):
                 return result
-        if result is None and (fs == 0 or fs == 4):
+        if result is None and (fs == 0 or fs == 5):
             result = self._fallback_predict(ts, target_color, scale)
         return result
 
@@ -264,7 +264,8 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         return ((float(cx), float(cy)), float(radius))
 
     def _finalize(self, center: Tuple[float, float], radius: float,
-                  ts, target_color: Color, scale: float) -> Optional[CargoItem]:
+                  ts, target_color: Color, scale: float,
+                  confidence: float = 100.0) -> Optional[CargoItem]:
         if scale < 1.0:
             center = (center[0] / scale, center[1] / scale)
             radius = radius / scale
@@ -278,8 +279,10 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
         ts._radius_history.append(radius)
 
         final_center = smoothed if smoothed is not None else center
-        self._store_cargo_meta(target_color, final_center, radius)
-        return self._build_cargo_item(final_center, target_color, radius)
+        self._store_cargo_meta(target_color, final_center, radius,
+                               confidence=confidence)
+        return self._build_cargo_item(final_center, target_color, radius,
+                                      confidence=confidence)
 
     def _kalman_predict(self, ts,
                         measurement: Optional[Tuple[float, float]]
@@ -314,7 +317,9 @@ class FastCircleDetectionWithColorMethod(BaseDetectionMethod):
 
     def _build_cargo_item(self, center: Tuple[float, float], target_color: Color,
                           radius: Optional[float] = None,
-                          is_predicted: bool = False) -> CargoItem:
+                          is_predicted: bool = False,
+                          confidence: float = 100.0) -> CargoItem:
         from ..target_creation import create_cargo_item
         return create_cargo_item(center, target_color, radius=radius,
-                                 is_predicted=is_predicted)
+                                 is_predicted=is_predicted,
+                                 confidence=confidence)

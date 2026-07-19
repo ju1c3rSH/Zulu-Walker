@@ -19,7 +19,7 @@ from .detection import DetectMethod
 _METHOD_TO_CONFIG_KEY = {
     DetectMethod.FAST_CIRCLE: "FAST_CIRCLE",
     DetectMethod.EDGE_DRAWING_CIRCLE: "EDGE_DRAWING_CIRCLE",
-    DetectMethod.HEURISTIC_EDGE: "EDGE_DRAWING_CIRCLE",
+    DetectMethod.HEURISTIC_EDGE: "HEURISTIC_EDGE",
 }
 
 
