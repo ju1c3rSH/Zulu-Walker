@@ -22,15 +22,15 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
 
         fs = self.detector.force_stage if hasattr(self.detector, 'force_stage') else 0
-        if fs == 0 or fs == 1:
-            result = self._try_roi(small, hsv, ts, target_color, scale)
-            if result is not None and fs == 1:
+        if fs == 0 or 2 <= fs <= 4:
+            result = self._try_global(small, hsv, ts, target_color, scale)
+            if result is not None and (2 <= fs <= 4):
                 return result
         else:
             result = None
-        if result is None and (fs == 0 or 2 <= fs <= 4):
-            result = self._try_global(small, hsv, ts, target_color, scale)
-            if result is not None and (2 <= fs <= 4):
+        if result is None and (fs == 0 or fs == 1):
+            result = self._try_roi(small, hsv, ts, target_color, scale)
+            if result is not None and fs == 1:
                 return result
         if result is None and (fs == 0 or fs == 5):
             result = self._fallback_predict(ts, target_color, scale)
@@ -57,6 +57,8 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         cx = int(ts.last_center[0] * scale)
         cy = int(ts.last_center[1] * scale)
         half = self.detector.roi_size // 2
+        if ts._radius_history:
+            half = max(half, int(max(ts._radius_history) * scale * 1.8))
         h, w = frame.shape[:2]
         x1 = max(cx - half, 0)
         y1 = max(cy - half, 0)
