@@ -699,8 +699,28 @@ def main() -> int:
     send_interval = args.interval
     running = True
     next_ui = 0.0
-    next_send = time.monotonic()
     _prev_loss = 0
+
+    stop_send = threading.Event()
+
+    def _send_loop():
+        next_send = time.monotonic()
+        while not stop_send.is_set():
+            now = time.monotonic()
+            if now >= next_send:
+                if not controller.send_heartbeat():
+                    pass
+                next_send += send_interval
+                if next_send <= now:
+                    next_send = now + send_interval
+            delta = next_send - time.monotonic() - 0.0005
+            if delta > 0:
+                time.sleep(delta)
+            else:
+                time.sleep(0.001)
+
+    send_thread = threading.Thread(target=_send_loop, daemon=True)
+    send_thread.start()
 
     def _signal_handler(signum, frame):
         nonlocal running
@@ -710,13 +730,9 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _signal_handler)
 
     try:
-        with Live(console=console, refresh_per_second=10, screen=True) as live:
+        with Live(console=console, refresh_per_second=5, screen=True) as live:
             while running:
                 now = time.monotonic()
-
-                if now >= next_send:
-                    controller.send_heartbeat()
-                    next_send = now + send_interval
 
                 if now >= next_ui:
                     stats = controller.get_stats()
@@ -732,10 +748,12 @@ def main() -> int:
                     live.update(renderable)
                     next_ui = now + 0.2
 
-                time.sleep(0.001)
+                time.sleep(0.02)
     except KeyboardInterrupt:
         pass
     finally:
+        stop_send.set()
+        send_thread.join(timeout=1)
         controller.stop()
 
     lifecycle = controller.get_stats()
