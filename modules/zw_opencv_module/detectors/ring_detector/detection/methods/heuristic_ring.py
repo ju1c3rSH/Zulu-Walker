@@ -374,7 +374,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         self._log_detection(context, target_color, center, outer_r_orig, conf)
         return self._finalize(center, conf, ts, target_color, scale)
-
+    '''
     def _verify_concentric(self, edges, center, outer_r):
         cx, cy = int(center[0]), int(center[1])
         roi_r = int(outer_r * 2.5)
@@ -409,6 +409,51 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         rings = 0
         for hcx, hcy, _hr in circles:
             if np.hypot(hcx - local_cx, hcy - local_cy) < center_dist_max:
+                rings += 1
+
+        return min(rings, 3)
+    '''
+    
+    def _verify_concentric(self, edges, center, outer_r):
+        """用 color_mask 做同心圆验证"""
+        cx, cy = int(center[0]), int(center[1])
+        
+        # 改用 color_mask 而不是 edges
+        mask = getattr(self.detector, "_last_mask", None)
+        if mask is None:
+            return 0
+        
+        roi_r = int(outer_r * 2.5)
+        x1 = max(0, cx - roi_r)
+        y1 = max(0, cy - roi_r)
+        x2 = min(mask.shape[1], cx + roi_r)
+        y2 = min(mask.shape[0], cy + roi_r)
+        if x2 <= x1 or y2 <= y1:
+            return 0
+
+        roi = mask[y1:y2, x1:x2]
+        local_cx = cx - x1
+        local_cy = cy - y1
+        max_r = min(roi.shape) // 2
+
+        # 在color_mask上找圆
+        circles = cv2.HoughCircles(
+            roi, cv2.HOUGH_GRADIENT_ALT, dp=self.HOUGH_ALT_DP,
+            minDist=self.HOUGH_ALT_MIN_DIST, param1=self.HOUGH_ALT_PARAM1,
+            param2=self.HOUGH_ALT_PARAM2,
+            minRadius=int(max(outer_r * 0.3, 4)),  # 动态最小半径
+            maxRadius=int(max_r),
+        )
+        if circles is None:
+            return 0
+
+        circles = circles[0]
+        center_dist_max = outer_r * 0.35
+        rings = 0
+        for hcx, hcy, hr in circles:
+            dist = np.hypot(hcx - local_cx, hcy - local_cy)
+            # 同时检查半径是否匹配
+            if dist < center_dist_max and abs(hr - outer_r) / outer_r < 0.3:
                 rings += 1
 
         return min(rings, 3)
