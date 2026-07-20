@@ -32,5 +32,5 @@ cpu_affinity:
   opencv_threads: 4
 
 uart_defaults:
-  port: "/dev/ttyS4"
+  port: "/dev/ttyS3"
   baudrate: 921600
