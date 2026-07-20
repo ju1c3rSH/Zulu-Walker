@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hal.interface import Uart
 from modules.zw_uart_module.protocol import (
+    SOF,
     TYPE_HEARTBEAT,
     TYPE_ARRIVED, TYPE_PICK, TYPE_SET, TYPE_CMD_FROM_MCU,
     TYPE_ACTION_DONE, TYPE_REQUEST_SYNC, TYPE_EMERGENCY_STOP,
@@ -27,8 +28,9 @@ from modules.zw_uart_module.protocol import (
     parse_heartbeat_payload,
     parse_zone_payload, parse_cmd_payload, parse_action_done_payload,
     parse_emergency_stop_payload, parse_request_sync_payload,
+    parse_frame,
 )
-from modules.zw_uart_module.uart_driver import FrameParser
+from modules.zw_uart_module.uart_driver import FrameParser, ParserState
 
 from rich.align import Align
 from rich.box import ROUNDED, HEAVY_EDGE
@@ -194,10 +196,49 @@ class LoopbackUart:
             self._echo_thread.join(timeout=1)
 
 
+class DiagnosticFrameParser(FrameParser):
+    def __init__(self):
+        super().__init__()
+        self.checksum_errors = 0
+        self.format_errors = 0
+
+    def _parse_complete_frame(self):
+        frame = parse_frame(bytes(self._buffer))
+        if frame is None:
+            self.checksum_errors += 1
+            return None
+        return frame
+
+    def _process_byte(self, byte: int):
+        if self._state == ParserState.WAITING_SOF:
+            if byte == SOF:
+                self._buffer = bytearray([SOF])
+                self._state = ParserState.GOT_SOF
+            return None
+        elif self._state == ParserState.GOT_SOF:
+            if 2 <= byte <= 253:
+                self._expected_length = byte
+                self._buffer.append(byte)
+                self._state = ParserState.GOT_LEN
+            else:
+                self.format_errors += 1
+                self.reset()
+            return None
+        elif self._state == ParserState.GOT_LEN:
+            self._buffer.append(byte)
+            expected_size = 2 + self._expected_length
+            if len(self._buffer) == expected_size:
+                frame = self._parse_complete_frame()
+                self.reset()
+                return frame
+            return None
+        return None
+
+
 class HeartbeatTestController:
     def __init__(self, uart: Uart, seq_start: int = 0):
         self._uart = uart
-        self._parser = FrameParser()
+        self._parser = DiagnosticFrameParser()
 
         self._lock = threading.RLock()
         self._running = False
@@ -214,6 +255,10 @@ class HeartbeatTestController:
 
         self._tx_log: deque[tuple[float, int]] = deque(maxlen=10000)
         self._rx_log: deque[tuple[float, int]] = deque(maxlen=10000)
+
+        self._rx_bytes_total = 0
+        self._rx_other_frames = 0
+        self._last_callback_time = 0.0
 
     @property
     def is_connected(self) -> bool:
@@ -246,8 +291,12 @@ class HeartbeatTestController:
             logging.getLogger("HeartbeatTestController").error("stop error: %s", e)
 
     def _on_data_received(self, data: bytes) -> None:
-        frames = self._parser.feed(data)
         now = time.monotonic()
+        with self._lock:
+            self._rx_bytes_total += len(data)
+            self._last_callback_time = now
+
+        frames = self._parser.feed(data)
         for frame in frames:
             if frame.frame_type == TYPE_HEARTBEAT:
                 parsed = parse_heartbeat_payload(frame.payload)
@@ -272,8 +321,8 @@ class HeartbeatTestController:
                         self._expected_rx_seq = (seq + 1) % 256
                 continue
 
-            label = _FRAME_LABEL.get(frame.frame_type, f"0x{frame.frame_type:02X}")
-            self._logger.info("[RX] %s payload=%s", label, frame.payload.hex())
+            with self._lock:
+                self._rx_other_frames += 1
 
     def send_heartbeat(self, mission_state: int = 0, visual_state: int = 0) -> bool:
         now = time.monotonic()
@@ -352,6 +401,11 @@ class HeartbeatTestController:
                 "tx_log_raw": list(self._tx_log),
                 "rx_log_raw": list(self._rx_log),
                 "uptime": self.uptime,
+                "rx_bytes_total": self._rx_bytes_total,
+                "rx_checksum_errors": self._parser.checksum_errors,
+                "rx_format_errors": self._parser.format_errors,
+                "rx_other_frames": self._rx_other_frames,
+                "last_callback_time": self._last_callback_time,
             }
 
 
@@ -444,8 +498,11 @@ def _build_flow_diagram(stats: dict) -> Panel:
     link_text.append("    ")
     link_text.append("\u25cf LINK ", _OK_STYLE if link_ok else _ERR_STYLE)
     link_text.append("ACTIVE" if link_ok else "DOWN", _OK_STYLE if link_ok else _ERR_STYLE)
+    chk = stats["rx_checksum_errors"]
+    if chk > 0:
+        link_text.append(f"  \u6821\u9a8c\u9519={chk}", _LOSS_STYLE)
     link_text.append(
-        f"  (MCU\u5fc3\u8df3\u8d85\u65f6: 300ms)",
+        f"  \u5b57\u8282={stats['rx_bytes_total']:,d}",
         _DIM_STYLE,
     )
     lines.append(link_text)
@@ -528,10 +585,58 @@ def _build_stats_table(stats: dict) -> Panel:
         Text(""),
     )
 
+    chk = stats["rx_checksum_errors"]
+    fmt = stats["rx_format_errors"]
+    oth = stats["rx_other_frames"]
+    byt = stats["rx_bytes_total"]
+    cbk = stats["last_callback_time"]
+    now_mono = time.monotonic()
+    cbk_delta = now_mono - cbk if cbk > 0 else -1.0
+
+    table.add_row(
+        Text("\u6821\u9a8c\u9519/XOR", _HEADER_STYLE),
+        Text(f"{chk:,d}", _LOSS_STYLE if chk > 0 else _RX_OK_STYLE),
+        Text(""),
+        Text(""),
+    )
+    table.add_row(
+        Text("\u683c\u5f0f\u9519/Frame", _HEADER_STYLE),
+        Text(f"{fmt:,d}", _LOSS_STYLE if fmt > 0 else _RX_OK_STYLE),
+        Text(""),
+        Text(""),
+    )
+    table.add_row(
+        Text("\u5176\u4ed6\u5e27", _HEADER_STYLE),
+        Text(f"{oth:,d}", _RX_STYLE),
+        Text(""),
+        Text(""),
+    )
+    table.add_row(
+        Text("\u63a5\u6536\u5b57\u8282", _HEADER_STYLE),
+        Text(f"{byt:,d}", _DIM_STYLE),
+        Text(""),
+        Text(""),
+    )
+    rx_health = Text()
+    if cbk_delta >= 0:
+        rx_health.append(f"{cbk_delta*1000:.0f}ms", _LOSS_STYLE if cbk_delta > 0.5 else _RX_OK_STYLE)
+        rx_health.append(" \u524d\u56de\u8c03", _DIM_STYLE)
+    else:
+        rx_health.append("\u672a\u63a5\u6536", _DIM_STYLE)
+    table.add_row(
+        Text("\u63a5\u6536\u5065\u5eb7", _HEADER_STYLE),
+        rx_health,
+        Text(""),
+        Text(""),
+    )
+
     tx_total_int = stats["tx_total"]
     rx_total_int = stats["rx_total"]
     status_text = "\u2705 \u8fd0\u884c\u4e2d"
-    if tx_total_int > 0 and rx_total_int == 0:
+    if chk > 0 or fmt > 0:
+        status_text = "\u26a0 \u7ebf\u8def\u5f02\u5e38"
+        status_style = _LOSS_STYLE
+    elif tx_total_int > 0 and rx_total_int == 0:
         status_text = "\u26a0 \u672a\u63a5\u6536"
         status_style = _WARN_STYLE
     elif stats["consecutive_loss"] > 10:
