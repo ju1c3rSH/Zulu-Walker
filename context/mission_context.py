@@ -42,7 +42,7 @@ _VISUAL_STATE_TO_INT = {
     VisualStateMachine.States.FAIL: 4,
 }
 
-_READY_THRESHOLD = 10
+_READY_THRESHOLD = 20
 # percent_error = ((cx - w/2) / max(w,h)/2) * 5000
 # threshold=250  →  偏差 ≈ 250 * max/2 / 5000 = 16 px @ 640x480 (X/Y 同尺度)
 _DISCOVERY_CENTER_THRESHOLD = 150
@@ -560,7 +560,7 @@ class MissionCoordinator:
             time.sleep(_HEARTBEAT_INTERVAL)
             self._heartbeat_seq = (self._heartbeat_seq + 1) % 256
 
-            self._send(build_heartbeat_frame(
+            self._send( (
                 self._heartbeat_seq,
                 self.mission_sm.current_state_id,
                 self._visual_state_int(),
