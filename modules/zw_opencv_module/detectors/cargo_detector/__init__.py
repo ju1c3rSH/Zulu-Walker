@@ -156,7 +156,7 @@ class CargoDetector:
                 (np.array([170, 15, 50]), np.array([180, 255, 255])),
             ],
             Color.GREEN: [(np.array([45, 20, 30]), np.array([75, 255, 255]))],
-            Color.BLUE: [(np.array([100, 15, 40]), np.array([130, 255, 255]))],
+            Color.BLUE: [(np.array([100, 60, 40]), np.array([130, 255, 255]))],
         }
 
         self._methods: Dict[DetectMethod, Any] = {}
