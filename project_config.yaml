@@ -33,4 +33,4 @@ cpu_affinity:
 
 uart_defaults:
   port: "/dev/ttyS4"
-  baudrate: 921600
+  baudrate: 115200
