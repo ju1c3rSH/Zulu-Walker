@@ -95,6 +95,7 @@ class RingDetector:
         self.force_global = False
         self._ring_log_frame = 0
         self.ring_gap_px = 10
+        self.max_outer_radius = 300
 
         self.blur_kernel = 3
         self.blur_sigma = 1.5
