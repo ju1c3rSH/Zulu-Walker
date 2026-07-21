@@ -33,7 +33,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
     AXIS_RATIO_MAX = 2.0
     RING_GAP_PX_DEFAULT = 10
-    RING_BAND_NOISE_FLOOR = 0.005
+    RING_BAND_NOISE_FLOOR = 0.03
     MOMENTS_MIN_DENSITY = 0.10
     COLOR_BLOB_MIN_AREA = 80
     RING_BAND_WIDTH = 8
@@ -363,6 +363,12 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         ox, oy = offset
         center = ((ecx + ox) / scale, (ecy + oy) / scale)
         outer_r_orig = outer_r / scale
+
+        max_r = getattr(self.detector, "max_outer_radius", 300)
+        if outer_r_orig > max_r:
+            self._info(f"[HeuristicRing] {context}: target={target_color.name} "
+                       f"outer_r={outer_r_orig:.0f} > max={max_r}, rejected")
+            return None
 
         if context == "ROI":
             ts.roi_miss_count = 0
