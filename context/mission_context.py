@@ -42,7 +42,7 @@ _VISUAL_STATE_TO_INT = {
     VisualStateMachine.States.FAIL: 4,
 }
 
-_READY_THRESHOLD = 20
+_READY_THRESHOLD = 10
 # percent_error = ((cx - w/2) / max(w,h)/2) * 5000
 # threshold=250  →  偏差 ≈ 250 * max/2 / 5000 = 16 px @ 640x480 (X/Y 同尺度)
 _DISCOVERY_CENTER_THRESHOLD = 150
@@ -51,7 +51,7 @@ _ALIGN_CENTER_THRESHOLD = 300
 _HEARTBEAT_INTERVAL = 0.1
 _HEARTBEAT_TIMEOUT = 0.3
 _DISCOVERY_TIMEOUT = 10.0
-_TRACK_TIMEOUT = 10.0
+_TRACK_TIMEOUT = 60.0
 
 
 class MissionCoordinator:
@@ -483,7 +483,7 @@ class MissionCoordinator:
             in_position = (abs(ctx.percent_error_x) <= _ALIGN_CENTER_THRESHOLD
                            and abs(ctx.percent_error_y) <= _ALIGN_CENTER_THRESHOLD)
             if self.visual_sm.is_tracking() and target_found and in_position:
-                if confidence >= 100.0:
+                if confidence >= 40.0:
                     self._ready_frames += 1
                     if self._ready_frames % 5 == 0:
                         from utils.debug_console import DebugConsole
