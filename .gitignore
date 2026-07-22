@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Agent/IDE config — NOT for version control
+AGENTS.md
+CLAUDE.md
+claude.settings.json
+
+# Runtime data
+logs/
+.vscode/c_cpp_properties.json
+.vscode/settings.json
+.vscode/launch.json
+logs/performance.log
