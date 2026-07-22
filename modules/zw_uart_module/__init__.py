@@ -4,25 +4,19 @@ from typing import Optional
 
 from framework.hal import Machine
 
-from .uart_driver import STM32UartInterface
-from .protocol import (
-    SOF,
-    TYPE_ERROR, TYPE_ARRIVED, TYPE_PICK, TYPE_SET,
-    ERROR_TYPE_X, ERROR_TYPE_Y, ERROR_TYPE_Z, ERROR_TYPE_OTHER,
-    FrameData, build_error_frame, parse_frame,
-)
+from .uart_driver import SerialUartInterface
 from .exceptions import (
-    UartError, InvalidFrameError, ChecksumError, ParameterError,
+    UartError,
 )
 
-_uart_interface: Optional[STM32UartInterface] = None
+_uart_interface: Optional[SerialUartInterface] = None
 _running: bool = False
 
 
 def init(machine: Machine, event_bus=None) -> None:
     global _uart_interface
 
-    _uart_interface = STM32UartInterface(uart=machine.uart)
+    _uart_interface = SerialUartInterface(uart=machine.uart)
     if event_bus is not None:
         _uart_interface.set_event_bus(event_bus)
 
