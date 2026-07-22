@@ -1,9 +1,3 @@
-# Project dependencies for Orange Pi 5B
-# Generated based on code analysis
-
-pyserial>=3.5
-opencv-contrib-python>=4.5
+# Zulu-Walker Framework core dependencies
 numpy>=1.21
 pyyaml>=5.4
-rich>=13.0
-pyzbar>=0.1.9
