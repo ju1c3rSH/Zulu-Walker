@@ -9,7 +9,6 @@ import yaml
 
 from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference, Display, Uart
-
 try:
     from utils.cpu_affinity import configure as configure_cpu_affinity
 except ImportError:
@@ -62,15 +61,15 @@ class Machine:
             cid = cam_cfg.get("camera_id", str(cam_cfg.get("source", "")))
             raw_source = cam_cfg["source"]
             source = raw_source
-            if platform == "linux":
-                try:
-                    from utils.camera_misc_util import CameraMiscUtil
-                    resolved = CameraMiscUtil.resolve_camera_source(raw_source)
-                    if resolved != raw_source:
-                        logger.info("Camera '%s': source %s -> %s", cid, raw_source, resolved)
-                    source = resolved
-                except ImportError:
-                    pass
+            try:
+                from utils.camera_misc_util import CameraMiscUtil
+            except ImportError:
+                CameraMiscUtil = None
+            if platform == "linux" and CameraMiscUtil is not None:
+                resolved = CameraMiscUtil.resolve_camera_source(raw_source)
+                if resolved != raw_source:
+                    logger.info("Camera '%s': source %s -> %s", cid, raw_source, resolved)
+                source = resolved
             hub.open(
                 camera_id=cid,
                 source=source,

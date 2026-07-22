@@ -6,19 +6,19 @@ from typing import Optional, Callable
 from modules.zw_opencv_module.vision_manager import VisionManager
 from utils.log_util import LoggerFactory, log_print
 
-from .event_bus import EventBus
-from .events import (
+from framework.event_bus import EventBus
+from modules.zw_uart_module.events import (
     McuCmdReceived, ArrivedEvent, ActionDoneEvent,
     HeartbeatEvent, EmergencyStopEvent, RequestSyncEvent,
-    QRResult,
 )
-from .mission_state_machine import (
+from app.events import QRResult
+from app.mission_state_machine import (
     MissionStateMachine, MissionContext,
     MissionState, MissionStateNames, ErrorCode,
     VisualState, Zone,
 )
-from .visual_state_machine import VisualStateMachine
-from utils.state_machine.bridge import StateActionBridge
+from framework.visual_state_machine import VisualStateMachine
+from framework.state_machine.bridge import StateActionBridge
 from modules.zw_uart_module.protocol import (
     build_status_from_vision_frame, build_visual_servo_data_frame,
     build_qr_result_frame, build_heartbeat_frame,

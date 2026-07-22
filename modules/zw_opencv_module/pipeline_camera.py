@@ -5,25 +5,15 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from hal.interface import AIInference, Camera
+from framework.hal.interface import AIInference, Camera
 
 from .task_manager import TaskManager, Task
 from .processors.base import VisionResult
-from .processors.circle_target_processor import CircleTargetProcessor
-from .processors.qr_processor import QRCodeProcessor
-from .processors.cargo_processor import TrackCargoProcessor
-from .processors.ring_discovery_processor import RingDiscoveryProcessor
-from .processors.ai_inference_processor import AIInferenceProcessor
+from .processors.registry import get_processor
 
 
 class PipelineCamera:
-    _PROCESSOR_REGISTRY = {
-        "CircleTargetProcessor": CircleTargetProcessor,
-        "QRCodeProcessor": QRCodeProcessor,
-        "TrackCargoProcessor": TrackCargoProcessor,
-        "RingDiscoveryProcessor": RingDiscoveryProcessor,
-        "AIInferenceProcessor": AIInferenceProcessor,
-    }
+    _PROCESSOR_REGISTRY = get_processor
 
     def __init__(
         self,
@@ -80,8 +70,9 @@ class PipelineCamera:
             task_name = cfg.get("name", "")
             task_type = cfg.get("type", "")
             task_enabled = cfg.get("enabled", True)
-            processor_cls = self._PROCESSOR_REGISTRY.get(task_type)
-            if processor_cls is None:
+            try:
+                processor_cls = get_processor(task_type)
+            except ValueError:
                 continue
             processor = processor_cls(task_name)
             if self._ai is not None and hasattr(processor, "set_ai"):
