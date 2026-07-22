@@ -95,6 +95,7 @@ class RingDetector:
         self.force_global = False
         self._ring_log_frame = 0
         self.ring_gap_px = 10
+        self.max_outer_radius = 300
 
         self.blur_kernel = 3
         self.blur_sigma = 1.5
@@ -117,7 +118,7 @@ class RingDetector:
                 (np.array([156, 60, 60]), np.array([180, 255, 255])),
             ],
             Color.GREEN: [(np.array([40, 60, 45]), np.array([80, 255, 255]))],
-            Color.BLUE: [(np.array([100, 80, 60]), np.array([130, 255, 255]))],
+            Color.BLUE: [(np.array([100, 40, 35]), np.array([140, 255, 255]))],
         }
 
         self._methods: Dict[RingDetectMethod, Any] = {}
