@@ -37,23 +37,22 @@ class TrackCargoProcessor(Processor):
         self.target_color: Optional[Color] = None
 
     def process(self, frame: np.ndarray, context: dict = None) -> VisionResult:
-        ctx_snapshot = self.get("mission_ctx")
-        if ctx_snapshot is None:
-            return VisionResult(task_name=self.name, success=False,
-                                error_message="mission_ctx not registered")
-
-        cargo_set, current_batch, target_color = ctx_snapshot
-        if target_color is None:
+        if self.target_color is None:
             return VisionResult(task_name=self.name, success=False,
                                 error_message="target_color is None")
 
-        item = self.detector.detect_cargo(frame, target_color)
+        ctx_snapshot = self.get("mission_ctx")
+        cargo_set, current_batch = None, 1
+        if ctx_snapshot is not None:
+            cargo_set, current_batch, _ = ctx_snapshot
+
+        item = self.detector.detect_cargo(frame, self.target_color)
         if item is None or item.coordinate is None or getattr(item, 'is_predicted', False):
             return VisionResult(task_name=self.name, success=False)
 
         cx, cy = item.coordinate
         if cargo_set:
-            matched = cargo_set.get_available_by_color_batch(target_color, current_batch)
+            matched = cargo_set.get_available_by_color_batch(self.target_color, current_batch)
             if matched:
                 matched.update_position((cx, cy))
 
@@ -71,7 +70,7 @@ class TrackCargoProcessor(Processor):
                 "percent_error_y": pe_y,
                 "coordinate": (cx, cy),
                 "radius": item.radius,
-                "target_color": target_color,
+                "target_color": self.target_color,
                 "is_predicted": item.is_predicted,
                 "confidence": item.confidence,
             },
