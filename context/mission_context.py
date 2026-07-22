@@ -570,8 +570,10 @@ class MissionCoordinator:
             return
 
         if not self._discovery_ready_latched:
+            confidence = data.get("confidence", 0)
             if self.visual_sm.is_tracking() and target_found \
-               and abs(pe_x) <= _DISCOVERY_CENTER_THRESHOLD and abs(pe_y) <= _DISCOVERY_CENTER_THRESHOLD:
+               and abs(pe_x) <= _DISCOVERY_CENTER_THRESHOLD and abs(pe_y) <= _DISCOVERY_CENTER_THRESHOLD \
+               and confidence >= 40.0:
                 self._discovery_ready_frames += 1
             else:
                 self._discovery_ready_frames = max(0, self._discovery_ready_frames - 1)
