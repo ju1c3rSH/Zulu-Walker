@@ -88,9 +88,19 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             self._info(f"[HeuristicRing] target={target_color.name} color_mask={mask_px}px (too sparse)")
             return self._fallback_predict(ts, target_color)
 
+        competing_masks = None
+        for c in (Color.RED, Color.GREEN, Color.BLUE):
+            if c != target_color:
+                cm = self._build_color_mask(hsv, c)
+                if cm is not None:
+                    if competing_masks is None:
+                        competing_masks = {}
+                    competing_masks[c] = cm
+
         fs = self.detector.force_stage
         if fs == 0 or fs == 1:
-            result = self._try_global(edges, color_mask, ts, target_color, scale)
+            result = self._try_global(edges, color_mask, ts, target_color, scale,
+                                      competing_masks=competing_masks)
             if result is not None and fs == 1:
                 return result
         else:
@@ -166,9 +176,11 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     #  global dispatch
     # ================================================================
 
-    def _try_global(self, edges, color_mask, ts, target_color, scale):
+    def _try_global(self, edges, color_mask, ts, target_color, scale,
+                    competing_masks=None):
         return self._detect_and_finalize(edges, color_mask, ts, target_color, scale,
-                                          offset=(0, 0), context="global")
+                                          offset=(0, 0), context="global",
+                                          competing_masks=competing_masks)
 
     def _try_alt_hough(self, color_mask, ts, target_color, scale):
         alt = getattr(self, "_alt_img", None)
@@ -251,7 +263,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     # ================================================================
 
     def _detect_and_finalize(self, edges, color_mask, ts, target_color, scale,
-                              offset, context):
+                              offset, context, competing_masks=None):
         min_area = getattr(self.detector, "min_area", 80)
 
         contours, _ = cv2.findContours(
@@ -334,6 +346,21 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         ecx, ecy = best_center
         outer_r = best_outer_r
+
+        if competing_masks and best_density_value < 0.15:
+            for comp_color, comp_mask in competing_masks.items():
+                comp_density = max(
+                    self._ring_band_color_density(
+                        (ecx, ecy), outer_r, comp_mask, band_width=self.RING_BAND_WIDTH),
+                    self._ring_band_color_density(
+                        (ecx, ecy), outer_r * self.INNER_RADIUS_RATIO, comp_mask,
+                        band_width=self.RING_BAND_WIDTH),
+                )
+                if comp_density > best_density_value * 2:
+                    self._info(f"[HeuristicRing] {context}: target={target_color.name} "
+                               f"rejected by competing {comp_color.name} "
+                               f"(density {best_density_value:.3f} vs {comp_density:.3f})")
+                    return None
 
         if best_density_value >= self.MOMENTS_MIN_DENSITY:
             ref_band = max(int(outer_r * 0.3), self.RING_BAND_WIDTH)
