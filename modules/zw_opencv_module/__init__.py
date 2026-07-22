@@ -6,7 +6,7 @@ from typing import Optional
 import cv2
 
 
-from hal import Machine
+from framework.hal import Machine
 
 from .vision_manager import VisionManager, _LegacyCameraManagerShim
 

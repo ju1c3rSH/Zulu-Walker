@@ -1,6 +1,7 @@
 import gc
 import cv2
 import numpy as np
+from .registry import register_processor
 from .base import Processor, VisionResult
 
 try:
@@ -10,6 +11,7 @@ except ImportError:
     _HAS_PYZBAR = False
 
 
+@register_processor("QRCodeProcessor")
 class QRCodeProcessor(Processor):
     """QR 码解码处理器（pyzbar 主解码 + cv2.QRCodeDetector 兜底）"""
 
