@@ -1,147 +1,48 @@
-# -*- coding: utf-8 -*-
-"""
-zw_uart_module - UART Communication Module for STM32
+from __future__ import annotations
 
-Provides binary frame-based UART communication between Orange Pi and STM32
-microcontroller. Implements state synchronization and visual error feedback.
+from typing import Optional
 
-Key Features:
-- Thread-safe state queries (zone information)
-- Binary protocol with XOR checksum
-- State machine frame parsing
-- Background receive thread
+from framework.hal import Machine
 
-Protocol:
-| SOF | Length | Type | Payload | Checksum |
-|  1  |   1    |  1   |  0~252  |    1     |
-
-Frame Types:
-- 0x01 EVENT_ERROR (TX): error_type + error_value
-- 0x02 EVENT_ARRIVED_AT_ZONE (RX): zone_id
-- 0x03 EVENT_PICK_AT_ZONE (RX): zone_id
-- 0x04 EVENT_SET_ZONE (RX): zone_id
-"""
-
-import os
-import sys
-
-# Add module directory to path for internal imports
-module_dir = os.path.dirname(__file__)
-if module_dir not in sys.path:
-    sys.path.insert(0, module_dir)
-
-from .uart_driver import STM32UartInterface
-from .protocol import (
-    SOF,
-    TYPE_ERROR, TYPE_ARRIVED, TYPE_PICK, TYPE_SET,
-    ERROR_TYPE_X, ERROR_TYPE_Y, ERROR_TYPE_Z, ERROR_TYPE_OTHER,
-    FrameData, build_error_frame, parse_frame
-)
+from .uart_driver import SerialUartInterface
 from .exceptions import (
-    UartError, InvalidFrameError, ChecksumError, ParameterError
+    UartError,
 )
 
-# Module-level instance
-_uart_interface: STM32UartInterface = None
+_uart_interface: Optional[SerialUartInterface] = None
 _running: bool = False
 
 
-def init():
-    """Module initialization (called by ModuleManager)."""
+def init(machine: Machine, event_bus=None) -> None:
     global _uart_interface
 
-    print("[zw_uart_module] Initializing...")
-
-    # Create STM32UartInterface instance
-    _uart_interface = STM32UartInterface()
-
-    print("[zw_uart_module] Initialized successfully")
+    _uart_interface = SerialUartInterface(uart=machine.uart)
+    if event_bus is not None:
+        _uart_interface.set_event_bus(event_bus)
 
 
 def start() -> bool:
-    """Module start (called by ModuleManager)."""
-    global _uart_interface, _running
-
+    global _running
     if _uart_interface is None:
-        print("[zw_uart_module] Error: Module not initialized")
         return False
-
-    print("[zw_uart_module] Starting...")
-
+    if _running:
+        return True
     if _uart_interface.start():
         _running = True
-        print("[zw_uart_module] Started successfully")
         return True
-    else:
-        print("[zw_uart_module] Failed to start")
-        return False
+    return False
 
 
 def loop():
-    """Module main loop (called by ModuleManager).
-
-    This module is passive - state is updated by background receiver thread.
-    Nothing to do in main loop.
-    """
     pass
 
 
 def stop():
-    """Module stop (called by ModuleManager)."""
-    global _uart_interface, _running
-
-    print("[zw_uart_module] Stopping...")
-
+    global _running
     _running = False
-
     if _uart_interface is not None:
         _uart_interface.stop()
 
-    print("[zw_uart_module] Stopped")
 
-
-# === Direct access functions ===
-
-def get_interface() -> STM32UartInterface:
-    """Get the STM32UartInterface instance."""
+def get_interface():
     return _uart_interface
-
-
-def get_current_zone() -> int:
-    """Get current zone ID (convenience function)."""
-    if _uart_interface:
-        return _uart_interface.get_current_zone()
-    return 0
-
-
-def get_last_arrived_zone() -> int:
-    """Get last arrived zone ID (convenience function)."""
-    if _uart_interface:
-        return _uart_interface.get_last_arrived_zone()
-    return 0
-
-
-def get_last_pick_zone() -> int:
-    """Get last pick zone ID (convenience function)."""
-    if _uart_interface:
-        return _uart_interface.get_last_pick_zone()
-    return 0
-
-
-def send_error(error_type: int, error_value: int) -> bool:
-    """Send error frame to STM32 (convenience function)."""
-    if _uart_interface:
-        return _uart_interface.send_error(error_type, error_value)
-    return False
-
-
-def add_pick_callback(callback):
-    """Add callback for PICK events (convenience function)."""
-    if _uart_interface:
-        _uart_interface.add_pick_callback(callback)
-
-
-def remove_pick_callback(callback):
-    """Remove PICK event callback (convenience function)."""
-    if _uart_interface:
-        _uart_interface.remove_pick_callback(callback)

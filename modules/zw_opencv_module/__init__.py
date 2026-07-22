@@ -1,112 +1,76 @@
-# -*- coding: utf-8 -*-
-"""
-zw_opencv_module - OpenCV Camera Vision Module
-
-Provides camera stream management, QR code detection, and RTMP streaming capabilities.
-"""
+from __future__ import annotations
 
 import os
-import sys
+from typing import Optional
 
-# Add module directory to path for internal imports
-module_dir = os.path.dirname(__file__)
-if module_dir not in sys.path:
-    sys.path.insert(0, module_dir)
+import cv2
 
-from .camera_manager import CameraManager
 
-# Module-level instance
-_camera_manager: CameraManager = None
-_config_path: str = None
+from framework.hal import Machine
+
+from .vision_manager import VisionManager, _LegacyCameraManagerShim
+
+_module_dir = os.path.dirname(__file__)
+_vision_manager: Optional[VisionManager] = None
+_legacy_shim: Optional[_LegacyCameraManagerShim] = None
 _running: bool = False
 
-
-def init():
-    """Module initialization (called by ModuleManager)"""
-    global _camera_manager, _config_path
-
-    print("[zw_opencv_module] Initializing...")
-
-    # Default config path
-    _config_path = os.path.join(module_dir, "config", "camera_config.yaml")
-
-    # Create CameraManager instance
-    _camera_manager = CameraManager()
-
-    print("[zw_opencv_module] Initialized successfully")
+cv2.ocl.setUseOpenCL(True)
 
 
-def start():
-    """Module start (called by ModuleManager)"""
-    global _camera_manager, _running
+def init(machine: Machine, event_bus=None) -> None:
+    from utils.cpu_affinity import get_config as get_cpu_affinity_config
+    _cpu_cfg = get_cpu_affinity_config()
+    if _cpu_cfg and _cpu_cfg.opencv_threads > 0:
+        cv2.setNumThreads(_cpu_cfg.opencv_threads)
+    global _vision_manager, _legacy_shim
 
-    if _camera_manager is None:
-        print("[zw_opencv_module] Error: Module not initialized")
-        return False
-
-    print("[zw_opencv_module] Starting...")
-
-    try:
-        # Load configuration
-        if os.path.exists(_config_path):
-            _camera_manager.load_config(_config_path)
-            print(f"[zw_opencv_module] Loaded config from {_config_path}")
-        else:
-            print(f"[zw_opencv_module] Warning: Config file not found at {_config_path}")
-            print("[zw_opencv_module] Starting without camera configuration")
-
-        # Start processing loop
-        _camera_manager.start()
-        _running = True
-
-        print("[zw_opencv_module] Started successfully")
-        return True
-
-    except Exception as e:
-        print(f"[zw_opencv_module] Failed to start: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    config_path = os.path.join(_module_dir, "config", "vision_config.yaml")
+    _vision_manager = VisionManager(
+        camera_hub=machine.camera_hub,
+        config_path=config_path,
+        ai=machine.ai,
+    )
+    if event_bus is not None:
+        _vision_manager.set_event_bus(event_bus)
+    _legacy_shim = _LegacyCameraManagerShim(_vision_manager)
 
 
-def loop():
-    """Module main loop (called by ModuleManager)"""
-    # CameraManager has its own processing thread, so we don't need to do much here
-    # This can be used for periodic status checks or other tasks
+def start() -> None:
+    global _running
+    if _vision_manager is None:
+        return
+    _vision_manager.start()
+    _running = True
+
+
+def loop() -> None:
     pass
 
 
-def stop():
-    """Module stop (called by ModuleManager)"""
-    global _camera_manager, _running
-
-    print("[zw_opencv_module] Stopping...")
-
+def stop() -> None:
+    global _running, _vision_manager, _legacy_shim
     _running = False
-
-    if _camera_manager is not None:
-        _camera_manager.release()
-        _camera_manager = None
-
-    print("[zw_opencv_module] Stopped")
+    _legacy_shim = None
+    if _vision_manager is not None:
+        _vision_manager.release()
+        _vision_manager = None
 
 
-# === Optional: Direct access functions ===
-
-def get_camera_manager() -> CameraManager:
-    """Get the CameraManager instance"""
-    return _camera_manager
+def get_vision_manager() -> Optional[VisionManager]:
+    return _vision_manager
 
 
-def get_camera(camera_id: str):
-    """Get a specific camera by ID"""
-    if _camera_manager:
-        return _camera_manager.get_camera(camera_id)
-    return None
+def get_camera_manager() -> _LegacyCameraManagerShim:
+    return _legacy_shim
+
+
+def set_event_bus(bus) -> None:
+    if _vision_manager is not None:
+        _vision_manager.set_event_bus(bus)
 
 
 def get_all_results():
-    """Get all camera processing results"""
-    if _camera_manager:
-        return _camera_manager.process_all()
-    return None, {}
+    if _vision_manager:
+        return _vision_manager.get_all_results()
+    return {}

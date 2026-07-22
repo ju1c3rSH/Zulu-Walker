@@ -1,0 +1,16 @@
+# Zulu-Walker Framework Configuration
+# Platform: mock | linux | maixcam2
+platform: mock
+
+# Cameras (platform-specific)
+cameras: []
+
+# CPU affinity (Linux only)
+cpu_affinity:
+  enabled: false
+  opencv_threads: 0
+
+# UART defaults
+uart_defaults:
+  port: "/dev/ttyS4"
+  baudrate: 115200

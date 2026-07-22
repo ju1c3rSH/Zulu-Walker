@@ -1,135 +1,82 @@
-# -*- coding: utf-8 -*-
-"""
-几何点工具类
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
 
-提供二维点和三维点的常用操作。
-"""
-from dataclasses import dataclass
-from typing import Tuple, Optional
-import math
+    def __repr__(self):
+        return f"Point({self.x}, {self.y})"
 
-
-@dataclass
-class Point2D:
-    """二维点"""
-    x: float
-    y: float
-
-    def __add__(self, other: 'Point2D') -> 'Point2D':
-        return Point2D(self.x + other.x, self.y + other.y)
-
-    def __sub__(self, other: 'Point2D') -> 'Point2D':
-        return Point2D(self.x - other.x, self.y - other.y)
-
-    def __mul__(self, scalar: float) -> 'Point2D':
-        return Point2D(self.x * scalar, self.y * scalar)
-
-    def __truediv__(self, scalar: float) -> 'Point2D':
-        return Point2D(self.x / scalar, self.y / scalar)
-
-    def distance_to(self, other: 'Point2D') -> float:
-        """计算到另一点的欧氏距离"""
-        return math.sqrt((self.x - other.x) ** 2 + (self.y - other.y) ** 2)
-
-    def distance_to_origin(self) -> float:
-        """计算到原点的距离"""
+    def distance(self):
+        import math
         return math.sqrt(self.x ** 2 + self.y ** 2)
 
-    def as_tuple(self) -> Tuple[float, float]:
-        """转换为元组"""
-        return (self.x, self.y)
+def get_angle(p1, p2, p3):
+    """
+    计算角 p1-p2-p3 的角度（度数）
 
-    def as_int_tuple(self) -> Tuple[int, int]:
-        """转换为整数元组"""
-        return (int(round(self.x)), int(round(self.y)))
+    Args:
+        p1, p2, p3: 可以是 Point 对象或 [x, y] 数组
+    """
+    import math
 
-    @classmethod
-    def from_tuple(cls, t: Tuple[float, float]) -> 'Point2D':
-        """从元组创建"""
-        return cls(t[0], t[1])
+    # 支持 Point 对象和 numpy 数组
+    def get_coords(p):
+        if hasattr(p, 'x'):
+            return p.x, p.y
+        return p[0], p[1]
 
-    def midpoint_to(self, other: 'Point2D') -> 'Point2D':
-        """计算到另一点的中心点"""
-        return Point2D((self.x + other.x) / 2, (self.y + other.y) / 2)
+    x1, y1 = get_coords(p1)
+    x2, y2 = get_coords(p2)
+    x3, y3 = get_coords(p3)
 
-    def angle_to(self, other: 'Point2D') -> float:
-        """
-        计算到另一点的角度
+    # Calculate vectors
+    v1 = (x1 - x2, y1 - y2)
+    v2 = (x3 - x2, y3 - y2)
 
-        Returns:
-            角度（弧度），范围 [-π, π]
-        """
-        return math.atan2(other.y - self.y, other.x - self.x)
+    # Calculate dot product
+    dot_product = v1[0] * v2[0] + v1[1] * v2[1]
 
+    # Calculate magnitudes
+    mag1 = math.hypot(v1[0], v1[1])
+    mag2 = math.hypot(v2[0], v2[1])
 
-@dataclass
-class Point3D:
-    """三维点"""
-    x: float
-    y: float
-    z: float
+    # Calculate angle in radians
+    if mag1 == 0 or mag2 == 0:
+        return 0
+    angle_rad = math.acos(max(-1, min(1, dot_product / (mag1 * mag2))))
 
-    def __add__(self, other: 'Point3D') -> 'Point3D':
-        return Point3D(self.x + other.x, self.y + other.y, self.z + other.z)
+    # Convert to degrees
+    angle_deg = math.degrees(angle_rad)
+    return angle_deg
 
-    def __sub__(self, other: 'Point3D') -> 'Point3D':
-        return Point3D(self.x - other.x, self.y - other.y, self.z - other.z)
+def get_cos_angle(p1, p2, p3):
+    """
+    计算角 p1-p2-p3 的余弦值
 
-    def __mul__(self, scalar: float) -> 'Point3D':
-        return Point3D(self.x * scalar, self.y * scalar, self.z * scalar)
+    Args:
+        p1, p2, p3: 可以是 Point 对象或 [x, y] 数组
+    """
+    import math
 
-    def __truediv__(self, scalar: float) -> 'Point3D':
-        return Point3D(self.x / scalar, self.y / scalar, self.z / scalar)
+    # 支持 Point 对象和 numpy 数组
+    def get_coords(p):
+        if hasattr(p, 'x'):
+            return p.x, p.y
+        return p[0], p[1]
 
-    def distance_to(self, other: 'Point3D') -> float:
-        """计算到另一点的欧氏距离"""
-        return math.sqrt(
-            (self.x - other.x) ** 2 +
-            (self.y - other.y) ** 2 +
-            (self.z - other.z) ** 2
-        )
+    x1, y1 = get_coords(p1)
+    x2, y2 = get_coords(p2)
+    x3, y3 = get_coords(p3)
 
-    def distance_to_origin(self) -> float:
-        """计算到原点的距离"""
-        return math.sqrt(self.x ** 2 + self.y ** 2 + self.z ** 2)
+    v1 = (x1 - x2, y1 - y2)
+    v2 = (x3 - x2, y3 - y2)
 
-    def as_tuple(self) -> Tuple[float, float, float]:
-        """转换为元组"""
-        return (self.x, self.y, self.z)
+    dot_product = v1[0] * v2[0] + v1[1] * v2[1]
+    mag1 = math.hypot(v1[0], v1[1])
+    mag2 = math.hypot(v2[0], v2[1])
 
-    def as_int_tuple(self) -> Tuple[int, int, int]:
-        """转换为整数元组"""
-        return (int(round(self.x)), int(round(self.y)), int(round(self.z)))
+    if mag1 == 0 or mag2 == 0:
+        return 0.0
 
-    @classmethod
-    def from_tuple(cls, t: Tuple[float, float, float]) -> 'Point3D':
-        """从元组创建"""
-        return cls(t[0], t[1], t[2])
-
-    def to_2d(self, drop_z: bool = True) -> Point2D:
-        """
-        转换为二维点
-
-        Args:
-            drop_z: True 则丢弃 z，False 则投影到 xy 平面
-        """
-        return Point2D(self.x, self.y)
-
-    def normalize(self) -> 'Point3D':
-        """返回单位向量"""
-        length = self.distance_to_origin()
-        if length > 0:
-            return self / length
-        return Point3D(0, 0, 0)
-
-    def dot(self, other: 'Point3D') -> float:
-        """点积"""
-        return self.x * other.x + self.y * other.y + self.z * other.z
-
-    def cross(self, other: 'Point3D') -> 'Point3D':
-        """叉积"""
-        return Point3D(
-            self.y * other.z - self.z * other.y,
-            self.z * other.x - self.x * other.z,
-            self.x * other.y - self.y * other.x
-        )
+    cos_val = dot_product / (mag1 * mag2)
+    return max(-1.0, min(1.0, cos_val))

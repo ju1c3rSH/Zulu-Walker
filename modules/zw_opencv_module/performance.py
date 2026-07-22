@@ -11,12 +11,13 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 import statistics
 
-from utils.log_util import LoggerFactory
+from utils.log_util import LoggerFactory, log_print
 
 
 @dataclass
 class TimingRecord:
     """单次计时记录"""
+
     name: str
     duration_ms: float
     timestamp: float = field(default_factory=time.time)
@@ -303,11 +304,20 @@ class PerformanceProfiler:
             lines.append("-" * 40)
             lines.append(f"Average frame time: {total_stats.avg_ms:.2f}ms")
 
+        from utils.debug_console import DebugConsole
+
+        total_stats = self.get_window_stats("total")
+        if total_stats and total_stats.avg_ms > 0:
+            DebugConsole().set("perf_frame", f"{total_stats.avg_ms:.1f}ms")
+        detect_stats = self.get_window_stats("detect_contours")
+        if detect_stats and detect_stats.avg_ms > 0:
+            DebugConsole().set("perf_detect", f"{detect_stats.avg_ms:.1f}ms")
+
         lines.append("=" * 60)
 
         report = "\n".join(lines)
-        print(report)
-        self._logger.info(f"\n{report}")
+        # log_print(report)
+        # self._logger.info(f"\n{report}")
 
     def reset(self):
         """重置所有统计数据"""

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-from .base import Processor, VisionResult
-from .qr_processor import QRProcessor
-from .cargo_processor import CargoProcessor
+from .base import Processor, VisionResult, ColorTrackable
+from .ai_inference_processor import AIInferenceProcessor
 
-__all__ = ["Processor", "VisionResult", "QRProcessor", "CargoProcessor"]
+__all__ = [
+    "Processor", "VisionResult", "ColorTrackable",
+    "AIInferenceProcessor",
+]
