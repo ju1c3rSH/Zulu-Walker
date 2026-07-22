@@ -6,7 +6,7 @@
 """
 
 from typing import Callable, Optional, Union, Set
-from .base import BaseStateMachine
+from framework.state_machine.base import BaseStateMachine
 
 
 class StateActionBridge:

@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 import numpy as np
 import yaml
 
-from hal.camera_hub import CameraHub
-from hal.interface import AIInference
+from framework.hal.camera_hub import CameraHub
+from framework.hal.interface import AIInference
 
 from .frame_composer import FrameComposer
 from .ffmpeg_pusher import FFmpegPusher

@@ -1,13 +1,12 @@
 import os
 import sys
-import time
 from utils.log_util import log_print
 
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from hal import Machine
-from utils.module_manager import ModuleManager
+from framework.hal import Machine
+from framework.module_manager import ModuleManager
 
 
 def _push_coordinator_status(coordinator) -> None:
@@ -27,16 +26,31 @@ def _push_coordinator_status(coordinator) -> None:
     dc.set("batch2_order", ",".join(sm_info.get("second_batch_order", [])) or "-")
 
 
+def _build_display_callback(manager, machine):
+    """Build display callback for the module manager."""
+    def display_fn():
+        vision_mod = manager.modules.get("zw_opencv_module")
+        if vision_mod and machine and machine.display:
+            vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
+            if vm:
+                frame = vm.compose_frame()
+                if frame is not None:
+                    if not machine.display.show(frame):
+                        manager._running = False
+    return display_fn
+
+
 def main():
     log_print("0xfb709394")
 
-    from context import EventBus, MissionCoordinator
+    from framework.event_bus import EventBus
+    from app.coordinator import MissionCoordinator
     bus = EventBus()
     coordinator = MissionCoordinator(bus)
 
     machine = Machine.create("project_config.yaml")
     manager = ModuleManager(machine, event_bus=bus)
-    manager.start_all()
+    manager.register_many(["zw_opencv_module", "zw_uart_module"])
 
     from modules.zw_opencv_module import get_vision_manager
     from modules.zw_uart_module import get_interface
@@ -49,8 +63,10 @@ def main():
     if uart:
         coordinator.set_uart_sender(uart.send_raw)
 
+    display_callback = _build_display_callback(manager, machine)
+
     coordinator.start()
-    manager.run_main_loop(coordinator, tick_callback=_push_coordinator_status)
+    manager.run_main_loop(coordinator, tick_callback=_push_coordinator_status, display_callback=display_callback)
 
 
 if __name__ == "__main__":
