@@ -50,6 +50,8 @@ _DISCOVERY_CENTER_THRESHOLD = 150
 _ALIGN_CENTER_THRESHOLD = 300
 _HEARTBEAT_INTERVAL = 0.1
 _HEARTBEAT_TIMEOUT = 0.3
+_DISCOVERY_TIMEOUT = 10.0
+_TRACK_TIMEOUT = 60.0
 
 
 class MissionCoordinator:
@@ -71,6 +73,9 @@ class MissionCoordinator:
         self._discovery_ready_frames = 0
         self._discovery_ready_latched = False
         self._discovery_color_sent = False
+        self._discovery_timeout_start: Optional[float] = None
+        self._track_timeout_start: Optional[float] = None
+        self._track_timeout_sent: bool = False
         self._sm_queue: Deque[Callable] = deque()
         self._sm_lock = threading.Lock()
         self._heartbeat_seq = 0
@@ -258,6 +263,7 @@ class MissionCoordinator:
         self._discovery_ready_frames = 0
         self._discovery_ready_latched = False
         self._discovery_color_sent = False
+        self._discovery_timeout_start = None
         self._activate_task("ring_discovery", color)
         self.mission_sm.context.discovery_color = color
         self.mission_sm.context.discovery_active = True
@@ -271,6 +277,7 @@ class MissionCoordinator:
         self._discovery_ready_frames = 0
         self._discovery_ready_latched = False
         self._discovery_color_sent = False
+        self._discovery_timeout_start = None
         self._activate_task("track_cargo", color)
         self.mission_sm.context.discovery_color = color
         self.mission_sm.context.discovery_active = True
@@ -314,6 +321,9 @@ class MissionCoordinator:
             self._ready_flag = 0
             self._discovery_ready_frames = 0
             self._discovery_ready_latched = False
+            self._discovery_timeout_start = None
+            self._track_timeout_start = None
+            self._track_timeout_sent = False
             from utils.debug_console import DebugConsole
             dc = DebugConsole()
             color_name = color.name if color else "N/A"
@@ -347,6 +357,9 @@ class MissionCoordinator:
         self._discovery_ready_frames = 0
         self._discovery_ready_latched = False
         self._discovery_color_sent = False
+        self._discovery_timeout_start = None
+        self._track_timeout_start = None
+        self._track_timeout_sent = False
         self.mission_sm.context.discovery_active = False
 
         self._send(build_status_from_vision_frame(
@@ -368,6 +381,8 @@ class MissionCoordinator:
         if captured_result == 0:
             self._ready_latched = False
             self._ready_flag = 0
+            self._track_timeout_sent = False
+            self._track_timeout_start = None
         self._enqueue_sm(lambda: self.mission_sm.on_action_done(captured_id, captured_result))
 
     def _on_heartbeat(self, event: HeartbeatEvent) -> None:
@@ -453,6 +468,12 @@ class MissionCoordinator:
             self._handle_discovery_result(target_found, pe_x, pe_y, data)
             return
 
+        if self._track_timeout_sent:
+            return
+
+        if not self._ready_latched and self._track_timeout_start is None:
+            self._track_timeout_start = time.monotonic()
+
         flags = 0
         if target_found:
             flags |= VisualFlags.TARGET_FOUND
@@ -462,7 +483,7 @@ class MissionCoordinator:
             in_position = (abs(ctx.percent_error_x) <= _ALIGN_CENTER_THRESHOLD
                            and abs(ctx.percent_error_y) <= _ALIGN_CENTER_THRESHOLD)
             if self.visual_sm.is_tracking() and target_found and in_position:
-                if confidence >= 100.0:
+                if confidence >= 40.0:
                     self._ready_frames += 1
                     if self._ready_frames % 5 == 0:
                         from utils.debug_console import DebugConsole
@@ -494,7 +515,31 @@ class MissionCoordinator:
                 captured_vis = self._visual_state_int()
                 self._enqueue_sm(lambda: self._apply_visual_status(captured_vis, captured_flags))
                 self._ready_frames = 0
+
+            if not self._ready_latched and \
+               time.monotonic() - self._track_timeout_start > _TRACK_TIMEOUT:
+                self._ready_latched = True
+                self._ready_flag = 0
+                state = self.mission_sm.current_state
+                picking = self.mission_sm.context.picking_from_rough
+                if state in ("ALIGN_RAW",) or (state == "ALIGN_ROUGH" and picking):
+                    self._ready_flag = VisualFlags.READY_TO_PICK
+                    flag_name = "READY_TO_PICK"
+                elif state in ("ALIGN_ROUGH", "ALIGN_TEMP") and not (state == "ALIGN_ROUGH" and picking):
+                    self._ready_flag = VisualFlags.READY_TO_PLACE
+                    flag_name = "READY_TO_PLACE"
+                from utils.debug_console import DebugConsole
+                DebugConsole().log(f"[TrackSM] timeout after {_TRACK_TIMEOUT}s, forced {flag_name}")
+                flags |= self._ready_flag
+                captured_flags = flags
+                captured_vis = self._visual_state_int()
+                self._enqueue_sm(lambda: self._apply_visual_status(captured_vis, captured_flags))
+                self._ready_frames = 0
+                self._track_timeout_sent = True
+                self._send(build_visual_servo_data_frame(pe_x, pe_y, flags, self._visual_state_int()))
+                return
         else:
+            self._track_timeout_start = None
             flags |= self._ready_flag
 
         self._send(build_visual_servo_data_frame(pe_x, pe_y, flags, self._visual_state_int()))
@@ -504,9 +549,31 @@ class MissionCoordinator:
         self.mission_sm.run_to_completion()
 
     def _handle_discovery_result(self, target_found: bool, pe_x: int, pe_y: int, data: dict) -> None:
+        if self._discovery_color_sent:
+            return
+
+        if self._discovery_timeout_start is None:
+            self._discovery_timeout_start = time.monotonic()
+
+        if time.monotonic() - self._discovery_timeout_start > _DISCOVERY_TIMEOUT:
+            self._discovery_ready_latched = True
+            flags = VisualFlags.TARGET_FOUND if target_found else 0
+            flags |= VisualFlags.RING_CENTERED
+            color = self.mission_sm.context.discovery_color
+            if color:
+                conf = data.get("confidence", 100)
+                self._send(build_color_result_frame(color.value, int(conf)))
+            self._discovery_color_sent = True
+            self._send(build_visual_servo_data_frame(pe_x, pe_y, flags, self._visual_state_int()))
+            from utils.debug_console import DebugConsole
+            DebugConsole().log(f"[DiscoverySM] timeout after {_DISCOVERY_TIMEOUT}s, forced complete")
+            return
+
         if not self._discovery_ready_latched:
+            confidence = data.get("confidence", 0)
             if self.visual_sm.is_tracking() and target_found \
-               and abs(pe_x) <= _DISCOVERY_CENTER_THRESHOLD and abs(pe_y) <= _DISCOVERY_CENTER_THRESHOLD:
+               and abs(pe_x) <= _DISCOVERY_CENTER_THRESHOLD and abs(pe_y) <= _DISCOVERY_CENTER_THRESHOLD \
+               and confidence >= 40.0:
                 self._discovery_ready_frames += 1
             else:
                 self._discovery_ready_frames = max(0, self._discovery_ready_frames - 1)
@@ -560,7 +627,7 @@ class MissionCoordinator:
             time.sleep(_HEARTBEAT_INTERVAL)
             self._heartbeat_seq = (self._heartbeat_seq + 1) % 256
 
-            self._send(build_heartbeat_frame(
+            self._send( (
                 self._heartbeat_seq,
                 self.mission_sm.current_state_id,
                 self._visual_state_int(),

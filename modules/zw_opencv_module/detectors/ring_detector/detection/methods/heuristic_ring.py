@@ -33,7 +33,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
     AXIS_RATIO_MAX = 2.0
     RING_GAP_PX_DEFAULT = 10
-    RING_BAND_NOISE_FLOOR = 0.005
+    RING_BAND_NOISE_FLOOR = 0.03
     MOMENTS_MIN_DENSITY = 0.10
     COLOR_BLOB_MIN_AREA = 80
     RING_BAND_WIDTH = 8
@@ -88,9 +88,19 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             self._info(f"[HeuristicRing] target={target_color.name} color_mask={mask_px}px (too sparse)")
             return self._fallback_predict(ts, target_color)
 
+        competing_masks = None
+        for c in (Color.RED, Color.GREEN, Color.BLUE):
+            if c != target_color:
+                cm = self._build_color_mask(hsv, c)
+                if cm is not None:
+                    if competing_masks is None:
+                        competing_masks = {}
+                    competing_masks[c] = cm
+
         fs = self.detector.force_stage
         if fs == 0 or fs == 1:
-            result = self._try_global(edges, color_mask, ts, target_color, scale)
+            result = self._try_global(edges, color_mask, ts, target_color, scale,
+                                      competing_masks=competing_masks)
             if result is not None and fs == 1:
                 return result
         else:
@@ -166,9 +176,11 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     #  global dispatch
     # ================================================================
 
-    def _try_global(self, edges, color_mask, ts, target_color, scale):
+    def _try_global(self, edges, color_mask, ts, target_color, scale,
+                    competing_masks=None):
         return self._detect_and_finalize(edges, color_mask, ts, target_color, scale,
-                                          offset=(0, 0), context="global")
+                                          offset=(0, 0), context="global",
+                                          competing_masks=competing_masks)
 
     def _try_alt_hough(self, color_mask, ts, target_color, scale):
         alt = getattr(self, "_alt_img", None)
@@ -251,7 +263,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     # ================================================================
 
     def _detect_and_finalize(self, edges, color_mask, ts, target_color, scale,
-                              offset, context):
+                              offset, context, competing_masks=None):
         min_area = getattr(self.detector, "min_area", 80)
 
         contours, _ = cv2.findContours(
@@ -335,6 +347,21 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         ecx, ecy = best_center
         outer_r = best_outer_r
 
+        if competing_masks and best_density_value < 0.15:
+            for comp_color, comp_mask in competing_masks.items():
+                comp_density = max(
+                    self._ring_band_color_density(
+                        (ecx, ecy), outer_r, comp_mask, band_width=self.RING_BAND_WIDTH),
+                    self._ring_band_color_density(
+                        (ecx, ecy), outer_r * self.INNER_RADIUS_RATIO, comp_mask,
+                        band_width=self.RING_BAND_WIDTH),
+                )
+                if comp_density > best_density_value * 2:
+                    self._info(f"[HeuristicRing] {context}: target={target_color.name} "
+                               f"rejected by competing {comp_color.name} "
+                               f"(density {best_density_value:.3f} vs {comp_density:.3f})")
+                    return None
+
         if best_density_value >= self.MOMENTS_MIN_DENSITY:
             ref_band = max(int(outer_r * 0.3), self.RING_BAND_WIDTH)
             cm_h, cm_w = color_mask.shape
@@ -364,6 +391,12 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         center = ((ecx + ox) / scale, (ecy + oy) / scale)
         outer_r_orig = outer_r / scale
 
+        max_r = getattr(self.detector, "max_outer_radius", 300)
+        if outer_r_orig > max_r:
+            self._info(f"[HeuristicRing] {context}: target={target_color.name} "
+                       f"outer_r={outer_r_orig:.0f} > max={max_r}, rejected")
+            return None
+
         if context == "ROI":
             ts.roi_miss_count = 0
         ts._ring_outer_radius = outer_r_orig
@@ -374,7 +407,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         self._log_detection(context, target_color, center, outer_r_orig, conf)
         return self._finalize(center, conf, ts, target_color, scale)
-
+    '''
     def _verify_concentric(self, edges, center, outer_r):
         cx, cy = int(center[0]), int(center[1])
         roi_r = int(outer_r * 2.5)
@@ -409,6 +442,51 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         rings = 0
         for hcx, hcy, _hr in circles:
             if np.hypot(hcx - local_cx, hcy - local_cy) < center_dist_max:
+                rings += 1
+
+        return min(rings, 3)
+    '''
+    
+    def _verify_concentric(self, edges, center, outer_r):
+        """用 color_mask 做同心圆验证"""
+        cx, cy = int(center[0]), int(center[1])
+        
+        # 改用 color_mask 而不是 edges
+        mask = getattr(self.detector, "_last_mask", None)
+        if mask is None:
+            return 0
+        
+        roi_r = int(outer_r * 2.5)
+        x1 = max(0, cx - roi_r)
+        y1 = max(0, cy - roi_r)
+        x2 = min(mask.shape[1], cx + roi_r)
+        y2 = min(mask.shape[0], cy + roi_r)
+        if x2 <= x1 or y2 <= y1:
+            return 0
+
+        roi = mask[y1:y2, x1:x2]
+        local_cx = cx - x1
+        local_cy = cy - y1
+        max_r = min(roi.shape) // 2
+
+        # 在color_mask上找圆
+        circles = cv2.HoughCircles(
+            roi, cv2.HOUGH_GRADIENT_ALT, dp=self.HOUGH_ALT_DP,
+            minDist=self.HOUGH_ALT_MIN_DIST, param1=self.HOUGH_ALT_PARAM1,
+            param2=self.HOUGH_ALT_PARAM2,
+            minRadius=int(max(outer_r * 0.3, 4)),  # 动态最小半径
+            maxRadius=int(max_r),
+        )
+        if circles is None:
+            return 0
+
+        circles = circles[0]
+        center_dist_max = outer_r * 0.35
+        rings = 0
+        for hcx, hcy, hr in circles:
+            dist = np.hypot(hcx - local_cx, hcy - local_cy)
+            # 同时检查半径是否匹配
+            if dist < center_dist_max and abs(hr - outer_r) / outer_r < 0.3:
                 rings += 1
 
         return min(rings, 3)
