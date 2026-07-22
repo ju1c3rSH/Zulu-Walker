@@ -2,6 +2,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
+from .registry import register_processor
 from .base import Processor, VisionResult
 from ..detectors.cargo_detector import CargoDetector
 from ..detectors.cargo_detector.detection import DetectMethod
@@ -20,6 +21,7 @@ _COLOR_NAMES = {
 }
 
 
+@register_processor("TrackCargoProcessor")
 class TrackCargoProcessor(Processor):
     """物料跟踪处理器。
 

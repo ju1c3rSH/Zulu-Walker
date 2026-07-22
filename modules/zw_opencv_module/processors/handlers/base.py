@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from hal.interface import AIInference, Detection
+from framework.hal.interface import AIInference, Detection
 
 
 class AbstractModelHandler(ABC):
