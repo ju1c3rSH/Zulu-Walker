@@ -118,7 +118,7 @@ class RingDetector:
                 (np.array([156, 60, 60]), np.array([180, 255, 255])),
             ],
             Color.GREEN: [(np.array([40, 60, 45]), np.array([80, 255, 255]))],
-            Color.BLUE: [(np.array([105, 70, 50]), np.array([130, 255, 255]))],
+            Color.BLUE: [(np.array([100, 40, 35]), np.array([140, 255, 255]))],
         }
 
         self._methods: Dict[RingDetectMethod, Any] = {}
