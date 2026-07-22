@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
 from framework.hal import Machine
 
@@ -18,9 +18,11 @@ class ModuleManager:
         self._running = True
 
     def register(self, name: str) -> bool:
+        """Register and load a single module by name."""
         return self.load(name)
 
-    def register_many(self, names: List[str]) -> None:
+    def register_many(self, names: list[str]) -> None:
+        """Register and load multiple modules by name."""
         for name in names:
             self.load(name)
 
@@ -44,12 +46,7 @@ class ModuleManager:
     def get_module(self, name: str):
         return self.modules.get(name)
 
-    def run_main_loop(
-        self,
-        coordinator=None,
-        tick_callback: Optional[Callable] = None,
-        display_callback: Optional[Callable[[], Optional[object]]] = None,
-    ) -> None:
+    def run_main_loop(self, coordinator=None, tick_callback=None, display_callback: Optional[Callable] = None) -> None:
         try:
             from utils.cpu_affinity import bind_current_thread
             bind_current_thread("main_loop")
@@ -72,11 +69,11 @@ class ModuleManager:
                         except Exception:
                             ...
 
-                if display_callback and self._machine and self._machine.display:
-                    frame = display_callback()
-                    if frame is not None:
-                        if not self._machine.display.show(frame):
-                            self._running = False
+                if display_callback:
+                    try:
+                        display_callback()
+                    except Exception:
+                        ...
 
                 time.sleep(self.MAIN_LOOP_DELAY)
             except KeyboardInterrupt:

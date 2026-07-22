@@ -20,7 +20,7 @@ from .protocol import (
     parse_heartbeat_payload, parse_request_sync_payload,
     parse_emergency_stop_payload,
 )
-from hal.interface import Uart
+from framework.hal.interface import Uart
 from .exceptions import UartError
 from utils.log_util import log_print
 
@@ -289,7 +289,7 @@ class STM32UartInterface:
                 log_print(f"[UART RX] ARRIVED zone={zone_id}")
                 if self._event_bus:
                     try:
-                        from context.events import ArrivedEvent
+                        from .events import ArrivedEvent
                         self._event_bus.publish(ArrivedEvent(zone_id))
                     except ImportError:
                         pass
@@ -321,7 +321,7 @@ class STM32UartInterface:
                 log_print(f"[UART RX] CMD_FROM_MCU cmd=0x{parsed[0]:02X} args={parsed[1]}")
                 if self._event_bus:
                     try:
-                        from context.events import McuCmdReceived
+                        from .events import McuCmdReceived
                         self._event_bus.publish(McuCmdReceived(parsed[0], parsed[1]))
                     except ImportError:
                         self._logger.warning(
@@ -333,7 +333,7 @@ class STM32UartInterface:
                 log_print(f"[UART RX] ACTION_DONE action={parsed[0]} result={parsed[1]}")
                 if self._event_bus:
                     try:
-                        from context.events import ActionDoneEvent
+                        from .events import ActionDoneEvent
                         self._event_bus.publish(ActionDoneEvent(parsed[0], parsed[1]))
                     except ImportError:
                         self._logger.warning(
@@ -343,7 +343,7 @@ class STM32UartInterface:
             parsed = parse_heartbeat_payload(frame.payload)
             if parsed is not None and self._event_bus:
                 try:
-                    from context.events import HeartbeatEvent
+                    from .events import HeartbeatEvent
                     self._event_bus.publish(
                         HeartbeatEvent(parsed[0], parsed[1], parsed[2]))
                 except ImportError:
@@ -356,7 +356,7 @@ class STM32UartInterface:
                 log_print(f"[UART RX] REQUEST_SYNC state={parsed}")
                 if self._event_bus:
                     try:
-                        from context.events import RequestSyncEvent
+                        from .events import RequestSyncEvent
                         self._event_bus.publish(RequestSyncEvent(parsed))
                     except ImportError:
                         self._logger.warning(
@@ -369,7 +369,7 @@ class STM32UartInterface:
                 log_print(f"[UART RX] EMERGENCY_STOP reason={parsed}")
                 if self._event_bus:
                     try:
-                        from context.events import EmergencyStopEvent
+                        from .events import EmergencyStopEvent
                         self._event_bus.publish(EmergencyStopEvent(parsed))
                     except ImportError:
                         pass

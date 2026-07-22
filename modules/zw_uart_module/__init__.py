@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from hal import Machine
+from framework.hal import Machine
 
 from .uart_driver import STM32UartInterface
 from .protocol import (

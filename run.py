@@ -31,7 +31,7 @@ _RUNNER_MAP = {
 
 
 def run_main():
-    from main import main
+    from app.main import main
     main()
 
 

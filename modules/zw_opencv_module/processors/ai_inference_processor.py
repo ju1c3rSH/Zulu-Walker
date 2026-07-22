@@ -5,14 +5,16 @@ from typing import Optional
 
 import numpy as np
 
-from hal.interface import AIInference, Detection
+from framework.hal.interface import AIInference, Detection
 
+from .registry import register_processor
 from .base import Processor, VisionResult
 from .handlers.registry import ModelHandlerRegistry
 
 logger = logging.getLogger(__name__)
 
 
+@register_processor("AIInferenceProcessor")
 class AIInferenceProcessor(Processor):
     def __init__(self, name: str) -> None:
         super().__init__(name)

@@ -5,7 +5,7 @@ import numpy as np
 from .base import AbstractModelHandler
 
 if TYPE_CHECKING:
-    from hal.interface import AIInference, Detection
+    from framework.hal.interface import AIInference, Detection
 
 
 class ModelHandlerRegistry:

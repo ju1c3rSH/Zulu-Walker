@@ -6,11 +6,13 @@ from ..models.circle import CircleTargetItem, CircleTargets
 from ..models import Color
 from utils.focal_distance_util import reference_size_dict
 
+from .registry import register_processor
 from .base import Processor, VisionResult
 from utils.log_util import log_print
 
 
 
+@register_processor("CircleTargetProcessor")
 class CircleTargetProcessor(Processor):
     """圆形/椭圆目标检测处理器"""
 

@@ -19,7 +19,7 @@ from enum import IntEnum
 from typing import Optional, List, Dict, Any, Deque
 from time import time
 
-from utils.state_machine.base import BaseStateMachine, State
+from framework.state_machine.base import BaseStateMachine, State
 from utils.log_util import log_print
 from modules.zw_opencv_module.models.color import Color
 from modules.zw_opencv_module.models.cargo import CargoSet, CargoZone

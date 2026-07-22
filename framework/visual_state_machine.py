@@ -18,17 +18,10 @@ _SEARCH_DETECT_THRESHOLD = 10
 _TRACKING_LOST_THRESHOLD = 5
 
 
-def _debug_set(key: str, value: str) -> None:
-    try:
-        from utils.debug_console import DebugConsole
-        DebugConsole().set(key, value)
-    except ImportError:
-        pass
-
-
 @dataclass
 class VisualContext:
     """视觉状态机上下文"""
+
 
     confidence: float = 0.0
     target_center: Optional[tuple] = None
@@ -53,7 +46,11 @@ class VisualContext:
 
 class IdleState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
-        _debug_set("visual_state", "IDLE")
+        try:
+            from utils.debug_console import DebugConsole
+            DebugConsole().set("visual_state", "IDLE")
+        except ImportError:
+            pass
         log_print("[VisualStateMachine] Enter IDLE")
         context.reset_stats()
         context.error_code = 0
@@ -68,7 +65,11 @@ class IdleState(State):
 
 class SearchState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
-        _debug_set("visual_state", "SEARCH")
+        try:
+            from utils.debug_console import DebugConsole
+            DebugConsole().set("visual_state", "SEARCH")
+        except ImportError:
+            pass
         log_print("[VisualStateMachine] Enter SEARCH")
         context.reset_stats()
         context.state_entry_time = time()
@@ -84,7 +85,11 @@ class SearchState(State):
 
 class TrackingState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
-        _debug_set("visual_state", "TRACKING")
+        try:
+            from utils.debug_console import DebugConsole
+            DebugConsole().set("visual_state", "TRACKING")
+        except ImportError:
+            pass
         log_print("[VisualStateMachine] Enter TRACKING")
         context.consecutive_detected_frames = 0
 
@@ -99,7 +104,11 @@ class TrackingState(State):
 
 class RecoveryState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
-        _debug_set("visual_state", "RECOVERY")
+        try:
+            from utils.debug_console import DebugConsole
+            DebugConsole().set("visual_state", "RECOVERY")
+        except ImportError:
+            pass
         log_print("[VisualStateMachine] Enter RECOVERY")
         context.reset_stats()
 
@@ -112,7 +121,11 @@ class RecoveryState(State):
 
 class FailState(State):
     def on_enter(self, context: VisualContext, from_state: str) -> None:
-        _debug_set("visual_state", f"FAIL({context.error_code})")
+        try:
+            from utils.debug_console import DebugConsole
+            DebugConsole().set("visual_state", f"FAIL({context.error_code})")
+        except ImportError:
+            pass
         log_print(f"[VisualStateMachine] Enter FAIL (error_code={context.error_code})")
 
     def on_execute(self, context: VisualContext) -> Optional[str]:

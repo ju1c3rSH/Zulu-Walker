@@ -1,6 +1,10 @@
 ﻿import logging
 
-from framework.log import fw_log as log_print
+try:
+    from utils.log_util import log_print
+except ImportError:
+    import logging
+    log_print = logging.getLogger(__name__).info
 
 from .ai import LinuxAI
 from .camera import LinuxCamera

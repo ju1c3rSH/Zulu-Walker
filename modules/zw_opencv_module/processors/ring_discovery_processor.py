@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from typing import Optional
+from .registry import register_processor
 from .base import Processor, VisionResult, ColorTrackable
 from ..models.color import Color
 from ..detectors.ring_detector import RingDetector
@@ -18,6 +19,7 @@ _COLOR_NAMES = {
 }
 
 
+@register_processor("RingDiscoveryProcessor")
 class RingDiscoveryProcessor(Processor):
     """色环发现处理器。
 
