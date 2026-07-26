@@ -30,7 +30,7 @@ class ParserState(enum.Enum):
     GOT_SOF1 = "GOT_SOF1"   # Got 0xAA, waiting for 0x55
     GOT_SOF = "GOT_SOF"     # Got 0xAA 0x55, reading Length
     GOT_LEN = "GOT_LEN"
-    READING_DATA = "READING_DATA"
+
 
 
 class FrameParser:
@@ -366,8 +366,9 @@ if __name__ == "__main__":
     log_print("=== Frame Parser Test ===")
     parser = FrameParser()
 
-    # Test SET_ZONE frame for zone 5: AA 02 04 05 01
-    test_frame = bytes([0xAA, 0x02, 0x04, 0x05, 0x01])
+    # Test heartbeat frame
+    from protocol import build_heartbeat_frame
+    test_frame = build_heartbeat_frame(seq=1, mission_state=2, visual_state=3)
     frames = parser.feed(test_frame)
     log_print(f"Parsed frames: {frames}")
     if frames:
