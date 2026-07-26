@@ -5,7 +5,7 @@ zw_uart_module - Protocol definitions
 Defines protocol constants, frame building, and parsing functions for
 UART communication between Orange Pi and STM32.
 
-Protocol Frame Structure (v2.0):
+Protocol Frame Structure (v2.1):
 | SOF1 | SOF2 | Length | Type | Payload | CRC16_LO | CRC16_HI |
 |  1   |  1   |   1    |  1   |  0~252  |    1     |    1     |
 
