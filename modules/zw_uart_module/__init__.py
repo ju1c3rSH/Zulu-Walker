@@ -6,7 +6,7 @@ from framework.hal import Machine
 
 from .uart_driver import STM32UartInterface
 from .protocol import (
-    SOF,
+    SOF1, SOF2,
     TYPE_ERROR,
     ERROR_TYPE_X, ERROR_TYPE_Y, ERROR_TYPE_Z, ERROR_TYPE_OTHER,
     FrameData, build_error_frame, parse_frame,

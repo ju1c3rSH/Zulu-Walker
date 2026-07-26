@@ -263,7 +263,7 @@ OP: RING_DISCOVERY → ALIGN_ROUGH/TEMP → PLACE_ROUGH/TEMP（瞬时级联）
 | 帧构建 | `build_*_frame()` 系列函数 | `protocol.py` |
 | 帧解析 | `parse_*_payload()` 系列函数 | `protocol.py` |
 
-> 通用帧结构（SOF/Length/Checksum）的构建解析见 [`protocol.md`](protocol.md) §5。
+> 通用帧结构（SOF1/SOF2/Length/CRC16）的构建解析见 [`protocol.md`](protocol.md) §5。
 
 ---
 
@@ -271,6 +271,7 @@ OP: RING_DISCOVERY → ALIGN_ROUGH/TEMP → PLACE_ROUGH/TEMP（瞬时级联）
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| **v2.1** | 2026-07-26 | 帧结构加固同步（CRC16 + 双字节 SOF），内容定义不变 |
 | **v2.0** | 2026-07-26 | 从 `protocol.md` 独立为内容定义文档 |
 | **v1.3** | 2026-07-18 | 新增 `CMD_START_CARGO_STACKING_DISCOVERY(0x09)` |
 | **v1.2** | 2026-07-04 | 删除多组不再使用的 CMD，时序补充 |
