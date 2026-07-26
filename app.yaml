@@ -1,0 +1,27 @@
+id: zulu_walker
+name: Zulu-Walker
+name[zh]: 祖鲁行者
+version: 1.0.0
+icon: ""
+author: Electric Competition 2026
+desc: YOLO11n steel ball detection + line following robot based on MaixCAM2
+desc[zh]: 基于 MaixCAM2 的 YOLO11n 钢珠检测 + 循迹小车
+
+exclude:
+  - .git
+  - .gitignore
+  - __pycache__
+  - .vscode
+  - .claude
+  - stories
+  - docs
+  - requirements*
+  - modules/zw_opencv_module/detectors/cargo_detector
+  - modules/zw_opencv_module/detectors/circle_target_detector
+  - modules/zw_opencv_module/detectors/ring_detector
+  - modules/zw_opencv_module/processors/cargo_processor.py
+  - modules/zw_opencv_module/processors/circle_target_processor.py
+  - modules/zw_opencv_module/processors/ring_discovery_processor.py
+  - modules/zw_opencv_module/processors/qr_processor.py
+  - modules/zw_opencv_module/processors/handlers
+  - modules/zw_opencv_module/processors/ai_inference_processor.py
