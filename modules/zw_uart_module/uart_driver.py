@@ -12,12 +12,10 @@ import threading
 from typing import Callable, List, Optional
 
 from .protocol import (
-    SOF, TYPE_ARRIVED, TYPE_PICK, TYPE_SET,
-    TYPE_CMD_FROM_MCU, TYPE_ACTION_DONE,
-    TYPE_HEARTBEAT, TYPE_REQUEST_SYNC, TYPE_EMERGENCY_STOP,
-    FrameData, parse_frame, parse_zone_payload,
-    parse_cmd_payload, parse_action_done_payload,
-    parse_heartbeat_payload, parse_request_sync_payload,
+    SOF,
+    TYPE_HEARTBEAT, TYPE_EMERGENCY_STOP,
+    FrameData, parse_frame,
+    parse_heartbeat_payload,
     parse_emergency_stop_payload,
 )
 from framework.hal.interface import Uart
@@ -136,9 +134,9 @@ class STM32UartInterface:
     UART interface for STM32 communication.
 
     Wraps SerialController and provides:
-    - Thread-safe state queries (zone information)
     - Error frame transmission
     - Background frame parsing with state machine
+    - Frame dispatch via EventBus
     """
 
     def __init__(self, uart: Uart):
@@ -151,17 +149,8 @@ class STM32UartInterface:
         self._uart = uart
         self._parser = FrameParser()
 
-        # Thread-safe state variables
-        self._state_lock = threading.RLock()
-        self._current_zone: int = 0
-        self._last_arrived_zone: int = 0
-        self._last_pick_zone: int = 0
-
         # Write lock for send operations
         self._write_lock = threading.Lock()
-
-        # PICK event callbacks
-        self._pick_callbacks: List[Callable[[int], None]] = []
 
         # EventBus (set after init to avoid circular imports)
         self._event_bus = None
@@ -275,71 +264,12 @@ class STM32UartInterface:
 
     def _handle_frame(self, frame: FrameData):
         """
-        Handle a parsed frame — legacy zone events + mission sync types.
+        Handle a parsed frame from STM32.
 
         Args:
             frame: Parsed frame data
         """
-        if frame.frame_type == TYPE_ARRIVED:
-            zone_id = parse_zone_payload(frame.payload)
-            if zone_id is not None:
-                with self._state_lock:
-                    self._last_arrived_zone = zone_id
-                self._logger.info(f"ARRIVED_AT_ZONE: zone={zone_id}")
-                log_print(f"[UART RX] ARRIVED zone={zone_id}")
-                if self._event_bus:
-                    try:
-                        from .events import ArrivedEvent
-                        self._event_bus.publish(ArrivedEvent(zone_id))
-                    except ImportError:
-                        pass
-
-        elif frame.frame_type == TYPE_PICK:
-            zone_id = parse_zone_payload(frame.payload)
-            if zone_id is not None:
-                with self._state_lock:
-                    self._last_pick_zone = zone_id
-                self._logger.info(f"PICK_AT_ZONE: zone={zone_id}")
-                log_print(f"[UART RX] PICK zone={zone_id}")
-                for cb in self._pick_callbacks:
-                    try:
-                        cb(zone_id)
-                    except Exception as e:
-                        self._logger.error(f"Pick callback error: {e}")
-
-        elif frame.frame_type == TYPE_SET:
-            zone_id = parse_zone_payload(frame.payload)
-            if zone_id is not None:
-                with self._state_lock:
-                    self._current_zone = zone_id
-                self._logger.info(f"SET_ZONE: zone={zone_id}")
-                log_print(f"[UART RX] SET zone={zone_id}")
-
-        elif frame.frame_type == TYPE_CMD_FROM_MCU:
-            parsed = parse_cmd_payload(frame.payload)
-            if parsed is not None:
-                log_print(f"[UART RX] CMD_FROM_MCU cmd=0x{parsed[0]:02X} args={parsed[1]}")
-                if self._event_bus:
-                    try:
-                        from .events import McuCmdReceived
-                        self._event_bus.publish(McuCmdReceived(parsed[0], parsed[1]))
-                    except ImportError:
-                        self._logger.warning(
-                            f"CMD_FROM_MCU cmd_id=0x{parsed[0]:02X} (no event bus)")
-
-        elif frame.frame_type == TYPE_ACTION_DONE:
-            parsed = parse_action_done_payload(frame.payload)
-            if parsed is not None:
-                log_print(f"[UART RX] ACTION_DONE action={parsed[0]} result={parsed[1]}")
-                if self._event_bus:
-                    try:
-                        from .events import ActionDoneEvent
-                        self._event_bus.publish(ActionDoneEvent(parsed[0], parsed[1]))
-                    except ImportError:
-                        self._logger.warning(
-                            f"ACTION_DONE action={parsed[0]} result={parsed[1]} (no event bus)")
-
-        elif frame.frame_type == TYPE_HEARTBEAT:
+        if frame.frame_type == TYPE_HEARTBEAT:
             parsed = parse_heartbeat_payload(frame.payload)
             if parsed is not None and self._event_bus:
                 try:
@@ -349,18 +279,6 @@ class STM32UartInterface:
                 except ImportError:
                     self._logger.debug(
                         f"HEARTBEAT seq={parsed[0]} (no event bus)")
-
-        elif frame.frame_type == TYPE_REQUEST_SYNC:
-            parsed = parse_request_sync_payload(frame.payload)
-            if parsed is not None:
-                log_print(f"[UART RX] REQUEST_SYNC state={parsed}")
-                if self._event_bus:
-                    try:
-                        from .events import RequestSyncEvent
-                        self._event_bus.publish(RequestSyncEvent(parsed))
-                    except ImportError:
-                        self._logger.warning(
-                            f"REQUEST_SYNC state={parsed} (no event bus)")
 
         elif frame.frame_type == TYPE_EMERGENCY_STOP:
             parsed = parse_emergency_stop_payload(frame.payload)
@@ -376,45 +294,6 @@ class STM32UartInterface:
 
         else:
             self._logger.warning(f"Unknown frame type: 0x{frame.frame_type:02X}")
-
-    def get_current_zone(self) -> int:
-        """
-        Get the current zone ID.
-
-        Returns:
-            Current zone ID set by STM32
-        """
-        with self._state_lock:
-            return self._current_zone
-
-    def get_last_arrived_zone(self) -> int:
-        """
-        Get the last arrived zone ID.
-
-        Returns:
-            Zone ID from last ARRIVED_AT_ZONE event
-        """
-        with self._state_lock:
-            return self._last_arrived_zone
-
-    def get_last_pick_zone(self) -> int:
-        """
-        Get the last pick zone ID.
-
-        Returns:
-            Zone ID from last PICK_AT_ZONE event
-        """
-        with self._state_lock:
-            return self._last_pick_zone
-
-    def add_pick_callback(self, callback: Callable[[int], None]):
-        """Register a callback for PICK events."""
-        self._pick_callbacks.append(callback)
-
-    def remove_pick_callback(self, callback: Callable[[int], None]):
-        """Remove a PICK event callback."""
-        if callback in self._pick_callbacks:
-            self._pick_callbacks.remove(callback)
 
     def send_error(self, error_type: int, error_value: int) -> bool:
         """
