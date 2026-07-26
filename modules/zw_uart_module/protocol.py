@@ -17,7 +17,6 @@ Protocol Frame Structure:
 """
 
 from dataclasses import dataclass
-from enum import IntEnum
 from typing import Optional
 
 
@@ -26,53 +25,9 @@ SOF = 0xAA
 
 # Frame types
 TYPE_ERROR = 0x01           # Orange Pi -> STM32: error_type(1B) + error_value(2B, int16 LE)
-TYPE_ARRIVED = 0x02         # STM32 -> Orange Pi: zone_id(1B)
-TYPE_PICK = 0x03            # STM32 -> Orange Pi: zone_id(1B)
-TYPE_SET = 0x04             # STM32 -> Orange Pi: zone_id(1B)
-
-# Mission synchronization frame types (added for logistics competition)
-TYPE_CMD_FROM_MCU = 0x10        # MCU -> Orange Pi: cmd_id(1B) + args
-TYPE_STATUS_FROM_VISION = 0x11  # Orange Pi -> MCU: mission_state + visual_state + flags + cargo_count
-TYPE_QR_RESULT = 0x12           # Orange Pi -> MCU: len(1B) + ascii QR string
-TYPE_COLOR_RESULT = 0x13        # Orange Pi -> MCU: color_id(1B) + confidence(1B)
-TYPE_ACTION_DONE = 0x14         # MCU -> Orange Pi: action_id + result
 TYPE_HEARTBEAT = 0x15           # Bidirectional: seq + mission_state + visual_state
-TYPE_REQUEST_SYNC = 0x16        # Bidirectional: requested_state
 TYPE_VISUAL_SERVO_DATA = 0x17   # Orange Pi -> MCU: error_x(2B) + error_y(2B) + flags(1B) + state(1B)
 TYPE_EMERGENCY_STOP = 0x18      # Bidirectional: reason(1B)
-
-# Sub-commands for TYPE_CMD_FROM_MCU
-CMD_START_QR = 0x01             # Start QR detection
-CMD_STOP_VISUAL = 0x06          # No arg — emergency stop all visual tasks
-CMD_START_RING_DISCOVERY = 0x07 # MCU -> OP: start ring discovery, args: color_id(1B)
-CMD_DISCOVERY_DONE = 0x08       # MCU -> OP: ring discovery complete, no args
-CMD_START_CARGO_STACKING_DISCOVERY = 0x09  # MCU -> OP: start cargo stacking discovery, args: color_id(1B)
-
-class VisualFlags:
-    """Bit flags for STATUS_FROM_VISION."""
-    TARGET_FOUND = 0x01
-    READY_TO_PICK = 0x02
-    READY_TO_PLACE = 0x04
-    VISUAL_FAIL = 0x08
-    QR_OK = 0x10
-    CARGO_CONFIRMED = 0x20
-    COLOR_MISMATCH = 0x40
-    RING_CENTERED = 0x80
-
-# Action result codes for TYPE_ACTION_DONE
-ACTION_OK = 0x00
-ACTION_BUSY = 0x01
-ACTION_TIMEOUT = 0x02
-ACTION_FAIL = 0x03
-ACTION_NO_CARGO = 0x04
-
-
-class ActionId(IntEnum):
-    """Action identifiers for TYPE_ACTION_DONE."""
-    PICK_RAW = 1      # 原料区取料
-    PLACE_ROUGH = 2   # 粗加工区放料
-    PICK_ROUGH = 3    # 粗加工区取料（回收）
-    PLACE_TEMP = 4    # 暂存区放料/码垛
 
 
 # Error types for TYPE_ERROR
@@ -190,99 +145,12 @@ def parse_frame(data: bytes) -> Optional[FrameData]:
     return FrameData(frame_type=frame_type, payload=payload)
 
 
-def parse_zone_payload(payload: bytes) -> Optional[int]:
-    """
-    Parse zone_id from payload (for ARRIVED, PICK, SET events).
-
-    Args:
-        payload: Payload bytes
-
-    Returns:
-        zone_id if valid, None if invalid
-    """
-    if len(payload) != 1:
-        return None
-    return payload[0]
-
-
-# ===== Mission synchronization helpers =====
-
 def _build_frame(frame_type: int, payload: bytes) -> bytes:
     """Build a standard SOF/Length/Type/Payload/Checksum frame."""
     content = bytes([frame_type]) + payload
     checksum = xor_checksum(content)
     length = len(content) + 1
     return bytes([SOF, length]) + content + bytes([checksum])
-
-
-def build_cmd_frame(cmd_id: int, args: bytes = b"") -> bytes:
-    """Build TYPE_CMD_FROM_MCU frame."""
-    return _build_frame(TYPE_CMD_FROM_MCU, bytes([cmd_id]) + args)
-
-
-def parse_cmd_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_CMD_FROM_MCU payload -> (cmd_id, args)."""
-    if len(payload) < 1:
-        return None
-    return payload[0], payload[1:]
-
-
-def build_status_from_vision_frame(
-    mission_state: int, visual_state: int, flags: int, cargo_count: int
-) -> bytes:
-    """Build TYPE_STATUS_FROM_VISION frame."""
-    payload = bytes([mission_state, visual_state, flags, cargo_count])
-    return _build_frame(TYPE_STATUS_FROM_VISION, payload)
-
-
-def parse_status_from_vision_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_STATUS_FROM_VISION payload."""
-    if len(payload) != 4:
-        return None
-    return payload[0], payload[1], payload[2], payload[3]
-
-
-def build_qr_result_frame(qr_str: str) -> bytes:
-    """Build TYPE_QR_RESULT frame."""
-    data = qr_str.encode('ascii', errors='ignore')
-    if len(data) > MAX_PAYLOAD_SIZE - 1:
-        raise ValueError(f"QR string too long: {len(data)}")
-    payload = bytes([len(data)]) + data
-    return _build_frame(TYPE_QR_RESULT, payload)
-
-
-def parse_qr_result_payload(payload: bytes) -> Optional[str]:
-    """Parse TYPE_QR_RESULT payload."""
-    if len(payload) < 1:
-        return None
-    length = payload[0]
-    if len(payload) != 1 + length:
-        return None
-    return payload[1:].decode('ascii', errors='ignore')
-
-
-def build_color_result_frame(color_id: int, confidence: int) -> bytes:
-    """Build TYPE_COLOR_RESULT frame."""
-    return _build_frame(TYPE_COLOR_RESULT, bytes([color_id, confidence]))
-
-
-def parse_color_result_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_COLOR_RESULT payload -> (color_id, confidence)."""
-    if len(payload) != 2:
-        return None
-    return payload[0], payload[1]
-
-
-def build_action_done_frame(action_id: ActionId, result: int) -> bytes:
-    """Build TYPE_ACTION_DONE frame."""
-    return _build_frame(TYPE_ACTION_DONE, bytes([action_id, result]))
-
-
-def parse_action_done_payload(payload: bytes) -> Optional[tuple[ActionId, int]]:
-    """Parse TYPE_ACTION_DONE payload -> (action_id, result)."""
-    if len(payload) != 2:
-        return None
-    return ActionId(payload[0]), payload[1]
 
 
 def build_heartbeat_frame(seq: int, mission_state: int, visual_state: int) -> bytes:
@@ -297,25 +165,13 @@ def parse_heartbeat_payload(payload: bytes) -> Optional[tuple]:
     return payload[0], payload[1], payload[2]
 
 
-def build_request_sync_frame(requested_state: int) -> bytes:
-    """Build TYPE_REQUEST_SYNC frame."""
-    return _build_frame(TYPE_REQUEST_SYNC, bytes([requested_state]))
-
-
-def parse_request_sync_payload(payload: bytes) -> Optional[int]:
-    """Parse TYPE_REQUEST_SYNC payload."""
-    if len(payload) != 1:
-        return None
-    return payload[0]
-
-
 def build_visual_servo_data_frame(
     error_x: int, error_y: int, flags: int, state: int
 ) -> bytes:
     """
     Build TYPE_VISUAL_SERVO_DATA frame (每帧必发).
-    error_x/error_y: signed int16 LE, 未检出时为0.
-    flags: VisualFlags bitmask.
+    error_x/error_y: signed int16 LE.
+    flags: bitmask.
     state: visual_state (0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL).
     """
     payload = (

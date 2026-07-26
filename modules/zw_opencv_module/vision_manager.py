@@ -95,7 +95,7 @@ class VisionManager:
 
         self.frame_composer = FrameComposer(
             layout="grid",
-            output_size=(640, 480),
+            output_size=(544, 544),
         )
 
         self._running = True
@@ -180,6 +180,10 @@ class VisionManager:
         while self._pending_results:
             results.append(self._pending_results.popleft())
         return results
+
+    def get_pipeline_fps(self, pipeline_id: str) -> float:
+        fd = self._fps_data.get(pipeline_id)
+        return fd.get("fps", 0.0) if fd else 0.0
 
     def release_pipeline(self, pipeline_id: str) -> None:
         pipe = self._pipelines.pop(pipeline_id, None)

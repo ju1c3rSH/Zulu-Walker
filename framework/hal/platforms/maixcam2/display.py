@@ -16,7 +16,7 @@ class MaixCam2Display:
         if self._disp is None:
             return False
         try:
-            img = maix.image.cv2image(frame, bgr=True, copy=True)
+            img = maix.image.cv2image(frame, bgr=True, copy=False)
             err = self._disp.show(img)
             return err == maix.err.Err.ERR_NONE
         except Exception:

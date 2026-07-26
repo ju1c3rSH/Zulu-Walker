@@ -94,6 +94,7 @@ class MaixCam2Camera:
             img = self._cam.read(block=False)
             if img is None:
                 return None
+            self._last_raw = img
             return maix.image.image2cv(img, ensure_bgr=True, copy=True)
         except Exception:
             return None
