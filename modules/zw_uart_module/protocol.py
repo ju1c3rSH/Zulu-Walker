@@ -5,15 +5,16 @@ zw_uart_module - Protocol definitions
 Defines protocol constants, frame building, and parsing functions for
 UART communication between Orange Pi and STM32.
 
-Protocol Frame Structure:
-| SOF | Length | Type | Payload | Checksum |
-|  1  |   1    |  1   |  0~252  |    1     |
+Protocol Frame Structure (v2.0):
+| SOF1 | SOF2 | Length | Type | Payload | CRC16_LO | CRC16_HI |
+|  1   |  1   |   1    |  1   |  0~252  |    1     |    1     |
 
-- SOF: Start of Frame, fixed 0xAA
-- Length: Bytes from Type to Checksum (Type + Payload + Checksum)
+- SOF1: Start of Frame byte 1, fixed 0xAA
+- SOF2: Start of Frame byte 2, fixed 0x55
+- Length: Bytes from Type to CRC16 (Type + Payload + CRC16)
 - Type: Frame type identifier
 - Payload: Variable length data
-- Checksum: XOR of Type to Payload bytes
+- CRC16: CRC16-CCITT (poly 0x1021, init 0xFFFF) of Type to Payload bytes, big-endian
 """
 
 from dataclasses import dataclass
@@ -21,7 +22,8 @@ from typing import Optional
 
 
 # Protocol constants
-SOF = 0xAA
+SOF1 = 0xAA
+SOF2 = 0x55
 
 # Frame types
 TYPE_ERROR = 0x01           # Orange Pi -> STM32: error_type(1B) + error_value(2B, int16 LE)
@@ -37,9 +39,9 @@ ERROR_TYPE_Z = 2            # Z direction error
 ERROR_TYPE_OTHER = 3        # Other error
 
 # Frame size limits
-MIN_FRAME_SIZE = 4          # SOF + Length + Type + Checksum (no payload)
-MAX_FRAME_SIZE = 255        # Limited by Length field (1 byte)
-MAX_PAYLOAD_SIZE = 252      # MAX_FRAME_SIZE - SOF - Length - Checksum
+MIN_FRAME_SIZE = 6          # SOF1 + SOF2 + Length + Type + CRC16 (no payload)
+MAX_FRAME_SIZE = 258        # SOF1 + SOF2 + Length + Type + 252 payload + CRC16
+MAX_PAYLOAD_SIZE = 252      # Limited by Length field: Length(1+252+2) ≤ 255
 
 
 @dataclass
@@ -49,20 +51,59 @@ class FrameData:
     payload: bytes
 
 
-def xor_checksum(data: bytes) -> int:
-    """
-    Calculate XOR checksum of data bytes.
+# === CRC16-CCITT (poly 0x1021, init 0xFFFF) ===
 
-    Args:
-        data: Bytes to calculate checksum for
+def _build_crc16_table() -> list[int]:
+    table = []
+    for i in range(256):
+        crc = i << 8
+        for _ in range(8):
+            crc = (crc << 1) ^ 0x1021 if crc & 0x8000 else crc << 1
+            crc &= 0xFFFF
+        table.append(crc)
+    return table
 
-    Returns:
-        XOR checksum byte
-    """
-    result = 0
+_CRC16_TABLE = _build_crc16_table()
+
+def crc16_ccitt(data: bytes, init: int = 0xFFFF) -> int:
+    """CRC16-CCITT (poly 0x1021, init 0xFFFF, no reflection, no final xor)."""
+    crc = init
     for byte in data:
-        result ^= byte
-    return result
+        crc = ((crc << 8) ^ _CRC16_TABLE[((crc >> 8) ^ byte) & 0xFF]) & 0xFFFF
+    return crc
+
+
+def _build_frame(frame_type: int, payload: bytes) -> bytes:
+    """Build a standard SOF1/SOF2/Length/Type/Payload/CRC16 frame."""
+    content = bytes([frame_type]) + payload
+    checksum = crc16_ccitt(content)
+    length = len(content) + 2  # Type + Payload + CRC16(2 bytes)
+    return bytes([SOF1, SOF2, length]) + content + checksum.to_bytes(2, byteorder='big')
+
+
+def parse_frame(data: bytes) -> Optional[FrameData]:
+    """Parse and validate a complete frame."""
+    if len(data) < MIN_FRAME_SIZE:
+        return None
+
+    if data[0] != SOF1 or data[1] != SOF2:
+        return None
+
+    length = data[2]
+    expected_size = 3 + length  # SOF1(1) + SOF2(1) + Length(1) + content(length)
+    if len(data) != expected_size:
+        return None
+
+    frame_type = data[3]
+    payload = data[4:expected_size - 2]
+    received_checksum = int.from_bytes(data[expected_size - 2:expected_size], byteorder='big')
+    content = data[3:expected_size - 2]  # Type + Payload
+    calculated_checksum = crc16_ccitt(content)
+
+    if calculated_checksum != received_checksum:
+        return None
+
+    return FrameData(frame_type=frame_type, payload=payload)
 
 
 def build_error_frame(error_type: int, error_value: int) -> bytes:
@@ -84,73 +125,8 @@ def build_error_frame(error_type: int, error_value: int) -> bytes:
     if not -32768 <= error_value <= 32767:
         raise ValueError(f"error_value must be -32768~32767, got {error_value}")
 
-    # Build payload: error_type(1B) + error_value(2B, little-endian)
     payload = bytes([error_type]) + error_value.to_bytes(2, byteorder='little', signed=True)
-
-    # Build frame content (Type + Payload)
-    content = bytes([TYPE_ERROR]) + payload
-
-    # Calculate checksum (Type to Payload)
-    checksum = xor_checksum(content)
-
-    # Length = Type(1) + Payload(len) + Checksum(1)
-    length = len(content) + 1
-
-    # Complete frame: SOF + Length + Content + Checksum
-    frame = bytes([SOF, length]) + content + bytes([checksum])
-
-    return frame
-
-
-def parse_frame(data: bytes) -> Optional[FrameData]:
-    """
-    Parse and validate a complete frame.
-
-    Args:
-        data: Complete frame bytes (including SOF, Length, Type, Payload, Checksum)
-
-    Returns:
-        FrameData if valid, None if invalid
-
-    Note:
-        This function validates checksum but does not raise exceptions.
-        Invalid frames are silently rejected.
-    """
-    if len(data) < MIN_FRAME_SIZE:
-        return None
-
-    # Check SOF
-    if data[0] != SOF:
-        return None
-
-    # Get length
-    length = data[1]
-    expected_size = 2 + length  # SOF(1) + Length(1) + (Type + Payload + Checksum)
-
-    if len(data) != expected_size:
-        return None
-
-    # Extract components
-    frame_type = data[2]
-    payload = data[3:expected_size - 1]  # Exclude checksum
-    received_checksum = data[expected_size - 1]
-
-    # Validate checksum
-    content = data[2:expected_size - 1]  # Type + Payload
-    calculated_checksum = xor_checksum(content)
-
-    if calculated_checksum != received_checksum:
-        return None
-
-    return FrameData(frame_type=frame_type, payload=payload)
-
-
-def _build_frame(frame_type: int, payload: bytes) -> bytes:
-    """Build a standard SOF/Length/Type/Payload/Checksum frame."""
-    content = bytes([frame_type]) + payload
-    checksum = xor_checksum(content)
-    length = len(content) + 1
-    return bytes([SOF, length]) + content + bytes([checksum])
+    return _build_frame(TYPE_ERROR, payload)
 
 
 def build_heartbeat_frame(seq: int, mission_state: int, visual_state: int) -> bytes:
