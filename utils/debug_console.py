@@ -142,35 +142,12 @@ class DebugConsole:
         table.add_column("Value", no_wrap=True)
 
         rows = [
-            ("Mission", s.get("mission_state", "-"), "white"),
-            ("Visual",  s.get("visual_state", "-"), "white"),
-            ("Link",    self._link_str(s), self._link_color(s)),
+            ("State",      s.get("state", "-"), "white"),
+            ("Link",       self._link_str(s), self._link_color(s)),
+            ("FPS",        s.get("fps", "-"), "white"),
+            ("Detections", s.get("det_count", "0"), "white"),
+            ("Error",      f"{self._error_count}", "red" if self._error_count > 0 else "green"),
         ]
-
-        # Dynamic camera rows (keys: <cam_id>_fps, <cam_id>_queue, <cam_id>_drop)
-        for fps_key in sorted(k for k in s if k.endswith("_fps")):
-            prefix = fps_key[:-4]
-            if not prefix:
-                continue
-            fps_val = s.get(fps_key, "-")
-            q_val   = s.get(f"{prefix}_queue", "-")
-            d_val   = s.get(f"{prefix}_drop", "-")
-            rows.append((f"Cam {prefix}", f"{fps_val} FPS | Q:{q_val} | D:{d_val}", "white"))
-
-        rows.extend([
-            ("Cargo",   s.get("cargo_count", "-"), "white"),
-            ("Batch",   s.get("batch", "-"), "white"),
-            ("Step",    s.get("step", "-"), "white"),
-            ("Task",    s.get("active_task", "-"), "white"),
-            ("Color",   s.get("target_color", "-") or "-", "white"),
-            ("Batch1 Seq", s.get("batch1_order", "-"), "white"),
-            ("Batch2 Seq", s.get("batch2_order", "-"), "white"),
-            ("UART TX", s.get("uart_tx", "-"), "white"),
-            ("UART RX", s.get("uart_rx", "-"), "white"),
-            ("Frame",   s.get("perf_frame", "-"), "white"),
-            ("Detect",  s.get("perf_detect", "-"), "white"),
-            ("Error",   f"{self._error_count}", "red" if self._error_count > 0 else "green"),
-        ])
 
         for key, value, style in rows:
             table.add_row(key, Text(value, style=style))
