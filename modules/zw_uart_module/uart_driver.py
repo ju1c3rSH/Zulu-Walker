@@ -12,7 +12,7 @@ import threading
 from typing import Callable, List, Optional
 
 from .protocol import (
-    SOF,
+    SOF1, SOF2,
     TYPE_HEARTBEAT, TYPE_EMERGENCY_STOP,
     FrameData, parse_frame,
     parse_heartbeat_payload,
@@ -27,7 +27,8 @@ class ParserState(enum.Enum):
     """State machine states for frame parsing."""
 
     WAITING_SOF = "WAITING_SOF"
-    GOT_SOF = "GOT_SOF"
+    GOT_SOF1 = "GOT_SOF1"   # Got 0xAA, waiting for 0x55
+    GOT_SOF = "GOT_SOF"     # Got 0xAA 0x55, reading Length
     GOT_LEN = "GOT_LEN"
     READING_DATA = "READING_DATA"
 
@@ -82,17 +83,28 @@ class FrameParser:
             FrameData if a complete frame was parsed, None otherwise
         """
         if self._state == ParserState.WAITING_SOF:
-            if byte == SOF:
-                self._buffer = bytearray([SOF])
+            if byte == SOF1:
+                self._buffer = bytearray([SOF1])
+                self._state = ParserState.GOT_SOF1
+            return None
+
+        elif self._state == ParserState.GOT_SOF1:
+            if byte == SOF2:
+                self._buffer.append(byte)
                 self._state = ParserState.GOT_SOF
+            elif byte == SOF1:
+                # Re-arm: previous 0xAA was noise, this one is new SOF1
+                self._buffer = bytearray([SOF1])
+            else:
+                self.reset()
             return None
 
         elif self._state == ParserState.GOT_SOF:
             # This is the Length field
-            # Length = Type(1) + Payload(var) + Checksum(1)
-            # Minimum length is 2 (Type + Checksum, no payload)
-            # Maximum length is 253 (Type + 252 payload + Checksum)
-            if 2 <= byte <= 253:
+            # Length = Type(1) + Payload(var) + CRC16(2)
+            # Minimum length is 3 (Type + CRC16, no payload)
+            # Maximum length is 255 (Type + 252 payload + CRC16)
+            if 3 <= byte <= 255:
                 self._expected_length = byte
                 self._buffer.append(byte)
                 self._state = ParserState.GOT_LEN
@@ -106,8 +118,8 @@ class FrameParser:
             # Accumulate bytes until we have complete frame
             self._buffer.append(byte)
 
-            # Expected total size: SOF(1) + Length(1) + (Length bytes)
-            expected_size = 2 + self._expected_length
+            # Expected total size: SOF1(1) + SOF2(1) + Length(1) + (Length bytes)
+            expected_size = 3 + self._expected_length
 
             if len(self._buffer) == expected_size:
                 # Complete frame received
