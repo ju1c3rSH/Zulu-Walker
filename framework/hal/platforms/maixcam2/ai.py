@@ -83,8 +83,7 @@ class MaixCam2AI:
             return False
 
         try:
-            # self._model = slot_cls(path, dual_buff=True, **kwargs)
-            self._model = slot_cls(path, **kwargs)
+            self._model = slot_cls(path, dual_buff=True, **kwargs)
             self._model_path = path
             self._model_type = model_type
             self._active_name = nick_name
@@ -159,16 +158,20 @@ class MaixCam2AI:
     # ------------------------------------------------------------------ #
 
     def detect(
-        self, frame: np.ndarray,
+        self, frame,
         **kwargs
     ) -> list[Detection]:
         """Run object detection on frame.
 
+        *frame* can be:
+        - a BGR numpy array (standard pipeline path)
+        - a ``maix.image.Image`` (zero-copy path, pass ``_raw=True``)
+
         Returns a list of Detection dataclasses.  Returns an empty list
         when no model is loaded or inference fails.
         """
-        conf_th = kwargs.get("conf_th", 0.5)
-        iou_th = kwargs.get("iou_th", 0.45)
+        conf_th = kwargs.pop("conf_th", 0.15)
+        iou_th = kwargs.pop("iou_th", 0.35)
 
         if self._model is None:
             logger.warning("detect() called but no model is loaded")
@@ -183,8 +186,11 @@ class MaixCam2AI:
             return []
 
         try:
-            frame_rgb = frame[:, :, ::-1].copy()
-            img = maix.image.cv2image(frame_rgb, bgr=False, copy=False)
+            if kwargs.pop("_raw", False):
+                img = frame
+            else:
+                frame_rgb = frame[:, :, ::-1].copy()
+                img = maix.image.cv2image(frame_rgb, bgr=False, copy=True)
         except Exception as e:
             logger.error("cv2image conversion failed: %s", e)
             return []
@@ -194,6 +200,14 @@ class MaixCam2AI:
         except Exception as e:
             logger.error("Model detect() failed: %s", e)
             return []
+
+        # Post-filter: some models don't fully honor conf_th internally
+        objects = [o for o in objects if o.score >= conf_th]
+
+        if not objects:
+            logger.debug("detect() returned 0 objects")
+        else:
+            logger.debug("detect() returned %d objects", len(objects))
 
         results: list = []
         for obj in objects:
@@ -240,8 +254,7 @@ class MaixCam2AI:
             return []
 
         try:
-            frame_rgb = frame[:, :, ::-1].copy()
-            img = maix.image.cv2image(frame_rgb, bgr=False, copy=False)
+            img = maix.image.cv2image(frame, bgr=True, copy=True)
         except Exception as e:
             logger.error("cv2image conversion failed: %s", e)
             return []

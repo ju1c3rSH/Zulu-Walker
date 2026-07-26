@@ -13,17 +13,10 @@ def _push_coordinator_status(coordinator) -> None:
     from utils.debug_console import DebugConsole
     dc = DebugConsole()
     info = coordinator.get_info()
-    sm_info = info.get("mission", {})
-    dc.set("mission_state", sm_info.get("state", "-"))
-    dc.set("visual_state", info.get("visual_state", "-"))
-    dc.set("link_active", str(coordinator.is_link_active()))
-    dc.set("active_task", info.get("active_task", "-"))
-    dc.set("cargo_count", str(sm_info.get("cargo_count", "-")))
-    dc.set("batch", str(sm_info.get("batch", "-")))
-    dc.set("step", str(sm_info.get("step", "-")))
-    dc.set("target_color", sm_info.get("target_color", "-"))
-    dc.set("batch1_order", ",".join(sm_info.get("first_batch_order", [])) or "-")
-    dc.set("batch2_order", ",".join(sm_info.get("second_batch_order", [])) or "-")
+    dc.set("state", info.get("state", "-"))
+    dc.set("link_active", str(info.get("link_active", False)))
+    dc.set("det_count", str(info.get("det_count", 0)))
+    dc.set("fps", f"{info.get('fps', 0.0):.1f}")
 
 
 def _build_display_callback(manager, machine):
@@ -44,9 +37,9 @@ def main():
     log_print("0xfb709394")
 
     from framework.event_bus import EventBus
-    from app.coordinator import MissionCoordinator
+    from app.coordinator import LineFollowCoordinator
     bus = EventBus()
-    coordinator = MissionCoordinator(bus)
+    coordinator = LineFollowCoordinator(bus)
 
     machine = Machine.create("project_config.yaml")
     manager = ModuleManager(machine, event_bus=bus)

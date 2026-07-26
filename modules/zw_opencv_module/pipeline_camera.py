@@ -105,6 +105,7 @@ class PipelineCamera:
         env_context = {
             "fps": fps,
             "focal_calculator": self.focal_calculator,
+            "camera": self.camera,
         }
         processed_frame, task_results = self.task_manager.run_tasks_serial(
             frame, context=env_context,

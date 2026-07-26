@@ -1,23 +1,4 @@
-from dataclasses import dataclass, field
-
-from .protocol import ActionId
-
-
-@dataclass
-class McuCmdReceived:
-    cmd_id: int
-    args: bytes = field(default=b"")
-
-
-@dataclass
-class ArrivedEvent:
-    zone_id: int
-
-
-@dataclass
-class ActionDoneEvent:
-    action_id: ActionId
-    result: int
+from dataclasses import dataclass
 
 
 @dataclass
@@ -30,8 +11,3 @@ class HeartbeatEvent:
 @dataclass
 class EmergencyStopEvent:
     reason: int
-
-
-@dataclass
-class RequestSyncEvent:
-    requested_state: int
