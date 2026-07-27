@@ -43,7 +43,6 @@ class LineFollowCoordinator:
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
         self.state_machine = LineFollowStateMachine()
-        self.state_machine.context
 
         self._uart_sender: Optional[callable] = None
         self._vision_manager: Optional[VisionManager] = None
@@ -57,11 +56,15 @@ class LineFollowCoordinator:
         self._running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_lock = threading.Lock()
+        self._wdt_feed = lambda: None
         self._last_servo_log_ts: float = 0.0
         self._last_det_count: int = 0
         self._last_fps: float = 0.0
         self._last_fps_time: float = 0.0
         self._mem_log_counter: int = 0
+
+    def set_wdt_feed(self, feed_fn) -> None:
+        self._wdt_feed = feed_fn
 
     def connect_vision(self, vision_manager: VisionManager) -> None:
         self._vision_manager = vision_manager
@@ -163,6 +166,7 @@ class LineFollowCoordinator:
     def _heartbeat_loop(self) -> None:
         self._last_mcu_heartbeat = time.monotonic()
         while self._running:
+            self._wdt_feed()
             time.sleep(_HEARTBEAT_INTERVAL)
             self._heartbeat_seq = (self._heartbeat_seq + 1) % 256
             self._send(
@@ -182,7 +186,7 @@ class LineFollowCoordinator:
                     self._is_linked = False
 
             self._mem_log_counter += 1
-            if self._mem_log_counter >= 10:
+            if self._mem_log_counter >= 50:
                 self._mem_log_counter = 0
                 self._log_memory()
 

@@ -301,7 +301,7 @@ class STM32UartInterface:
             self._handle_frame(frame)
 
         self._stats_log_counter += 1
-        if self._stats_log_counter >= 100:
+        if self._stats_log_counter >= 500:
             self._stats_log_counter = 0
             log_print(
                 f"[UART STATS] rx_bytes={self._rx_bytes_total} "

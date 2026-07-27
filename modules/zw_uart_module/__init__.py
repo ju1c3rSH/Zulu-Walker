@@ -19,7 +19,7 @@ _uart_interface: Optional[STM32UartInterface] = None
 _running: bool = False
 
 
-def init(machine: Machine, event_bus=None) -> None:
+def init(machine: Machine, event_bus=None, **kwargs) -> None:
     global _uart_interface
 
     _uart_interface = STM32UartInterface(uart=machine.uart)

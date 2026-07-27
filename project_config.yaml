@@ -1,5 +1,7 @@
 platform: maixcam2
 
+display_enabled: true
+
 cameras:
   - camera_id: "main"
     source: null
@@ -8,7 +10,7 @@ cameras:
     camera_stream_queue_size: 3
 
 uart_defaults:
-  port: "/dev/ttyS4"
+  port: "/dev/ttyS3"
   baudrate: 115200
 
 ai:
