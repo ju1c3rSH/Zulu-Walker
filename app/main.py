@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from utils.log_util import log_print
@@ -5,8 +6,35 @@ from utils.log_util import log_print
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    filename="logs/app.log",
+    filemode="a",
+)
+
 from framework.hal import Machine
 from framework.module_manager import ModuleManager
+
+
+try:
+    from maix import sys as maix_sys
+    _HAVE_MAIX_SYS = True
+except ImportError:
+    maix_sys = None
+    _HAVE_MAIX_SYS = False
+
+
+def _check_cmm_pressure(skip_threshold: float = 0.80) -> bool:
+    if not _HAVE_MAIX_SYS:
+        return False
+    try:
+        info = maix_sys.memory_info()
+        cmm_used = info.get("cmm_used", 0)
+        cmm_total = info.get("cmm_total", 256 * 1024 * 1024)
+        return cmm_used > int(cmm_total * skip_threshold)
+    except Exception:
+        return False
 
 
 def _push_coordinator_status(coordinator) -> None:
@@ -20,16 +48,24 @@ def _push_coordinator_status(coordinator) -> None:
 
 
 def _build_display_callback(manager, machine):
-    """Build display callback for the module manager."""
+    _last_seen_frame = None
+
     def display_fn():
+        nonlocal _last_seen_frame
         vision_mod = manager.modules.get("zw_opencv_module")
         if vision_mod and machine and machine.display:
             vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
             if vm:
                 frame = vm.compose_frame()
-                if frame is not None:
-                    if not machine.display.show(frame):
-                        manager._running = False
+                if frame is not None and frame is not _last_seen_frame:
+                    _last_seen_frame = frame
+                    if _check_cmm_pressure():
+                        return
+                    try:
+                        if not machine.display.show(frame):
+                            manager._running = False
+                    except Exception:
+                        pass
     return display_fn
 
 

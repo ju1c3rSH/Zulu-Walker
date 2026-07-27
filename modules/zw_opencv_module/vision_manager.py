@@ -126,6 +126,7 @@ class VisionManager:
                     self._pending_results.append(all_results)
 
                 profiler.stop("total")
+                time.sleep(0)
                 if any_fresh:
                     profiler.end_frame()
                 else:
