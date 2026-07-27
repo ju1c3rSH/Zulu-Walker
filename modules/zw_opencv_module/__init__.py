@@ -29,6 +29,11 @@ def init(machine: Machine, event_bus=None) -> None:
             cv2.setNumThreads(_cpu_cfg.opencv_threads)
         except Exception:
             pass
+    else:
+        try:
+            cv2.setNumThreads(1)
+        except Exception:
+            pass
     global _vision_manager, _legacy_shim
 
     config_path = os.path.join(_module_dir, "config", "vision_config.yaml")

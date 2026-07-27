@@ -170,8 +170,8 @@ class MaixCam2AI:
         Returns a list of Detection dataclasses.  Returns an empty list
         when no model is loaded or inference fails.
         """
-        conf_th = kwargs.pop("conf_th", 0.15)
-        iou_th = kwargs.pop("iou_th", 0.35)
+        conf_th = kwargs.pop("conf_th", 0.5)
+        iou_th = kwargs.pop("iou_th", 0.45)
 
         if self._model is None:
             logger.warning("detect() called but no model is loaded")
@@ -318,6 +318,8 @@ class MaixCam2AI:
     def _convert_keypoints(obj, model_type: str = "") -> list[Keypoint]:
         """Convert a MaixPy flat *points* list to `list[Keypoint]`."""
         kps: list[Keypoint] = []
+        if not hasattr(obj, "points"):
+            return kps
         pts = obj.points
         if not pts:
             return kps
