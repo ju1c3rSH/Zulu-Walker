@@ -99,6 +99,17 @@ class MaixCam2Camera:
         except Exception:
             return None
 
+    def read_raw(self):
+        if self._cam is None:
+            return None
+        try:
+            img = self._cam.read(block=False)
+            if img is not None:
+                self._last_raw = img
+            return img
+        except Exception:
+            return None
+
     def set(self, prop_id: int, value) -> bool:
         if self._cam is None:
             return False

@@ -56,29 +56,46 @@ def _build_display_callback(manager, machine):
         if vision_mod and machine and machine.display:
             vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
             if vm:
-                frame = vm.compose_frame()
+                frame = vm.get_display_frame()
                 if frame is not None and frame is not _last_seen_frame:
                     _last_seen_frame = frame
                     if _check_cmm_pressure():
                         return
                     try:
-                        if not machine.display.show(frame):
-                            manager._running = False
+                        machine.display.show(frame)
                     except Exception:
                         pass
     return display_fn
 
 
+def _make_wdt_feed():
+    try:
+        from maix.peripheral import wdt as _mwdt
+        _w = _mwdt.WDT(timeout=3000)
+
+        def _feed():
+            try:
+                _w.feed()
+            except Exception:
+                pass
+        return _feed
+    except Exception:
+        return lambda: None
+
+
 def main():
     log_print("0xfb709394")
+
+    wdt_feed = _make_wdt_feed()
 
     from framework.event_bus import EventBus
     from app.coordinator import LineFollowCoordinator
     bus = EventBus()
     coordinator = LineFollowCoordinator(bus)
+    coordinator.set_wdt_feed(wdt_feed)
 
     machine = Machine.create("project_config.yaml")
-    manager = ModuleManager(machine, event_bus=bus)
+    manager = ModuleManager(machine, event_bus=bus, wdt_feed=wdt_feed)
     manager.register_many(["zw_opencv_module", "zw_uart_module"])
 
     from modules.zw_opencv_module import get_vision_manager
