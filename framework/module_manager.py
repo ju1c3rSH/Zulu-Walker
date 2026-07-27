@@ -10,29 +10,16 @@ from framework.hal import Machine
 logger = logging.getLogger(__name__)
 
 
-def _make_wdt_feeder():
-    try:
-        from maix.peripheral import wdt as _maix_wdt
-        _wdt = _maix_wdt.WDT(timeout=3000)
-        def _feed():
-            try:
-                _wdt.feed()
-            except Exception:
-                pass
-        return _feed
-    except Exception:
-        return lambda: None
-
-
 class ModuleManager:
     MAIN_LOOP_DELAY = 0.016
 
-    def __init__(self, machine: Machine, event_bus=None) -> None:
+    def __init__(self, machine: Machine, event_bus=None, **module_init_kwargs) -> None:
         self._machine = machine
         self._event_bus = event_bus
         self.modules: Dict[str, object] = {}
         self._loop_methods: Dict[str, callable] = {}
         self._running = True
+        self._module_init_kwargs = module_init_kwargs
 
     def register(self, name: str) -> bool:
         """Register and load a single module by name."""
@@ -49,7 +36,7 @@ class ModuleManager:
             mod = importlib.import_module(full_name)
             self.modules[name] = mod
             if hasattr(mod, "init"):
-                mod.init(machine=self._machine, event_bus=self._event_bus)
+                mod.init(machine=self._machine, event_bus=self._event_bus, **self._module_init_kwargs)
             if hasattr(mod, "start"):
                 mod.start()
             if hasattr(mod, "loop"):
@@ -69,8 +56,6 @@ class ModuleManager:
             bind_current_thread("main_loop")
         except ImportError:
             pass
-
-        _feed_wdt = _make_wdt_feeder()
 
         while self._running:
             try:
@@ -94,7 +79,6 @@ class ModuleManager:
                     except Exception:
                         logger.exception("display_callback() failed")
 
-                _feed_wdt()
                 time.sleep(self.MAIN_LOOP_DELAY)
             except KeyboardInterrupt:
                 break
