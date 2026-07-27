@@ -27,6 +27,9 @@ _module_dir = os.path.dirname(__file__)
 
 
 class VisionManager:
+    _DISPLAY_TEXT_SCALE = 3.0
+    _DISPLAY_TEXT_THICKNESS = 2
+
     def __init__(self, camera_hub: CameraHub, config_path: str = None, ai: Optional[AIInference] = None) -> None:
         self._hub = camera_hub
         self._config_path = config_path or os.path.join(
@@ -46,9 +49,15 @@ class VisionManager:
         self._composed_frame = None
         self._any_fresh = False
         self._pending_results: deque = deque(maxlen=5)
+        self._display_frame = None
+
+        self._wdt_feed = lambda: None
 
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
+
+    def set_wdt_feed(self, feed_fn) -> None:
+        self._wdt_feed = feed_fn
 
     def start(self) -> None:
         if self._running:
@@ -108,22 +117,21 @@ class VisionManager:
 
         while self._running:
             try:
+                self._wdt_feed()
+
+                self._update_display_frame()
+
                 profiler.start("total")
                 composed, all_results, any_fresh = self.process_all()
-                self._composed_frame = composed
-                self._any_fresh = any_fresh
 
-                if self.ffmpeg_pusher and composed is not None:
-                    self.ffmpeg_pusher.push_frame_sync(composed)
+                if self._event_bus:
+                    self._pending_results.append(all_results)
 
                 for cb in self._result_callbacks:
                     try:
                         cb(all_results)
                     except Exception as e:
                         pass
-
-                if self._event_bus:
-                    self._pending_results.append(all_results)
 
                 profiler.stop("total")
                 time.sleep(0)
@@ -170,11 +178,73 @@ class VisionManager:
         if not frames:
             return None, all_results, False
 
-        composed = self.frame_composer.compose(frames, pipeline_ids, fps_list=fps_values)
+        composed = self.frame_composer.compose(frames, pipeline_ids, fps_list=fps_values) if self.frame_composer else None
         return composed, all_results, any_fresh
 
-    def compose_frame(self) -> Optional[np.ndarray]:
-        return self._composed_frame
+    def compose_frame(self):
+        return self._display_frame
+
+    def get_display_frame(self):
+        return self._display_frame
+
+    def _update_display_frame(self) -> None:
+        if not self._ai or not self._ai.loaded:
+            return
+        for pid, pipe in list(self._pipelines.items()):
+            raw_img = pipe.camera.read_raw()
+            if raw_img is None:
+                continue
+            try:
+                detections = self._ai.detect(raw_img, _raw=True)
+            except Exception:
+                continue
+
+            self._draw_detections_on_image(raw_img, detections)
+            self._display_frame = raw_img
+            return
+
+    def _draw_detections_on_image(self, img, detections) -> None:
+        try:
+            import maix.image
+        except ImportError:
+            return
+        labels = self._ai.labels if hasattr(self._ai, "labels") and self._ai.labels else []
+
+        for det in detections:
+            x1, y1 = det.x, det.y
+            x2 = x1 + det.w
+            y2 = y1 + det.h
+
+            label_text = (
+                labels[det.class_id]
+                if det.class_id < len(labels)
+                else str(det.class_id)
+            )
+            text = f"{label_text}:{det.score:.2f}"
+
+            try:
+                size = maix.image.string_size(text, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
+                tw, th = size[0], size[1]
+            except Exception:
+                tw, th = 80, 24 * 3
+
+            bar_h = th + 6
+            label_y = y1 - bar_h
+            if label_y < 0:
+                label_y = y1
+
+            try:
+                img.draw_rect(x1, label_y, tw + 8, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
+            except Exception:
+                pass
+            try:
+                img.draw_rect(x1, y1, det.w, det.h, color=maix.image.COLOR_GREEN, thickness=3)
+            except Exception:
+                pass
+            try:
+                img.draw_string(x1 + 4, label_y + 2, text, color=maix.image.COLOR_WHITE, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
+            except Exception:
+                pass
 
     def drain_results(self):
         results = []
@@ -192,7 +262,13 @@ class VisionManager:
             pipe.camera.release()
 
     def _make_placeholder(self) -> np.ndarray:
-        return np.zeros((480, 640, 3), dtype=np.uint8)
+        for pid, pipe in list(self._pipelines.items()):
+            if hasattr(pipe.camera, 'width') and hasattr(pipe.camera, 'height'):
+                w = pipe.camera.width
+                h = pipe.camera.height
+                if w and h:
+                    return np.zeros((h, w, 3), dtype=np.uint8)
+        return np.zeros((640, 480, 3), dtype=np.uint8)
 
     def enable_task(self, pipeline_id: str, task_name: str) -> bool:
         pipe = self._pipelines.get(pipeline_id)
