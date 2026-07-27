@@ -97,7 +97,7 @@ class PipelineCamera:
         if frame is None:
             frame = self._last_frame
         else:
-            self._last_frame = frame.copy()
+            self._last_frame = frame
 
         if frame is None:
             return None, {}

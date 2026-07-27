@@ -13,6 +13,13 @@ from typing import Optional, Callable, Deque
 from modules.zw_opencv_module.vision_manager import VisionManager
 from utils.log_util import log_print
 
+try:
+    from maix import sys as maix_sys
+    _HAVE_MAIX_SYS = True
+except ImportError:
+    maix_sys = None
+    _HAVE_MAIX_SYS = False
+
 from framework.event_bus import EventBus
 from modules.zw_uart_module.events import (
     HeartbeatEvent,
@@ -49,10 +56,12 @@ class LineFollowCoordinator:
         self._is_linked = False
         self._running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_lock = threading.Lock()
         self._last_servo_log_ts: float = 0.0
         self._last_det_count: int = 0
         self._last_fps: float = 0.0
         self._last_fps_time: float = 0.0
+        self._mem_log_counter: int = 0
 
     def connect_vision(self, vision_manager: VisionManager) -> None:
         self._vision_manager = vision_manager
@@ -140,9 +149,9 @@ class LineFollowCoordinator:
     # ===== MCU events =====
 
     def _on_heartbeat(self, event: HeartbeatEvent) -> None:
-        self._last_mcu_heartbeat = time.monotonic()
-        self._is_linked = True
-
+        with self._heartbeat_lock:
+            self._last_mcu_heartbeat = time.monotonic()
+            self._is_linked = True
     def _on_emergency(self, event: EmergencyStopEvent) -> None:
         captured_reason = event.reason
         self._enqueue_sm(
@@ -163,8 +172,35 @@ class LineFollowCoordinator:
                     0,
                 )
             )
-            if time.monotonic() - self._last_mcu_heartbeat > _HEARTBEAT_TIMEOUT:
-                self._is_linked = False
+            with self._heartbeat_lock:
+                since = time.monotonic() - self._last_mcu_heartbeat
+                was_linked = self._is_linked
+            if since > _HEARTBEAT_TIMEOUT:
+                if was_linked:
+                    log_print(f"[HB] LOST! last_rx={since:.2f}s ago")
+                with self._heartbeat_lock:
+                    self._is_linked = False
+
+            self._mem_log_counter += 1
+            if self._mem_log_counter >= 10:
+                self._mem_log_counter = 0
+                self._log_memory()
+
+    def _log_memory(self) -> None:
+        if not _HAVE_MAIX_SYS:
+            return
+        try:
+            info = maix_sys.memory_info()
+            user = info.get("used", 0) / 1048576
+            user_total = info.get("total", 0) / 1048576
+            cmm = info.get("cmm_used", 0) / 1048576
+            cmm_total = info.get("cmm_total", 0) / 1048576
+            log_print(
+                f"[MEM] user={user:.0f}/{user_total:.0f}MB "
+                f"CMM={cmm:.0f}/{cmm_total:.0f}MB"
+            )
+        except Exception as e:
+            log_print(f"[MEM] error: {e}")
 
     # ===== debug =====
 

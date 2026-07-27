@@ -46,6 +46,10 @@ class FrameParser:
         self._buffer = bytearray()
         self._expected_length = 0
         self._logger = logging.getLogger(__name__)
+        self._on_reject = None
+
+    def set_reject_callback(self, callback) -> None:
+        self._on_reject = callback
 
     def reset(self):
         """Reset parser state."""
@@ -133,11 +137,14 @@ class FrameParser:
 
     def _parse_complete_frame(self) -> Optional[FrameData]:
         """Parse the accumulated buffer as a complete frame."""
-        frame = parse_frame(bytes(self._buffer))
+        raw = bytes(self._buffer)
+        frame = parse_frame(raw)
         if frame is None:
             self._logger.warning(
-                f"Frame validation failed: {self._buffer.hex()}"
+                f"Frame validation failed: {raw.hex()}"
             )
+            if self._on_reject:
+                self._on_reject(raw)
         return frame
 
 
@@ -160,6 +167,7 @@ class STM32UartInterface:
         """
         self._uart = uart
         self._parser = FrameParser()
+        self._parser.set_reject_callback(self._on_frame_rejected)
 
         # Write lock for send operations
         self._write_lock = threading.Lock()
@@ -170,6 +178,12 @@ class STM32UartInterface:
         # Logger
         self._logger = logging.getLogger(__name__)
         self._debug_hex = False
+
+        self._rx_bytes_total = 0
+        self._rx_frames_ok = 0
+        self._rx_frames_bad = 0
+        self._rx_frames_unknown = 0
+        self._stats_log_counter = 0
 
     @property
     def is_connected(self) -> bool:
@@ -250,13 +264,15 @@ class STM32UartInterface:
             data: Raw bytes received from serial port
         """
         try:
+            self._rx_bytes_total += len(data)
+
             if self._debug_hex:
                 self._logger.debug(f"Received: {data.hex()}")
 
             frames = self._parser.feed(data)
 
             for frame in frames:
-                self._handle_frame(frame)
+                self._handle_frame_with_stats(frame)
 
         except Exception as e:
             self._logger.error(f"Error processing received data: {e}")
@@ -273,6 +289,29 @@ class STM32UartInterface:
         except Exception as e:
             self._logger.error(f"Failed to send raw frame: {e}")
             return False
+
+    def _handle_frame_with_stats(self, frame: FrameData):
+        self._rx_frames_ok += 1
+        if frame.frame_type == TYPE_HEARTBEAT:
+            self._handle_frame(frame)
+        elif frame.frame_type == TYPE_EMERGENCY_STOP:
+            self._handle_frame(frame)
+        else:
+            self._rx_frames_unknown += 1
+            self._handle_frame(frame)
+
+        self._stats_log_counter += 1
+        if self._stats_log_counter >= 100:
+            self._stats_log_counter = 0
+            log_print(
+                f"[UART STATS] rx_bytes={self._rx_bytes_total} "
+                f"ok={self._rx_frames_ok} bad={self._rx_frames_bad} "
+                f"unknown={self._rx_frames_unknown}"
+            )
+
+    def _on_frame_rejected(self, raw: bytes):
+        self._rx_frames_bad += 1
+        log_print(f"[UART] CRC/parse fail: {raw.hex()}")
 
     def _handle_frame(self, frame: FrameData):
         """
