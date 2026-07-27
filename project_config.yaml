@@ -3,18 +3,17 @@ platform: maixcam2
 cameras:
   - camera_id: "main"
     source: null
-    width: 544
-    height: 544
-    fps: 90
+    width: 640
+    height: 640
     camera_stream_queue_size: 3
 
 uart_defaults:
-  port: "/dev/ttyS1"
-  baudrate: 921600
+  port: "/dev/ttyS4"
+  baudrate: 115200
 
 ai:
   models:
     - nick_name: "yolo11n"
-      model: "/root/models/steelball_best.mud"
+      model: "/root/models/steelball_640.mud"
       model_type: "auto"
   active: "yolo11n"
