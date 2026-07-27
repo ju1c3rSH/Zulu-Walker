@@ -1,14 +1,31 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import time
 from typing import Callable, Dict, Optional
 
 from framework.hal import Machine
 
+logger = logging.getLogger(__name__)
+
+
+def _make_wdt_feeder():
+    try:
+        from maix.peripheral import wdt as _maix_wdt
+        _wdt = _maix_wdt.WDT(timeout=3000)
+        def _feed():
+            try:
+                _wdt.feed()
+            except Exception:
+                pass
+        return _feed
+    except Exception:
+        return lambda: None
+
 
 class ModuleManager:
-    MAIN_LOOP_DELAY = 0.00333
+    MAIN_LOOP_DELAY = 0.016
 
     def __init__(self, machine: Machine, event_bus=None) -> None:
         self._machine = machine
@@ -53,13 +70,15 @@ class ModuleManager:
         except ImportError:
             pass
 
+        _feed_wdt = _make_wdt_feeder()
+
         while self._running:
             try:
                 for name, loop_method in self._loop_methods.items():
                     try:
                         loop_method()
                     except Exception:
-                        ...
+                        logger.exception("Module '%s' loop() failed", name)
 
                 if coordinator:
                     coordinator.loop()
@@ -67,14 +86,15 @@ class ModuleManager:
                         try:
                             tick_callback(coordinator)
                         except Exception:
-                            ...
+                            logger.exception("tick_callback() failed")
 
                 if display_callback:
                     try:
                         display_callback()
                     except Exception:
-                        ...
+                        logger.exception("display_callback() failed")
 
+                _feed_wdt()
                 time.sleep(self.MAIN_LOOP_DELAY)
             except KeyboardInterrupt:
                 break
