@@ -93,11 +93,14 @@ class PipelineCamera:
         return None
 
     def process_frame(self, fps: float = 0.0) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
-        frame = self.camera.read()
-        if frame is None:
-            frame = self._last_frame
-        else:
+        raw_img = self.camera.read_raw()
+
+        if raw_img is not None:
+            import maix.image
+            frame = maix.image.image2cv(raw_img, ensure_bgr=True, copy=True)
             self._last_frame = frame
+        else:
+            frame = self._last_frame
 
         if frame is None:
             return None, {}
