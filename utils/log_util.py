@@ -11,6 +11,11 @@ from datetime import datetime
 _LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "debug.log")
 _LOG_LOCK = threading.Lock()
 
+try:
+    os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
+except Exception:
+    pass
+
 
 def log_print(msg: str = "", *args, **kwargs) -> None:
     ts = datetime.now().strftime("[%H:%M:%S] ")
@@ -21,7 +26,6 @@ def log_print(msg: str = "", *args, **kwargs) -> None:
         msg = str(msg)
     line = f"{ts}{msg}\n"
     try:
-        os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
         with _LOG_LOCK:
             with open(_LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(line)
@@ -31,10 +35,14 @@ def log_print(msg: str = "", *args, **kwargs) -> None:
     try:
         from utils.debug_console import DebugConsole
         dc = DebugConsole()
-        dc.log(msg)
-        if not dc._running:
+        if not DebugConsole._global_enabled:
             sys.__stdout__.write(line)
             sys.__stdout__.flush()
+        else:
+            dc.log(msg)
+            if not dc._running:
+                sys.__stdout__.write(line)
+                sys.__stdout__.flush()
     except Exception:
         pass
 

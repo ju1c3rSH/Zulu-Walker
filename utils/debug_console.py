@@ -25,6 +25,11 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 class DebugConsole:
     _instance: Optional["DebugConsole"] = None
     _singleton_lock = threading.Lock()
+    _global_enabled: bool = True
+
+    @classmethod
+    def set_global_enabled(cls, enabled: bool) -> None:
+        cls._global_enabled = enabled
 
     def __new__(cls):
         if cls._instance is None:
@@ -52,6 +57,8 @@ class DebugConsole:
     # ---- public API ----
 
     def set(self, key: str, value) -> None:
+        if not DebugConsole._global_enabled:
+            return
         with self._status_lock:
             self._status[key] = str(value)
 
@@ -60,16 +67,23 @@ class DebugConsole:
             return self._status.get(key, default)
 
     def log(self, msg: str) -> None:
+        if not DebugConsole._global_enabled:
+            return
         cleaned = _ANSI_RE.sub("", msg)
         ts = time.strftime("%H:%M:%S", time.localtime())
         with self._log_lock:
             self._log_lines.append(f"[{ts}] {cleaned}")
 
     def incr_error(self) -> None:
+        if not DebugConsole._global_enabled:
+            return
         self._error_count += 1
 
     def start(self) -> None:
         if self._running:
+            return
+        if not DebugConsole._global_enabled:
+            self._running = True
             return
         self._running = True
         self._start_time = time.monotonic()

@@ -17,8 +17,6 @@ from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference
 from utils.log_util import log_print
 
-from .frame_composer import FrameComposer
-from .ffmpeg_pusher import FFmpegPusher
 from .pipeline_camera import PipelineCamera
 from .performance import profiler
 
@@ -38,8 +36,6 @@ class VisionManager:
         )
         self._pipelines: Dict[str, PipelineCamera] = {}
         self._ai = ai
-        self.frame_composer: Optional[FrameComposer] = None
-        self.ffmpeg_pusher: Optional[FFmpegPusher] = None
         self._running = False
         self._process_thread: Optional[Thread] = None
         self._result_callbacks: List[Callable[[Dict], None]] = []
@@ -47,7 +43,6 @@ class VisionManager:
 
         self._fps_data: Dict[str, dict] = {}
 
-        self._composed_frame = None
         self._any_fresh = False
         self._pending_results: deque = deque(maxlen=5)
         self._display_frame = None
@@ -68,8 +63,12 @@ class VisionManager:
         if not os.path.exists(self._config_path):
             return
 
-        with open(self._config_path) as f:
-            cfg = yaml.safe_load(f)
+        try:
+            with open(self._config_path) as f:
+                cfg = yaml.safe_load(f)
+        except Exception:
+            logger.error("Failed to load vision config: %s", self._config_path)
+            return
 
         pipelines = cfg.get("pipelines", [])
         for pipe_cfg in pipelines:
@@ -103,11 +102,6 @@ class VisionManager:
                 ai=self._ai,
             )
             self._pipelines[pipeline_id] = pipe
-
-        self.frame_composer = FrameComposer(
-            layout="grid",
-            output_size=(544, 544),
-        )
 
         self._running = True
         self._process_thread = Thread(target=self._process_loop, daemon=True)
@@ -151,10 +145,7 @@ class VisionManager:
     def process_all(
         self,
     ) -> Tuple[Optional[np.ndarray], Dict[str, Dict], bool]:
-        frames = []
         all_results: Dict[str, Dict] = {}
-        pipeline_ids = []
-        fps_values = []
         any_fresh = False
 
         for pid, pipe in list(self._pipelines.items()):
@@ -172,19 +163,10 @@ class VisionManager:
                     d["fps"] = d["count"] / elapsed
                     d["count"] = 0
                     d["start"] = time.time()
-            else:
-                frame = self._make_placeholder()
 
-            frames.append(frame)
-            pipeline_ids.append(pid)
             all_results[pid] = results
-            fps_values.append(self._fps_data.get(pid, {}).get("fps", 0.0))
 
-        if not frames:
-            return None, all_results, False
-
-        composed = self.frame_composer.compose(frames, pipeline_ids, fps_list=fps_values) if self.frame_composer else None
-        return composed, all_results, any_fresh
+        return None, all_results, any_fresh
 
     def compose_frame(self):
         return self._display_frame
@@ -289,15 +271,6 @@ class VisionManager:
         if pipe is not None and hasattr(pipe.camera, 'release'):
             pipe.camera.release()
 
-    def _make_placeholder(self) -> np.ndarray:
-        for pid, pipe in list(self._pipelines.items()):
-            if hasattr(pipe.camera, 'width') and hasattr(pipe.camera, 'height'):
-                w = pipe.camera.width
-                h = pipe.camera.height
-                if w and h:
-                    return np.zeros((h, w, 3), dtype=np.uint8)
-        return np.zeros((640, 480, 3), dtype=np.uint8)
-
     def enable_task(self, pipeline_id: str, task_name: str) -> bool:
         pipe = self._pipelines.get(pipeline_id)
         if pipe:
@@ -341,9 +314,6 @@ class VisionManager:
 
     def release(self) -> None:
         self.stop()
-        if self.ffmpeg_pusher:
-            self.ffmpeg_pusher.close_sync()
-            self.ffmpeg_pusher = None
         self._pipelines.clear()
 
 

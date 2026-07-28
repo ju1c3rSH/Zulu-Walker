@@ -16,7 +16,7 @@ _legacy_shim: Optional[_LegacyCameraManagerShim] = None
 _running: bool = False
 
 try:
-    cv2.ocl.setUseOpenCL(True)
+    pass
 except Exception:
     pass
 
