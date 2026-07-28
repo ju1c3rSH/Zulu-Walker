@@ -14,12 +14,12 @@ uart_defaults:
   baudrate: 115200
 
 ai:
-  mask_method: "find_blobs"
-  # mask_method: "find_blobs"   # 方案A — C++ 质心+面积
-  # mask_method: "numpy"      # 方案B — bbox中心+面积
-  # mask_method: "none"       # 关闭（向后兼容）
   models:
     - nick_name: "yolo11n"
       model: "/root/models/steelball_640.mud"
       model_type: "auto"
+    - nick_name: "plate_seg"
+      model: "/root/models/steelsheet_npu_only.mud"
+      model_type: "auto"
   active: "yolo11n"
+  # active: "plate_seg"  # switch to seg model for steel plate detection
