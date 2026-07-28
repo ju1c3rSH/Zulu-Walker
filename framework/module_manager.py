@@ -6,6 +6,7 @@ import time
 from typing import Callable, Dict, Optional
 
 from framework.hal import Machine
+from utils.log_util import log_print
 
 logger = logging.getLogger(__name__)
 
@@ -13,12 +14,16 @@ logger = logging.getLogger(__name__)
 class ModuleManager:
     MAIN_LOOP_DELAY = 0.016
 
-    def __init__(self, machine: Machine, event_bus=None, **module_init_kwargs) -> None:
+    def __init__(self, machine: Machine, event_bus=None, wdt_feed=None, **module_init_kwargs) -> None:
         self._machine = machine
         self._event_bus = event_bus
         self.modules: Dict[str, object] = {}
         self._loop_methods: Dict[str, callable] = {}
         self._running = True
+        self._wdt_feed = wdt_feed or (lambda: None)
+        self._wdt_count = 0
+        if wdt_feed is not None:
+            module_init_kwargs.setdefault('wdt_feed', wdt_feed)
         self._module_init_kwargs = module_init_kwargs
 
     def register(self, name: str) -> bool:
@@ -59,6 +64,11 @@ class ModuleManager:
 
         while self._running:
             try:
+                self._wdt_feed()
+                self._wdt_count += 1
+                if self._wdt_count % 200 == 0:
+                    log_print(f"[WDT] main feed #{self._wdt_count}")
+
                 for name, loop_method in self._loop_methods.items():
                     try:
                         loop_method()

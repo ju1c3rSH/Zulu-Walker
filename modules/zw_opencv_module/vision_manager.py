@@ -15,6 +15,7 @@ import yaml
 
 from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference
+from utils.log_util import log_print
 
 from .frame_composer import FrameComposer
 from .ffmpeg_pusher import FFmpegPusher
@@ -52,6 +53,7 @@ class VisionManager:
         self._display_frame = None
 
         self._wdt_feed = lambda: None
+        self._wdt_count = 0
 
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
@@ -118,6 +120,9 @@ class VisionManager:
         while self._running:
             try:
                 self._wdt_feed()
+                self._wdt_count += 1
+                if self._wdt_count % 100 == 0:
+                    log_print(f"[WDT] viz feed #{self._wdt_count}")
 
                 self._update_display_frame()
 
@@ -245,6 +250,36 @@ class VisionManager:
                 img.draw_string(x1 + 4, label_y + 2, text, color=maix.image.COLOR_WHITE, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
             except Exception:
                 pass
+
+            if det.seg_mask is not None:
+                self._draw_seg_mask_on_maix(img, det)
+
+    @staticmethod
+    def _draw_seg_mask_on_maix(img, det) -> None:
+        try:
+            import maix.image
+            mask_np = det.seg_mask
+            if mask_np is None:
+                return
+            h, w = mask_np.shape[:2]
+            if h == 0 or w == 0:
+                return
+            mask_img = maix.image.cv2image(mask_np, bgr=False, copy=True)
+            try:
+                img.draw_seg_mask(det.x, det.y, mask_img, threshold=127)
+            except AttributeError:
+                mask_bin = mask_np > 127
+                for row in range(min(h, img.height() - det.y)):
+                    for col in range(min(w, img.width() - det.x)):
+                        if mask_bin[row, col]:
+                            px = det.x + col
+                            py = det.y + row
+                            try:
+                                img.set_pixel(px, py, maix.image.COLOR_GREEN)
+                            except Exception:
+                                pass
+        except Exception:
+            pass
 
     def drain_results(self):
         results = []
