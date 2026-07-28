@@ -17,7 +17,7 @@ def create_uart(port: str = "mock", baudrate: int = 921600) -> MockUart:
     return MockUart(port=port, baudrate=baudrate)
 
 
-def create_ai() -> MockAI:
+def create_ai(**kwargs) -> MockAI:
     return MockAI()
 
 

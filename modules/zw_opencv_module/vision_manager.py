@@ -251,35 +251,27 @@ class VisionManager:
             except Exception:
                 pass
 
-            if det.seg_mask is not None:
-                self._draw_seg_mask_on_maix(img, det)
+            if det.mask_stats is not None:
+                self._draw_mask_center(img, det)
 
     @staticmethod
-    def _draw_seg_mask_on_maix(img, det) -> None:
+    def _draw_mask_center(img, det) -> None:
         try:
             import maix.image
-            mask_np = det.seg_mask
-            if mask_np is None:
-                return
-            h, w = mask_np.shape[:2]
-            if h == 0 or w == 0:
-                return
-            mask_img = maix.image.cv2image(mask_np, bgr=False, copy=True)
-            try:
-                img.draw_seg_mask(det.x, det.y, mask_img, threshold=127)
-            except AttributeError:
-                mask_bin = mask_np > 127
-                for row in range(min(h, img.height() - det.y)):
-                    for col in range(min(w, img.width() - det.x)):
-                        if mask_bin[row, col]:
-                            px = det.x + col
-                            py = det.y + row
-                            try:
-                                img.set_pixel(px, py, maix.image.COLOR_GREEN)
-                            except Exception:
-                                pass
+        except ImportError:
+            return
+        stats = det.mask_stats
+        if stats is None or stats.area_px == 0:
+            return
+        cx = int(stats.center_x)
+        cy = int(stats.center_y)
+        try:
+            img.draw_circle(cx, cy, 3, color=maix.image.COLOR_RED, thickness=-1)
         except Exception:
-            pass
+            try:
+                img.draw_rect(cx - 2, cy - 2, 5, 5, color=maix.image.COLOR_RED, thickness=-1)
+            except Exception:
+                pass
 
     def drain_results(self):
         results = []
