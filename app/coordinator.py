@@ -1,9 +1,8 @@
 """
-Line-following mission coordinator.
+Line-following mission coordinator (v3.0 master-slave protocol).
 
-Bridges vision results -> UART servo data for STM32.
-Simple: receive line_follow error_x -> send to MCU via VISUAL_SERVO_DATA.
-AI inference results: logged for now (TODO: MCU integration).
+Bridges vision results -> UART data streaming for MSPM0 master.
+Slave role: waits for CMD_REQUEST/CMD_STOP from master, streams data when active.
 """
 import threading
 import time
@@ -22,20 +21,28 @@ except ImportError:
 
 from framework.event_bus import EventBus
 from modules.zw_uart_module.events import (
-    HeartbeatEvent,
     EmergencyStopEvent,
+    CmdRequestEvent,
+    CmdStopEvent,
 )
-from app.line_follow_sm import LineFollowStateMachine, LineFollowStateNames
+from app.line_follow_sm import LineFollowStateMachine
 from modules.zw_uart_module.protocol import (
-    build_visual_servo_data_frame,
-    build_heartbeat_frame,
-    build_emergency_stop_frame,
+    build_cmd_ack_frame,
+    build_cmd_nack_frame,
+    build_data_stream_frame,
+    DATA_PAYLOAD_SIZES,
+    SUPPORTED_DATA_TYPES,
+    DATA_LINE_POSITION,
+    DATA_TARGET_POSITION,
+    DATA_TARGET_COUNT,
+    DATA_DETECTION_STATUS,
+    DATA_ALL_TARGETS,
+    NACK_UNSUPPORTED_TYPE,
 )
 from modules.zw_opencv_module.processors.base import VisionResult
 
 
-_HEARTBEAT_INTERVAL = 0.1
-_HEARTBEAT_TIMEOUT = 0.3
+_CMD_TIMEOUT = 5.0
 
 
 class LineFollowCoordinator:
@@ -50,28 +57,28 @@ class LineFollowCoordinator:
         self._sm_queue: Deque[Callable] = deque()
         self._sm_lock = threading.Lock()
 
-        self._heartbeat_seq = 0
-        self._last_mcu_heartbeat = 0.0
-        self._is_linked = False
+        # Master-slave streaming state
+        self._streaming_type = 0
+        self._stream_seq = 0
+        self._last_cmd_time = 0.0
+        self._master_linked = False
+        self._cmd_lock = threading.Lock()
+
         self._running = False
-        self._heartbeat_thread: Optional[threading.Thread] = None
-        self._heartbeat_lock = threading.Lock()
         self._wdt_feed = lambda: None
-        self._wdt_count = 0
-        self._last_servo_log_ts: float = 0.0
-        self._last_det_count: int = 0
         self._last_fps: float = 0.0
         self._last_fps_time: float = 0.0
         self._mem_log_counter: int = 0
+
+        # Vision result cache
+        self._latest_line: dict = {}
+        self._latest_ai: dict = {}
 
     def set_wdt_feed(self, feed_fn) -> None:
         self._wdt_feed = feed_fn
 
     def connect_vision(self, vision_manager: VisionManager) -> None:
         self._vision_manager = vision_manager
-
-    def is_link_active(self) -> bool:
-        return self._is_linked
 
     def set_uart_sender(self, sender: callable) -> None:
         self._uart_sender = sender
@@ -103,25 +110,41 @@ class LineFollowCoordinator:
                 self._sm_queue.popleft()()
         self.state_machine.run_to_completion()
 
+        now = time.monotonic()
+        with self._cmd_lock:
+            streaming = self._streaming_type
+            if streaming != 0:
+                if now - self._last_cmd_time > _CMD_TIMEOUT:
+                    self._streaming_type = 0
+                    self._master_linked = False
+                    streaming = 0
+                else:
+                    payload = self._build_stream_payload(streaming)
+                    if payload:
+                        frame = build_data_stream_frame(
+                            self._stream_seq, streaming, payload)
+                        self._send(frame)
+                        self._stream_seq = (self._stream_seq + 1) & 0xFF
+
+        self._wdt_feed()
+
+        self._mem_log_counter += 1
+        if self._mem_log_counter >= 300:
+            self._mem_log_counter = 0
+            self._log_memory()
+
     def start(self) -> None:
         self._running = True
         self._wire_events()
-        self._heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop, daemon=True)
-        self._heartbeat_thread.start()
-        self._send_initial_status()
+        self._last_cmd_time = time.monotonic()
 
     def stop(self) -> None:
         self._running = False
-        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
-            self._heartbeat_thread.join(timeout=1.0)
 
     def _wire_events(self) -> None:
-        self.event_bus.subscribe(HeartbeatEvent, self._on_heartbeat)
+        self.event_bus.subscribe(CmdRequestEvent, self._on_cmd_request)
+        self.event_bus.subscribe(CmdStopEvent, self._on_cmd_stop)
         self.event_bus.subscribe(EmergencyStopEvent, self._on_emergency)
-
-    def _send_initial_status(self) -> None:
-        self._send(build_heartbeat_frame(0, self.state_machine.current_state_id, 0))
 
     # ===== vision results =====
 
@@ -131,68 +154,119 @@ class LineFollowCoordinator:
                 if not isinstance(vision_result, VisionResult):
                     continue
                 data = vision_result.result_data if vision_result.success else {}
-
                 if task_name == "line_follow":
-                    self._handle_line_follow_result(data)
+                    self._latest_line = data
                 elif task_name == "ai_inference":
-                    self._handle_ai_result(data)
+                    self._latest_ai = data
 
-    def _handle_line_follow_result(self, data: dict) -> None:
-        target_found = data.get("target_found", False)
-        pe_x = data.get("percent_error_x", 0)
+    # ===== Master events =====
 
-        if self.state_machine.current_state == "LINE_FOLLOW":
-            flags = 1 if target_found else 0
-            state = self.state_machine.current_state_id
-            self._send(build_visual_servo_data_frame(pe_x, 0, flags, state))
+    def _on_cmd_request(self, event: CmdRequestEvent) -> None:
+        data_type = event.data_type
+        now = time.monotonic()
+        with self._cmd_lock:
+            self._last_cmd_time = now
+            self._master_linked = True
 
-    def _handle_ai_result(self, data: dict) -> None:
-        detections = data.get("detections", [])
-        self._last_det_count = len(detections)
+        if data_type not in SUPPORTED_DATA_TYPES:
+            frame = build_cmd_nack_frame(data_type, NACK_UNSUPPORTED_TYPE)
+            self._send(frame)
+            return
 
-    # ===== MCU events =====
+        with self._cmd_lock:
+            self._streaming_type = data_type
+            self._stream_seq = 0
+        payload_size = DATA_PAYLOAD_SIZES.get(data_type, 0)
+        if payload_size is None:
+            payload_size = 0
+        frame = build_cmd_ack_frame(data_type, 60, payload_size)
+        self._send(frame)
 
-    def _on_heartbeat(self, event: HeartbeatEvent) -> None:
-        with self._heartbeat_lock:
-            self._last_mcu_heartbeat = time.monotonic()
-            self._is_linked = True
+    def _on_cmd_stop(self, event: CmdStopEvent) -> None:
+        now = time.monotonic()
+        with self._cmd_lock:
+            self._last_cmd_time = now
+            self._streaming_type = 0
+            self._stream_seq = 0
+        frame = build_cmd_ack_frame(0x00, 0, 0)
+        self._send(frame)
+
     def _on_emergency(self, event: EmergencyStopEvent) -> None:
         captured_reason = event.reason
+        with self._cmd_lock:
+            self._streaming_type = 0
         self._enqueue_sm(
             lambda: self.state_machine.set_error(99, f"Emergency stop: reason={captured_reason}")
         )
 
-    # ===== heartbeat =====
+    # ===== streaming payload builders =====
 
-    def _heartbeat_loop(self) -> None:
-        self._last_mcu_heartbeat = time.monotonic()
-        while self._running:
-            self._wdt_feed()
-            self._wdt_count += 1
-            if self._wdt_count % 50 == 0:
-                log_print(f"[WDT] hb feed #{self._wdt_count}")
-            time.sleep(_HEARTBEAT_INTERVAL)
-            self._heartbeat_seq = (self._heartbeat_seq + 1) % 256
-            self._send(
-                build_heartbeat_frame(
-                    self._heartbeat_seq,
-                    self.state_machine.current_state_id,
-                    0,
-                )
-            )
-            with self._heartbeat_lock:
-                since = time.monotonic() - self._last_mcu_heartbeat
-                was_linked = self._is_linked
-            if since > _HEARTBEAT_TIMEOUT:
-                if was_linked:
-                    log_print(f"[HB] LOST! last_rx={since:.2f}s ago")
-                with self._heartbeat_lock:
-                    self._is_linked = False
+    def _build_stream_payload(self, data_type: int) -> Optional[bytes]:
+        if data_type == DATA_LINE_POSITION:
+            return self._build_line_position_payload()
+        elif data_type == DATA_TARGET_POSITION:
+            return self._build_target_position_payload()
+        elif data_type == DATA_TARGET_COUNT:
+            return self._build_target_count_payload()
+        elif data_type == DATA_DETECTION_STATUS:
+            return self._build_detection_status_payload()
+        elif data_type == DATA_ALL_TARGETS:
+            return self._build_all_targets_payload()
+        return None
 
-            self._mem_log_counter += 1
-            if self._mem_log_counter >= 50:
-                self._mem_log_counter = 0
-                self._log_memory()
+    def _build_line_position_payload(self) -> bytes:
+        data = self._latest_line
+        pe_x = data.get("percent_error_x", 0)
+        pe_y = data.get("percent_error_y", 0)
+        target_found = data.get("target_found", False)
+        flags = 1 if target_found else 0
+        state = self.state_machine.current_state_id
+        return (pe_x.to_bytes(2, 'little', signed=True) +
+                pe_y.to_bytes(2, 'little', signed=True) +
+                bytes([flags, state]))
+
+    def _build_target_position_payload(self) -> bytes:
+        data = self._latest_ai
+        detections = data.get("detections", [])
+        if detections:
+            best = max(detections, key=lambda d: d.score)
+            x = int(best.x)
+            y = int(best.y)
+            conf = max(0, min(255, int(best.score * 255)))
+            flags = 0x01
+        else:
+            x, y, conf = 0, 0, 0
+            flags = 0x00
+        return (x.to_bytes(2, 'little', signed=True) +
+                y.to_bytes(2, 'little', signed=True) +
+                bytes([conf, flags]))
+
+    def _build_target_count_payload(self) -> bytes:
+        data = self._latest_ai
+        detections = data.get("detections", [])
+        return bytes([len(detections)])
+
+    def _build_detection_status_payload(self) -> bytes:
+        data = self._latest_ai
+        detections = data.get("detections", [])
+        count = len(detections)
+        visual_state = 0
+        visual_flags = 0
+        return (bytes([visual_state, visual_flags]) +
+                count.to_bytes(2, 'little'))
+
+    def _build_all_targets_payload(self) -> bytes:
+        data = self._latest_ai
+        detections = data.get("detections", [])
+        count = min(len(detections), 16)
+        payload = bytes([count])
+        for d in detections[:count]:
+            payload += (int(d.x).to_bytes(2, 'little', signed=True) +
+                        int(d.y).to_bytes(2, 'little', signed=True) +
+                        bytes([d.class_id]))
+        return payload
+
+    # ===== memory logging =====
 
     def _log_memory(self) -> None:
         if not _HAVE_MAIX_SYS:
@@ -213,10 +287,13 @@ class LineFollowCoordinator:
     # ===== debug =====
 
     def get_info(self) -> dict:
+        with self._cmd_lock:
+            linked = self._master_linked
+        detections = self._latest_ai.get("detections", [])
         return {
             "state": self.state_machine.current_state,
             "state_id": self.state_machine.current_state_id,
-            "link_active": self._is_linked,
-            "det_count": self._last_det_count,
+            "link_active": linked,
+            "det_count": len(detections),
             "fps": self._last_fps,
         }
