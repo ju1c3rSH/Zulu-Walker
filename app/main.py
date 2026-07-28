@@ -5,6 +5,7 @@ from utils.log_util import log_print
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+os.makedirs("logs", exist_ok=True)
 
 logging.basicConfig(
     level=logging.WARNING,
