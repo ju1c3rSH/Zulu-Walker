@@ -91,6 +91,15 @@ def _make_wdt_feed():
 def main():
     log_print("0xfb709394")
 
+    import yaml
+    try:
+        with open("project_config.yaml") as f:
+            _cfg = yaml.safe_load(f) or {}
+    except Exception:
+        _cfg = {}
+    from utils.debug_console import DebugConsole
+    DebugConsole.set_global_enabled(_cfg.get("debug_console_enabled", True))
+
     wdt_feed = _make_wdt_feed()
 
     from framework.event_bus import EventBus
