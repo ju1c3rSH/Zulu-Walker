@@ -19,7 +19,7 @@ ai:
       model: "/root/models/steelball_640.mud"
       model_type: "auto"
     - nick_name: "plate_seg"
-      model: "/root/models/steelsheet_npu_only.mud"
+      model: "/root/models/steelsheet_576.mud"
       model_type: "auto"
   active: "yolo11n"
-  # active: "plate_seg"  # switch to seg model for steel plate detection
+  #active: "plate_seg"  # switch to seg model for steel plate detection
