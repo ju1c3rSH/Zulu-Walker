@@ -2,11 +2,10 @@ id: zulu_walker
 name: Zulu-Walker
 name[zh]: 祖鲁行者
 version: 1.0.0
-icon: ""
+icon: app.png
 author: Electric Competition 2026
 desc: YOLO11n steel ball detection + line following robot based on MaixCAM2
 desc[zh]: 基于 MaixCAM2 的 YOLO11n 钢珠检测 + 循迹小车
-
 exclude:
   - .git
   - .gitignore
@@ -25,3 +24,211 @@ exclude:
   - modules/zw_opencv_module/processors/qr_processor.py
   - modules/zw_opencv_module/processors/handlers
   - modules/zw_opencv_module/processors/ai_inference_processor.py
+files:
+  - .claude\settings.local.json
+  - .pytest_cache\v\cache\lastfailed
+  - .pytest_cache\v\cache\nodeids
+  - .pytest_cache\CACHEDIR.TAG
+  - .pytest_cache\README.md
+  - app\__init__.py
+  - app\coordinator.py
+  - app\events.py
+  - app\line_follow_sm.py
+  - app\main.py
+  - app\mission_state_machine.py
+  - docs\architecture\hal_architecture_plan.md
+  - docs\architecture\hal_overview.md
+  - docs\architecture\segmentation_design.md
+  - docs\architecture\state_machine.md
+  - docs\architecture\thread_tick_topology.md
+  - docs\competition\master_slave_protocol.md
+  - docs\competition\mspm0_protocol_impl.md
+  - docs\competition\protocol_content.md
+  - docs\competition\protocol.md
+  - docs\competition\servo_math.md
+  - docs\experience\ffmpeg_rtmp_streaming.md
+  - docs\pitfalls\mission_state_names_dict_access.md
+  - docs\pitfalls\vision_data_flow.md
+  - docs\vision\cargo_edge_drawing_strategy.md
+  - docs\vision\detector_init_order.md
+  - docs\migration_plan.md
+  - docs\TODO.md
+  - framework\hal\interface\__init__.py
+  - framework\hal\interface\ai.py
+  - framework\hal\interface\camera.py
+  - framework\hal\interface\display.py
+  - framework\hal\interface\uart.py
+  - framework\hal\platforms\linux\__init__.py
+  - framework\hal\platforms\linux\ai.py
+  - framework\hal\platforms\linux\camera_warmup.py
+  - framework\hal\platforms\linux\camera.py
+  - framework\hal\platforms\linux\display.py
+  - framework\hal\platforms\linux\uart.py
+  - framework\hal\platforms\maixcam2\__init__.py
+  - framework\hal\platforms\maixcam2\ai.py
+  - framework\hal\platforms\maixcam2\camera.py
+  - framework\hal\platforms\maixcam2\display.py
+  - framework\hal\platforms\maixcam2\uart.py
+  - framework\hal\platforms\mock\__init__.py
+  - framework\hal\platforms\mock\ai.py
+  - framework\hal\platforms\mock\camera.py
+  - framework\hal\platforms\mock\display.py
+  - framework\hal\platforms\mock\uart.py
+  - framework\hal\__init__.py
+  - framework\hal\camera_hub.py
+  - framework\hal\machine.py
+  - framework\state_machine\__init__.py
+  - framework\state_machine\base.py
+  - framework\state_machine\bridge.py
+  - framework\__init__.py
+  - framework\event_bus.py
+  - framework\log.py
+  - framework\module_manager.py
+  - framework\visual_state_machine.py
+  - modules\zw_opencv_module\ai\qrcode\detect.caffemodel
+  - modules\zw_opencv_module\ai\qrcode\detect.prototxt
+  - modules\zw_opencv_module\ai\qrcode\download_models.py
+  - modules\zw_opencv_module\ai\qrcode\sr.caffemodel
+  - modules\zw_opencv_module\ai\qrcode\sr.prototxt
+  - modules\zw_opencv_module\config\camera_config.yaml
+  - modules\zw_opencv_module\config\vision_config.yaml
+  - modules\zw_opencv_module\debug\__init__.py
+  - modules\zw_opencv_module\debug\camera_window.py
+  - modules\zw_opencv_module\debug\detector.py
+  - modules\zw_opencv_module\debug\param_panel.py
+  - modules\zw_opencv_module\debug\uv_window.py
+  - modules\zw_opencv_module\debug\window.py
+  - modules\zw_opencv_module\detectors\_shared\__init__.py
+  - modules\zw_opencv_module\detectors\_shared\base_debug_window.py
+  - modules\zw_opencv_module\detectors\_shared\kalman_utils.py
+  - modules\zw_opencv_module\detectors\_shared\param_def.py
+  - modules\zw_opencv_module\detectors\cargo_detector\debug\__init__.py
+  - modules\zw_opencv_module\detectors\cargo_detector\debug\config.py
+  - modules\zw_opencv_module\detectors\cargo_detector\debug\params.yaml
+  - modules\zw_opencv_module\detectors\cargo_detector\debug\runner.py
+  - modules\zw_opencv_module\detectors\cargo_detector\debug\window.py
+  - >-
+    modules\zw_opencv_module\detectors\cargo_detector\detection\methods\__init__.py
+  - modules\zw_opencv_module\detectors\cargo_detector\detection\methods\base.py
+  - >-
+    modules\zw_opencv_module\detectors\cargo_detector\detection\methods\edge_drawing_circle.py
+  - >-
+    modules\zw_opencv_module\detectors\cargo_detector\detection\methods\fast_circle.py
+  - >-
+    modules\zw_opencv_module\detectors\cargo_detector\detection\methods\heuristic_edge_circle.py
+  - modules\zw_opencv_module\detectors\cargo_detector\detection\__init__.py
+  - modules\zw_opencv_module\detectors\cargo_detector\detection\kalman_filter.py
+  - >-
+    modules\zw_opencv_module\detectors\cargo_detector\detection\target_creation.py
+  - modules\zw_opencv_module\detectors\cargo_detector\__init__.py
+  - modules\zw_opencv_module\detectors\circle_target_detector\debug\__init__.py
+  - modules\zw_opencv_module\detectors\circle_target_detector\debug\config.py
+  - modules\zw_opencv_module\detectors\circle_target_detector\debug\params.yaml
+  - modules\zw_opencv_module\detectors\circle_target_detector\debug\runner.py
+  - modules\zw_opencv_module\detectors\circle_target_detector\debug\window.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\methods\__init__.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\methods\base.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\methods\contour_ellipse.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\methods\edge_contour_ellipse.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\methods\edge_drawing_quads.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\methods\test_line_quad.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\__init__.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\color_utils.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\kalman_filter.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\line_geometry.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\quad_geometry.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\target_creation.py
+  - >-
+    modules\zw_opencv_module\detectors\circle_target_detector\detection\uv_detection.py
+  - modules\zw_opencv_module\detectors\circle_target_detector\__init__.py
+  - modules\zw_opencv_module\detectors\line_detector\debug\runner.py
+  - modules\zw_opencv_module\detectors\line_detector\__init__.py
+  - modules\zw_opencv_module\detectors\ring_detector\debug\__init__.py
+  - modules\zw_opencv_module\detectors\ring_detector\debug\config.py
+  - modules\zw_opencv_module\detectors\ring_detector\debug\params.yaml
+  - modules\zw_opencv_module\detectors\ring_detector\debug\runner.py
+  - modules\zw_opencv_module\detectors\ring_detector\debug\window.py
+  - >-
+    modules\zw_opencv_module\detectors\ring_detector\detection\methods\__init__.py
+  - modules\zw_opencv_module\detectors\ring_detector\detection\methods\base.py
+  - >-
+    modules\zw_opencv_module\detectors\ring_detector\detection\methods\edge_drawing_ring.py
+  - >-
+    modules\zw_opencv_module\detectors\ring_detector\detection\methods\fast_ring.py
+  - >-
+    modules\zw_opencv_module\detectors\ring_detector\detection\methods\heuristic_ring.py
+  - modules\zw_opencv_module\detectors\ring_detector\detection\__init__.py
+  - >-
+    modules\zw_opencv_module\detectors\ring_detector\detection\target_creation.py
+  - modules\zw_opencv_module\detectors\ring_detector\__init__.py
+  - modules\zw_opencv_module\detectors\__init__.py
+  - modules\zw_opencv_module\models\__init__.py
+  - modules\zw_opencv_module\models\cargo.py
+  - modules\zw_opencv_module\models\circle.py
+  - modules\zw_opencv_module\models\color.py
+  - modules\zw_opencv_module\models\ring.py
+  - modules\zw_opencv_module\processors\handlers\__init__.py
+  - modules\zw_opencv_module\processors\handlers\base.py
+  - modules\zw_opencv_module\processors\handlers\hand_landmarks.py
+  - modules\zw_opencv_module\processors\handlers\registry.py
+  - modules\zw_opencv_module\processors\handlers\segmentation.py
+  - modules\zw_opencv_module\processors\handlers\yolo.py
+  - modules\zw_opencv_module\processors\__init__.py
+  - modules\zw_opencv_module\processors\ai_inference_processor.py
+  - modules\zw_opencv_module\processors\base.py
+  - modules\zw_opencv_module\processors\cargo_processor.py
+  - modules\zw_opencv_module\processors\circle_target_processor.py
+  - modules\zw_opencv_module\processors\line_follow_processor.py
+  - modules\zw_opencv_module\processors\qr_processor.py
+  - modules\zw_opencv_module\processors\registry.py
+  - modules\zw_opencv_module\processors\ring_discovery_processor.py
+  - modules\zw_opencv_module\__init__.py
+  - modules\zw_opencv_module\camera_hub.py
+  - modules\zw_opencv_module\camera_stream.py
+  - modules\zw_opencv_module\ffmpeg_pusher.py
+  - modules\zw_opencv_module\frame_composer.py
+  - modules\zw_opencv_module\param_utils.py
+  - modules\zw_opencv_module\performance.py
+  - modules\zw_opencv_module\pipeline_camera.py
+  - modules\zw_opencv_module\requirements.txt
+  - modules\zw_opencv_module\task_manager.py
+  - modules\zw_opencv_module\vision_manager.py
+  - modules\zw_uart_module\__init__.py
+  - modules\zw_uart_module\events.py
+  - modules\zw_uart_module\exceptions.py
+  - modules\zw_uart_module\protocol.py
+  - modules\zw_uart_module\README_CN.md
+  - modules\zw_uart_module\README.md
+  - modules\zw_uart_module\uart_driver.py
+  - modules\uart_test.py
+  - stories\秘封俱乐部·朝夕之间.md
+  - stories\秘封俱乐部·星夜物语.md
+  - stories\秘封俱乐部·星夜物语·番外.md
+  - utils\__init__.py
+  - utils\camera_misc_util.py
+  - utils\console_capture.py
+  - utils\cpu_affinity.py
+  - utils\debug_console.py
+  - utils\focal_distance_util.py
+  - utils\log_util.py
+  - utils\point.py
+  - AGENTS.md
+  - app.yaml
+  - main.py
+  - project_config.yaml
+  - PROJECT_CONTEXT.md
+  - requirements-linux.txt
+  - requirements.txt
+  - run.py
