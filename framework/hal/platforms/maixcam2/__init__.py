@@ -32,8 +32,8 @@ def create_uart(port: str, baudrate: int = 921600) -> MaixCam2Uart:
     return MaixCam2Uart(port=port, baudrate=baudrate)
 
 
-def create_ai(mask_method: str = "none") -> MaixCam2AI:
-    return MaixCam2AI(mask_method=mask_method)
+def create_ai() -> MaixCam2AI:
+    return MaixCam2AI()
 
 
 __all__ = [

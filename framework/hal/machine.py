@@ -93,8 +93,7 @@ class Machine:
         ai: Optional[AIInference] = None
         if ai_config is not None:
             try:
-                mask_method = ai_config.get("mask_method", "none")
-                ai = platform_mod.create_ai(mask_method=mask_method)
+                ai = platform_mod.create_ai()
                 models_cfg = ai_config.get("models", [])
                 for m in models_cfg:
                     ai.add(
