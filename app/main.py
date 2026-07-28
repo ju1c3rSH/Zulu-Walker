@@ -89,9 +89,9 @@ def main():
     wdt_feed = _make_wdt_feed()
 
     from framework.event_bus import EventBus
-    from app.coordinator import LineFollowCoordinator
+    from app.coordinator import Ti2026Coordinator
     bus = EventBus()
-    coordinator = LineFollowCoordinator(bus)
+    coordinator = Ti2026Coordinator(bus)
     coordinator.set_wdt_feed(wdt_feed)
 
     machine = Machine.create("project_config.yaml")

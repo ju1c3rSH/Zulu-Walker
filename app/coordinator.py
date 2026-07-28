@@ -25,7 +25,7 @@ from modules.zw_uart_module.events import (
     CmdRequestEvent,
     CmdStopEvent,
 )
-from app.line_follow_sm import LineFollowStateMachine
+from app.line_follow_sm import Ti2026StateMachine
 from modules.zw_uart_module.protocol import (
     build_cmd_ack_frame,
     build_cmd_nack_frame,
@@ -45,11 +45,11 @@ from modules.zw_opencv_module.processors.base import VisionResult
 _CMD_TIMEOUT = 5.0
 
 
-class LineFollowCoordinator:
+class Ti2026Coordinator:
 
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
-        self.state_machine = LineFollowStateMachine()
+        self.state_machine = Ti2026StateMachine()
 
         self._uart_sender: Optional[callable] = None
         self._vision_manager: Optional[VisionManager] = None
