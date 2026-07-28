@@ -16,10 +16,13 @@ from .protocol import (
     TYPE_HEARTBEAT, TYPE_EMERGENCY_STOP,
     TYPE_CMD_REQUEST, TYPE_CMD_STOP,
     TYPE_CMD_ACK, TYPE_CMD_NACK, TYPE_DATA_STREAM,
+    TYPE_PING, TYPE_PONG,
     FrameData, parse_frame,
     parse_emergency_stop_payload,
     parse_cmd_request_payload,
     parse_cmd_stop_payload,
+    parse_ping_payload,
+    build_pong_frame,
 )
 from framework.hal.interface import Uart
 from .exceptions import UartError
@@ -362,6 +365,19 @@ class STM32UartInterface:
                         self._event_bus.publish(EmergencyStopEvent(parsed))
                     except ImportError:
                         pass
+
+        elif frame.frame_type == TYPE_PING:
+            seq = parse_ping_payload(frame.payload)
+            if seq is not None:
+                log_print(f"[UART RX] PING seq={seq}")
+                pong_frame = build_pong_frame(seq)
+                if self.send_raw(pong_frame):
+                    log_print(f"[UART TX] PONG seq={seq}")
+
+        elif frame.frame_type == TYPE_PONG:
+            seq = parse_ping_payload(frame.payload)
+            if seq is not None:
+                log_print(f"[UART RX] PONG seq={seq}  (unexpected, slave role)")
 
         else:
             self._rx_frames_unknown += 1
