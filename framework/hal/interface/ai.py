@@ -26,6 +26,13 @@ class Keypoint:
 
 
 @dataclass
+class MaskStats:
+    center_x: float = 0.0
+    center_y: float = 0.0
+    area_px: int = 0
+
+
+@dataclass
 class Detection:
     x: int
     y: int
@@ -37,6 +44,8 @@ class Detection:
     angle: Optional[float] = None
     keypoints: list[Keypoint] = field(default_factory=list)
     mask_index: int = -1
+    seg_mask: Optional[np.ndarray] = None
+    mask_stats: Optional[MaskStats] = None
 
 
 @runtime_checkable
