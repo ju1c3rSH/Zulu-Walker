@@ -123,6 +123,8 @@ def main():
     if uart:
         coordinator.set_uart_sender(uart.send_raw)
 
+    coordinator.set_ai(machine.ai)
+
     display_callback = _build_display_callback(manager, machine)
 
     coordinator.start()
