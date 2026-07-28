@@ -50,19 +50,31 @@ class AIInferenceProcessor(Processor):
         try:
             camera = (context or {}).get("camera")
             raw = getattr(camera, "_last_raw", None)
-            if raw is not None:
-                detections = self._ai.detect(raw, _raw=True)
-            else:
-                detections = self._ai.detect(frame)
+            kwargs = {"_raw": True} if raw is not None else {}
+            input_img = raw if raw is not None else frame
+            detections = self._ai.detect(input_img, **kwargs)
         except Exception as e:
             logger.error("AIInferenceProcessor detect failed: %s", e)
             return VisionResult(
                 self.name, success=False, error_message=str(e),
             )
 
+        segment_dicts = []
+        for d in detections:
+            if d.mask_stats is not None and d.mask_stats.area_px > 0:
+                segment_dicts.append({
+                    "class_id": d.class_id,
+                    "center_x": d.mask_stats.center_x,
+                    "center_y": d.mask_stats.center_y,
+                    "area_px": d.mask_stats.area_px,
+                })
+
         return VisionResult(
             self.name,
-            result_data={"detections": detections},
+            result_data={
+                "detections": detections,
+                "segments": segment_dicts,
+            },
             success=True,
         )
 
