@@ -64,6 +64,9 @@ class MaixCam2AI:
         del self._registry[nick_name]
         logger.info("Removed model '%s'", nick_name)
 
+    # TODO: 预加载所有模型到 NPU，switch() 改为纯指针交换 (O(1), ~1µs)
+    # 当前每次 switch() 重新从 flash 加载 .mud 到 NPU (~200-500ms)
+    # 双模型 CMM 约 30-40MB，256MB CMM 完全可接受
     def switch(self, nick_name: str) -> bool:
         if nick_name not in self._registry:
             logger.error("Cannot switch to unknown model '%s'", nick_name)
