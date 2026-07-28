@@ -13,3 +13,5 @@ logs/
 .vscode/settings.json
 .vscode/launch.json
 logs/performance.log
+MaixPy-main/
+PROJECT_CONTEXT.md
