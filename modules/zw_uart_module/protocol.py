@@ -26,10 +26,41 @@ SOF1 = 0xAA
 SOF2 = 0x55
 
 # Frame types
-TYPE_ERROR = 0x01           # Orange Pi -> STM32: error_type(1B) + error_value(2B, int16 LE)
-TYPE_HEARTBEAT = 0x15           # Bidirectional: seq + mission_state + visual_state
-TYPE_VISUAL_SERVO_DATA = 0x17   # Orange Pi -> MCU: error_x(2B) + error_y(2B) + flags(1B) + state(1B)
+TYPE_ERROR = 0x01               # Bidirectional: error_type(1B) + error_value(2B, int16 LE)
+TYPE_HEARTBEAT = 0x15           # [DEPRECATED] Bidirectional: seq + mission_state + visual_state
+TYPE_VISUAL_SERVO_DATA = 0x17   # [DEPRECATED] Orange Pi -> MCU: error_x(2B) + error_y(2B) + flags(1B) + state(1B)
 TYPE_EMERGENCY_STOP = 0x18      # Bidirectional: reason(1B)
+
+# === Master-Slave protocol v3.0 ===
+TYPE_CMD_REQUEST     = 0x20  # Master -> Slave: request data stream subscription
+TYPE_CMD_ACK         = 0x21  # Slave -> Master: acknowledge subscription
+TYPE_CMD_NACK        = 0x22  # Slave -> Master: reject subscription
+TYPE_CMD_STOP        = 0x23  # Master -> Slave: stop data stream
+TYPE_DATA_STREAM     = 0x24  # Slave -> Master: streaming data frame
+
+# NACK reasons
+NACK_UNSUPPORTED_TYPE = 0x01
+NACK_NOT_READY        = 0x02
+NACK_BUSY             = 0x03
+
+# Data stream types (for CMD_REQUEST.data_type)
+DATA_LINE_POSITION    = 0x01
+DATA_TARGET_POSITION  = 0x02
+DATA_TARGET_COUNT     = 0x03
+DATA_DETECTION_STATUS = 0x04
+DATA_ALL_TARGETS      = 0x05
+
+# Payload sizes for each data type (None = variable length)
+# sub_payload is the type-specific bytes (excludes seq + data_type header)
+DATA_PAYLOAD_SIZES = {
+    DATA_LINE_POSITION: 8,
+    DATA_TARGET_POSITION: 8,
+    DATA_TARGET_COUNT: 3,
+    DATA_DETECTION_STATUS: 6,
+    DATA_ALL_TARGETS: None,
+}
+
+SUPPORTED_DATA_TYPES = set(DATA_PAYLOAD_SIZES.keys())
 
 
 # Error types for TYPE_ERROR
@@ -179,3 +210,79 @@ def parse_emergency_stop_payload(payload: bytes) -> Optional[int]:
     if len(payload) != 1:
         return None
     return payload[0]
+
+
+# === Master-Slave protocol v3.0 builders ===
+
+def build_cmd_request_frame(data_type: int, min_interval_ms: int = 0) -> bytes:
+    """Build TYPE_CMD_REQUEST frame."""
+    payload = bytes([data_type, min_interval_ms, 0x00])
+    return _build_frame(TYPE_CMD_REQUEST, payload)
+
+
+def build_cmd_ack_frame(data_type: int, max_freq_hz: int = 60, payload_size: int = 0) -> bytes:
+    """Build TYPE_CMD_ACK frame."""
+    payload = bytes([data_type, max_freq_hz, payload_size])
+    return _build_frame(TYPE_CMD_ACK, payload)
+
+
+def build_cmd_nack_frame(data_type: int, reason: int) -> bytes:
+    """Build TYPE_CMD_NACK frame."""
+    payload = bytes([data_type, reason])
+    return _build_frame(TYPE_CMD_NACK, payload)
+
+
+def build_cmd_stop_frame() -> bytes:
+    """Build TYPE_CMD_STOP frame (empty payload)."""
+    return _build_frame(TYPE_CMD_STOP, b'')
+
+
+def build_data_stream_frame(seq: int, data_type: int, sub_payload: bytes) -> bytes:
+    """Build TYPE_DATA_STREAM frame.
+
+    Args:
+        seq: Sequence counter (0-255, wraps)
+        data_type: The data stream type being sent
+        sub_payload: Type-specific payload bytes (excludes seq + data_type header)
+    """
+    inner = bytes([seq, data_type]) + sub_payload
+    return _build_frame(TYPE_DATA_STREAM, inner)
+
+
+# === Master-Slave protocol v3.0 parsers ===
+
+def parse_cmd_request_payload(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_CMD_REQUEST payload -> (data_type, min_interval_ms, reserved)."""
+    if len(payload) != 3:
+        return None
+    return payload[0], payload[1], payload[2]
+
+
+def parse_cmd_ack_payload(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_CMD_ACK payload -> (data_type, max_freq_hz, payload_size)."""
+    if len(payload) != 3:
+        return None
+    return payload[0], payload[1], payload[2]
+
+
+def parse_cmd_nack_payload(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_CMD_NACK payload -> (data_type, reason)."""
+    if len(payload) != 2:
+        return None
+    return payload[0], payload[1]
+
+
+def parse_cmd_stop_payload(payload: bytes) -> bool:
+    """Validate TYPE_CMD_STOP payload (must be empty)."""
+    return len(payload) == 0
+
+
+def parse_data_stream_header(payload: bytes) -> Optional[tuple]:
+    """Parse TYPE_DATA_STREAM header -> (seq, data_type, sub_payload).
+
+    Only extracts the header; the caller must interpret sub_payload
+    based on data_type.
+    """
+    if len(payload) < 2:
+        return None
+    return payload[0], payload[1], payload[2:]

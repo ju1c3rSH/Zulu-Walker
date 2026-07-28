@@ -14,9 +14,12 @@ from typing import Callable, List, Optional
 from .protocol import (
     SOF1, SOF2,
     TYPE_HEARTBEAT, TYPE_EMERGENCY_STOP,
+    TYPE_CMD_REQUEST, TYPE_CMD_STOP,
+    TYPE_CMD_ACK, TYPE_CMD_NACK, TYPE_DATA_STREAM,
     FrameData, parse_frame,
-    parse_heartbeat_payload,
     parse_emergency_stop_payload,
+    parse_cmd_request_payload,
+    parse_cmd_stop_payload,
 )
 from framework.hal.interface import Uart
 from .exceptions import UartError
@@ -292,13 +295,7 @@ class STM32UartInterface:
 
     def _handle_frame_with_stats(self, frame: FrameData):
         self._rx_frames_ok += 1
-        if frame.frame_type == TYPE_HEARTBEAT:
-            self._handle_frame(frame)
-        elif frame.frame_type == TYPE_EMERGENCY_STOP:
-            self._handle_frame(frame)
-        else:
-            self._rx_frames_unknown += 1
-            self._handle_frame(frame)
+        self._handle_frame(frame)
 
         self._stats_log_counter += 1
         if self._stats_log_counter >= 500:
@@ -315,21 +312,44 @@ class STM32UartInterface:
 
     def _handle_frame(self, frame: FrameData):
         """
-        Handle a parsed frame from STM32.
+        Handle a parsed frame from master (MSPM0).
 
         Args:
             frame: Parsed frame data
         """
-        if frame.frame_type == TYPE_HEARTBEAT:
-            parsed = parse_heartbeat_payload(frame.payload)
+        if frame.frame_type == TYPE_CMD_REQUEST:
+            parsed = parse_cmd_request_payload(frame.payload)
             if parsed is not None and self._event_bus:
                 try:
-                    from .events import HeartbeatEvent
+                    from .events import CmdRequestEvent
                     self._event_bus.publish(
-                        HeartbeatEvent(parsed[0], parsed[1], parsed[2]))
+                        CmdRequestEvent(parsed[0], parsed[1]))
                 except ImportError:
-                    self._logger.debug(
-                        f"HEARTBEAT seq={parsed[0]} (no event bus)")
+                    pass
+
+        elif frame.frame_type == TYPE_CMD_STOP:
+            if parse_cmd_stop_payload(frame.payload) and self._event_bus:
+                try:
+                    from .events import CmdStopEvent
+                    self._event_bus.publish(CmdStopEvent())
+                except ImportError:
+                    pass
+
+        elif frame.frame_type == TYPE_CMD_ACK:
+            self._logger.warning(
+                "Unexpected CMD_ACK received (slave role)")
+
+        elif frame.frame_type == TYPE_CMD_NACK:
+            self._logger.warning(
+                "Unexpected CMD_NACK received (slave role)")
+
+        elif frame.frame_type == TYPE_DATA_STREAM:
+            self._logger.warning(
+                "Unexpected DATA_STREAM received (slave role)")
+
+        elif frame.frame_type == TYPE_HEARTBEAT:
+            # [DEPRECATED] Silently ignore
+            pass
 
         elif frame.frame_type == TYPE_EMERGENCY_STOP:
             parsed = parse_emergency_stop_payload(frame.payload)
@@ -344,6 +364,7 @@ class STM32UartInterface:
                         pass
 
         else:
+            self._rx_frames_unknown += 1
             self._logger.warning(f"Unknown frame type: 0x{frame.frame_type:02X}")
 
     def send_error(self, error_type: int, error_value: int) -> bool:
@@ -406,7 +427,7 @@ if __name__ == "__main__":
     parser = FrameParser()
 
     # Test heartbeat frame
-    from protocol import build_heartbeat_frame
+    from .protocol import build_heartbeat_frame
     test_frame = build_heartbeat_frame(seq=1, mission_state=2, visual_state=3)
     frames = parser.feed(test_frame)
     log_print(f"Parsed frames: {frames}")
@@ -415,7 +436,7 @@ if __name__ == "__main__":
 
     # Test ERROR frame: type=0, value=-3
     log_print("\n=== Error Frame Build Test ===")
-    from protocol import build_error_frame
+    from .protocol import build_error_frame
     error_frame = build_error_frame(0, -3)
     log_print(f"Error frame: {error_frame.hex()}")
 
