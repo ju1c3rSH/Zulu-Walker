@@ -89,7 +89,7 @@ class ErrorState(State):
         context.error_msg = ""
 
 
-class LineFollowStateMachine(BaseStateMachine):
+class Ti2026StateMachine(BaseStateMachine):
 
     class States:
         IDLE = "IDLE"
