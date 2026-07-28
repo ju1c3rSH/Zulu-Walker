@@ -57,6 +57,7 @@ class LineFollowCoordinator:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_lock = threading.Lock()
         self._wdt_feed = lambda: None
+        self._wdt_count = 0
         self._last_servo_log_ts: float = 0.0
         self._last_det_count: int = 0
         self._last_fps: float = 0.0
@@ -167,6 +168,9 @@ class LineFollowCoordinator:
         self._last_mcu_heartbeat = time.monotonic()
         while self._running:
             self._wdt_feed()
+            self._wdt_count += 1
+            if self._wdt_count % 50 == 0:
+                log_print(f"[WDT] hb feed #{self._wdt_count}")
             time.sleep(_HEARTBEAT_INTERVAL)
             self._heartbeat_seq = (self._heartbeat_seq + 1) % 256
             self._send(
