@@ -8,32 +8,25 @@ import numpy as np
 import maix.image
 import maix.nn
 
-from framework.hal.interface.ai import Detection, Keypoint, MaskStats
+from framework.hal.interface.ai import Detection, Keypoint, MaskStats, SegmentResult
 
 logger = logging.getLogger(__name__)
 
 _SLOT_CLASSES = {
     "yolo": maix.nn.YOLO11,
-    "yolo_seg": maix.nn.YOLO11,
     "classifier": maix.nn.Classifier,
     "hand_landmarks": maix.nn.HandLandmarks,
     "nn": maix.nn.NN,
 }
 
-MASK_METHOD_BLOB = "find_blobs"
-MASK_METHOD_NUMPY = "numpy"
-MASK_METHOD_NONE = "none"
-_MASK_METHODS = {MASK_METHOD_BLOB, MASK_METHOD_NUMPY, MASK_METHOD_NONE}
-
 
 class MaixCam2AI:
-    def __init__(self, mask_method: str = MASK_METHOD_NONE) -> None:
+    def __init__(self) -> None:
         self._registry: dict[str, dict] = {}  # nick_name -> {path, type, kwargs}
         self._active_name: str = ""
         self._model: Optional[Union[maix.nn.YOLO11, maix.nn.Classifier, maix.nn.HandLandmarks, maix.nn.NN]] = None
         self._model_type: str = ""
         self._model_path: str = ""
-        self._mask_method = mask_method if mask_method in _MASK_METHODS else MASK_METHOD_NONE
 
     # ------------------------------------------------------------------ #
     #  Registry API
@@ -50,17 +43,6 @@ class MaixCam2AI:
     @property
     def model_type(self) -> str:
         return self._model_type
-
-    @property
-    def mask_method(self) -> str:
-        return self._mask_method
-
-    def set_mask_method(self, method: str) -> None:
-        if method in _MASK_METHODS:
-            self._mask_method = method
-            logger.info("Mask method set to '%s'", method)
-        else:
-            logger.warning("Unknown mask method '%s', keeping '%s'", method, self._mask_method)
 
     def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
         if nick_name in self._registry:
@@ -243,10 +225,14 @@ class MaixCam2AI:
 
             if hasattr(obj, "seg_mask") and obj.seg_mask is not None:
                 seg_mask_np = self._extract_seg_mask(obj.seg_mask)
-                if self._mask_method != MASK_METHOD_NONE and seg_mask_np is not None:
-                    mask_stats = self._compute_mask_stats(
-                        obj.seg_mask, seg_mask_np, obj.x, obj.y, obj.w, obj.h
-                    )
+                if seg_mask_np is not None:
+                    ys, xs = np.nonzero(seg_mask_np > 127)
+                    if xs.size:
+                        mask_stats = MaskStats(
+                            center_x=float(obj.x + xs.mean()),
+                            center_y=float(obj.y + ys.mean()),
+                            area_px=int(xs.size),
+                        )
 
             det = Detection(
                 x=obj.x,
@@ -272,6 +258,34 @@ class MaixCam2AI:
                     except Exception:
                         pass
 
+        return results
+
+    def segment(
+        self, frame: np.ndarray, **kwargs
+    ) -> list[SegmentResult]:
+        """Run segmentation inference and return structured mask data.
+
+        Calls ``detect()`` internally, then extracts ``mask_stats``
+        from each returned ``Detection``.  Returns an empty list when
+        no model is loaded or the model does not produce segmentation
+        masks.
+        """
+        detections = self.detect(frame, **kwargs)
+        results: list[SegmentResult] = []
+        for d in detections:
+            if d.mask_stats is not None and d.mask_stats.area_px > 0:
+                results.append(SegmentResult(
+                    class_id=d.class_id,
+                    center_x=d.mask_stats.center_x,
+                    center_y=d.mask_stats.center_y,
+                    area_px=d.mask_stats.area_px,
+                    bbox_x=d.x,
+                    bbox_y=d.y,
+                    bbox_w=d.w,
+                    bbox_h=d.h,
+                    score=d.score,
+                    detection=d,
+                ))
         return results
 
     def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
@@ -306,7 +320,6 @@ class MaixCam2AI:
             logger.error("Model classify() failed: %s", e)
             return []
 
-        # results is expected as list of (class_id, score) or similar iterable
         out: list[tuple[int, float]] = []
         for item in results[:top_k]:
             if isinstance(item, (list, tuple)):
@@ -398,47 +411,3 @@ class MaixCam2AI:
         except Exception as e:
             logger.warning("Failed to convert seg_mask: %s", e)
             return None
-
-    def _compute_mask_stats(
-        self, mask_img, mask_np: np.ndarray, det_x: int, det_y: int, det_w: int, det_h: int,
-    ) -> MaskStats:
-        if self._mask_method == MASK_METHOD_BLOB:
-            return self._analyze_mask_blobs(mask_img, det_x, det_y, det_w, det_h)
-        elif self._mask_method == MASK_METHOD_NUMPY:
-            return self._analyze_mask_numpy(mask_np, det_x, det_y, det_w, det_h)
-        return MaskStats()
-
-    @staticmethod
-    def _analyze_mask_blobs(mask_img, det_x: int, det_y: int, det_w: int, det_h: int) -> MaskStats:
-        def _fallback():
-            return MaskStats(
-                center_x=float(det_x + det_w / 2),
-                center_y=float(det_y + det_h / 2),
-                area_px=0,
-            )
-
-        try:
-            blobs = mask_img.find_blobs(
-                [[50, 100, -128, 127, -128, 127]],
-                area_threshold=50,
-            )
-        except Exception as e:
-            logger.warning("find_blobs on seg_mask failed: %s", e)
-            return _fallback()
-        if not blobs:
-            return _fallback()
-        best = max(blobs, key=lambda b: b.area())
-        return MaskStats(
-            center_x=float(det_x + best.cx()),
-            center_y=float(det_y + best.cy()),
-            area_px=best.area(),
-        )
-
-    @staticmethod
-    def _analyze_mask_numpy(mask_np: np.ndarray, det_x: int, det_y: int, det_w: int, det_h: int) -> MaskStats:
-        area = int(np.count_nonzero(mask_np > 127))
-        return MaskStats(
-            center_x=float(det_x + det_w / 2),
-            center_y=float(det_y + det_h / 2),
-            area_px=area,
-        )

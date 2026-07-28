@@ -37,6 +37,7 @@ from modules.zw_uart_module.protocol import (
     DATA_TARGET_COUNT,
     DATA_DETECTION_STATUS,
     DATA_ALL_TARGETS,
+    DATA_SEGMENTATION_MASK,
     NACK_UNSUPPORTED_TYPE,
 )
 from modules.zw_opencv_module.processors.base import VisionResult
@@ -212,6 +213,8 @@ class Ti2026Coordinator:
             return self._build_detection_status_payload()
         elif data_type == DATA_ALL_TARGETS:
             return self._build_all_targets_payload()
+        elif data_type == DATA_SEGMENTATION_MASK:
+            return self._build_seg_mask_payload()
         return None
 
     def _build_line_position_payload(self) -> bytes:
@@ -264,6 +267,20 @@ class Ti2026Coordinator:
             payload += (int(d.x).to_bytes(2, 'little', signed=True) +
                         int(d.y).to_bytes(2, 'little', signed=True) +
                         bytes([d.class_id]))
+        return payload
+
+    def _build_seg_mask_payload(self) -> bytes:
+        data = self._latest_ai
+        segments = data.get("segments", [])
+        count = min(len(segments), 4)
+        payload = bytes([count])
+        for s in segments[:count]:
+            payload += (
+                bytes([s["class_id"]]) +
+                int(s["center_x"]).to_bytes(2, 'little') +
+                int(s["center_y"]).to_bytes(2, 'little') +
+                min(s["area_px"], 65535).to_bytes(2, 'little')
+            )
         return payload
 
     # ===== memory logging =====

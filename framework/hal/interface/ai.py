@@ -33,6 +33,20 @@ class MaskStats:
 
 
 @dataclass
+class SegmentResult:
+    class_id: int
+    center_x: float
+    center_y: float
+    area_px: int
+    bbox_x: int
+    bbox_y: int
+    bbox_w: int
+    bbox_h: int
+    score: float
+    detection: Detection = field(default=None)  # type: ignore[assignment]
+
+
+@dataclass
 class Detection:
     x: int
     y: int
@@ -101,6 +115,12 @@ class AIInference(Protocol):
         self, frame: np.ndarray,
         **kwargs: Unpack[DetectKwargs]
     ) -> list[Detection]:
+        ...
+
+    def segment(
+        self, frame: np.ndarray,
+        **kwargs: Unpack[DetectKwargs]
+    ) -> list[SegmentResult]:
         ...
 
     def classify(
