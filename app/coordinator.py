@@ -39,11 +39,19 @@ from modules.zw_uart_module.protocol import (
     DATA_ALL_TARGETS,
     DATA_SEGMENTATION_MASK,
     NACK_UNSUPPORTED_TYPE,
+    NACK_NOT_READY,
 )
 from modules.zw_opencv_module.processors.base import VisionResult
 
 
 _CMD_TIMEOUT = 5.0
+
+_DATA_TYPE_MODEL = {
+    DATA_TARGET_POSITION:   "yolo11n",
+    DATA_TARGET_COUNT:      "yolo11n",
+    DATA_ALL_TARGETS:       "yolo11n",
+    DATA_SEGMENTATION_MASK: "plate_seg",
+}
 
 
 class Ti2026Coordinator:
@@ -54,6 +62,7 @@ class Ti2026Coordinator:
 
         self._uart_sender: Optional[callable] = None
         self._vision_manager: Optional[VisionManager] = None
+        self._ai = None
 
         self._sm_queue: Deque[Callable] = deque()
         self._sm_lock = threading.Lock()
@@ -84,6 +93,9 @@ class Ti2026Coordinator:
 
     def set_uart_sender(self, sender: callable) -> None:
         self._uart_sender = sender
+
+    def set_ai(self, ai) -> None:
+        self._ai = ai
 
     def _send(self, frame: bytes) -> bool:
         if self._uart_sender:
@@ -177,6 +189,14 @@ class Ti2026Coordinator:
             frame = build_cmd_nack_frame(data_type, NACK_UNSUPPORTED_TYPE)
             self._send(frame)
             return
+
+        if self._ai:
+            nick = _DATA_TYPE_MODEL.get(data_type)
+            if nick and self._ai.active_model != nick:
+                if not self._ai.switch(nick):
+                    frame = build_cmd_nack_frame(data_type, NACK_NOT_READY)
+                    self._send(frame)
+                    return
 
         with self._cmd_lock:
             self._streaming_type = data_type
