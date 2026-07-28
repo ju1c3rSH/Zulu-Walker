@@ -82,6 +82,10 @@ class MockAI:
         logger.warning("MockAI: detect() called but no NPU available")
         return []
 
+    def segment(self, frame: np.ndarray, **kwargs) -> list:
+        logger.warning("MockAI: segment() called but no NPU available")
+        return []
+
     def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
         logger.warning("MockAI: classify() called but no NPU available")
         return []

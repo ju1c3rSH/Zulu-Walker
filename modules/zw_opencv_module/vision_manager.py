@@ -199,10 +199,11 @@ class VisionManager:
             raw_img = pipe.camera.read_raw()
             if raw_img is None:
                 continue
-            try:
-                detections = self._ai.detect(raw_img, _raw=True)
-            except Exception:
-                continue
+            ai_result = pipe.last_results.get("ai_inference")
+            if ai_result is not None and ai_result.success:
+                detections = ai_result.result_data.get("detections", [])
+            else:
+                detections = []
 
             self._draw_detections_on_image(raw_img, detections)
             self._display_frame = raw_img
