@@ -72,15 +72,19 @@ def _build_display_callback(manager, machine):
 def _make_wdt_feed():
     try:
         from maix.peripheral import wdt as _mwdt
-        _w = _mwdt.WDT(timeout=3000)
+        _w = _mwdt.WDT(timeout=5000)
+        _fail_count = [0]
 
         def _feed():
             try:
                 _w.feed()
-            except Exception:
-                pass
+            except Exception as e:
+                _fail_count[0] += 1
+                if _fail_count[0] % 50 == 1:
+                    log_print(f"[WDT] feed FAIL x{_fail_count[0]}: {e}")
         return _feed
-    except Exception:
+    except Exception as e:
+        log_print(f"[WDT] init FAIL: {e}")
         return lambda: None
 
 
