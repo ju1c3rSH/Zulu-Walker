@@ -97,7 +97,7 @@ class PipelineCamera:
 
         if raw_img is not None:
             import maix.image
-            frame = maix.image.image2cv(raw_img, ensure_bgr=True, copy=True)
+            frame = maix.image.image2cv(raw_img, ensure_bgr=True, copy=False)
             self._last_frame = frame
         else:
             frame = self._last_frame

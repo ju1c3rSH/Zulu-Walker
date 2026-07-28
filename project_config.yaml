@@ -1,5 +1,6 @@
 platform: maixcam2
 
+debug_console_enabled: false
 display_enabled: true
 
 cameras:
@@ -19,7 +20,7 @@ ai:
       model: "/root/models/steelball_640.mud"
       model_type: "auto"
     - nick_name: "plate_seg"
-      model: "/root/models/steelsheet_576.mud"
+      model: "/root/models/steelsheet_640.mud"
       model_type: "auto"
   active: "yolo11n"
   #active: "plate_seg"  # switch to seg model for steel plate detection

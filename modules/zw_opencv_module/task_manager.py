@@ -64,7 +64,7 @@ class TaskManager:
     def __init__(self):
         self.tasks: OrderedDict[str, Task] = OrderedDict()
         self.result_callbacks: List[Callable[[str, VisionResult], None]] = []
-        self.draw_enabled: bool = True
+        self.draw_enabled: bool = False
 
     def register_task(self, task: Task):
         """注册任务"""
