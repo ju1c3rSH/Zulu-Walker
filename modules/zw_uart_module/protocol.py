@@ -38,6 +38,10 @@ TYPE_CMD_NACK        = 0x22  # Slave -> Master: reject subscription
 TYPE_CMD_STOP        = 0x23  # Master -> Slave: stop data stream
 TYPE_DATA_STREAM     = 0x24  # Slave -> Master: streaming data frame
 
+# === Ping-Pong (link heartbeat) ===
+TYPE_PING            = 0x25  # Master -> Slave: 保活探测
+TYPE_PONG            = 0x26  # Slave -> Master: 保活应答
+
 # NACK reasons
 NACK_UNSUPPORTED_TYPE = 0x01
 NACK_NOT_READY        = 0x02
@@ -251,6 +255,18 @@ def build_data_stream_frame(seq: int, data_type: int, sub_payload: bytes) -> byt
     return _build_frame(TYPE_DATA_STREAM, inner)
 
 
+# === Ping-Pong builders ===
+
+def build_ping_frame(seq: int) -> bytes:
+    """Build TYPE_PING frame. Payload = seq(1B)."""
+    return _build_frame(TYPE_PING, bytes([seq & 0xFF]))
+
+
+def build_pong_frame(seq: int) -> bytes:
+    """Build TYPE_PONG frame. Payload = seq(1B)，原样回传 MCU。"""
+    return _build_frame(TYPE_PONG, bytes([seq & 0xFF]))
+
+
 # === Master-Slave protocol v3.0 parsers ===
 
 def parse_cmd_request_payload(payload: bytes) -> Optional[tuple]:
@@ -288,3 +304,15 @@ def parse_data_stream_header(payload: bytes) -> Optional[tuple]:
     if len(payload) < 2:
         return None
     return payload[0], payload[1], payload[2:]
+
+
+# === Ping-Pong parsers ===
+
+def parse_ping_payload(payload: bytes) -> Optional[int]:
+    """Parse TYPE_PING payload -> seq.  Returns None on invalid length."""
+    if len(payload) != 1:
+        return None
+    return payload[0]
+
+
+parse_pong_payload = parse_ping_payload  # same format
