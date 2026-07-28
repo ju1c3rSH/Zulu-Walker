@@ -32,12 +32,15 @@ MSPM0G3519 有 7 个 UART 实例（UART2 不存在），以下 3 个空闲：
 | 参数 | 值 |
 |------|-----|
 | 实例 | UART4 |
-| 波特率 | 921600 |
+| 波特率 | 115200 |
 | 数据位 | 8 |
 | 校验 | 无 |
 | 停止位 | 1 |
-| RX FIFO 阈值 | 1 字节 |
+| RX FIFO 阈值 | **4~8 字节**（v3.0 建议） |
 | 引脚 | 需确认原理图选择空闲 GPIO |
+
+> ⚠ **v3.0 建议**：115200 波特率下每字节 86.8µs（8N1），推荐 RX FIFO 阈值
+> 4~8 字节以减少中断次数。详见 [`master_slave_protocol.md`](./master_slave_protocol.md) §8.5。
 
 ---
 
@@ -233,9 +236,10 @@ void UART4_IRQHandler(void) {
 ```c
 #include "op_uart.h"
 
-// 回调函数声明
-static void on_heartbeat(const uint8_t *payload, uint8_t len);
-static void on_servo_data(const uint8_t *payload, uint8_t len);
+// ⚠ v3.0 回调声明（v2.1 旧回调已移除，见 master_slave_protocol.md §8.1）
+static void on_cmd_ack(const uint8_t *payload, uint8_t len);
+static void on_cmd_nack(const uint8_t *payload, uint8_t len);
+static void on_data_stream(const uint8_t *payload, uint8_t len);
 static void on_emergency_stop(const uint8_t *payload, uint8_t len);
 
 int main(void) {
@@ -243,10 +247,11 @@ int main(void) {
 
     op_uart_init();      // 初始化解析器
 
-    // 注册回调
-    op_uart_register_callback(0x15, on_heartbeat);      // TYPE_HEARTBEAT
-    op_uart_register_callback(0x17, on_servo_data);     // TYPE_VISUAL_SERVO_DATA
-    op_uart_register_callback(0x18, on_emergency_stop); // TYPE_EMERGENCY_STOP
+    // 注册 v3.0 回调
+    op_uart_register_callback(0x21, on_cmd_ack);          // TYPE_CMD_ACK
+    op_uart_register_callback(0x22, on_cmd_nack);         // TYPE_CMD_NACK
+    op_uart_register_callback(0x24, on_data_stream);      // TYPE_DATA_STREAM
+    op_uart_register_callback(0x18, on_emergency_stop);   // TYPE_EMERGENCY_STOP
 
     while (1) {
         // 业务循环
@@ -259,44 +264,40 @@ int main(void) {
 ## 10. 发送示例（MCU → OP 方向）
 
 ```c
-// 发送 TYPE_ARRIVED zone=3
-uint8_t arrived_payload = 3;
-op_uart_send(0x02, &arrived_payload, 1);
+// v3.0 发送示例（MSPM0 主机 → MaixCAM2 从机）
 
-// 发送 TYPE_ACTION_DONE action_id=1 result=0
-uint8_t action_payload[2] = {1, 0};
-op_uart_send(0x14, action_payload, 2);
+// 请求订阅 line position 数据流
+uint8_t req_payload[3] = {0x01, 0x00, 0x00};  // data_type, min_interval_ms, reserved
+op_uart_send(0x20, req_payload, 3);            // TYPE_CMD_REQUEST
 
-// 发送 TYPE_CMD_FROM_MCU cmd=CMD_START_QR
-uint8_t cmd_payload = 0x01;
-op_uart_send(0x10, &cmd_payload, 1);
+// 停止当前数据流
+op_uart_send(0x23, NULL, 0);                   // TYPE_CMD_STOP (空 payload)
 
-// 发送 TYPE_HEARTBEAT seq=42, mission_state=5, visual_state=0
-uint8_t hb_payload[3] = {42, 5, 0};
-op_uart_send(0x15, hb_payload, 3);
+// 紧急停止
+uint8_t stop_reason = 1;
+op_uart_send(0x18, &stop_reason, 1);           // TYPE_EMERGENCY_STOP
 ```
 
 ---
 
-## 11. 帧类型对照表
+## 11. 帧类型对照表 (v3.0)
 
 | Type | 名称 | Payload | 方向 |
 |:---|:---|:---|:---:|
-| 0x01 | `TYPE_ERROR` | `error_type(1B) + error_value(2B LE)` | OP→MCU |
-| 0x02 | `TYPE_ARRIVED` | `zone_id(1B)` | **MCU→OP** |
-| 0x03 | `TYPE_PICK` | `zone_id(1B)` | **MCU→OP** |
-| 0x04 | `TYPE_SET` | `zone_id(1B)` | **MCU→OP** |
-| 0x10 | `TYPE_CMD_FROM_MCU` | `cmd_id(1B) + args` | **MCU→OP** |
-| 0x11 | `TYPE_STATUS_FROM_VISION` | `mission_state + visual_state + flags + cargo_count` | OP→MCU |
-| 0x12 | `TYPE_QR_RESULT` | `len(1B) + ascii[len]` | OP→MCU |
-| 0x13 | `TYPE_COLOR_RESULT` | `color_id(1B) + confidence(1B)` | OP→MCU |
-| 0x14 | `TYPE_ACTION_DONE` | `action_id(1B) + result(1B)` | **MCU→OP** |
-| 0x15 | `TYPE_HEARTBEAT` | `seq + mission_state + visual_state` | 双向 |
-| 0x16 | `TYPE_REQUEST_SYNC` | `requested_state(1B)` | 双向 |
-| 0x17 | `TYPE_VISUAL_SERVO_DATA` | `error_x(2B) + error_y(2B) + flags(1B) + state(1B)` | OP→MCU |
+| 0x01 | `TYPE_ERROR` | `error_type(1B) + error_value(2B LE)` | 双向 |
 | 0x18 | `TYPE_EMERGENCY_STOP` | `reason(1B)` | 双向 |
+| 0x20 | `TYPE_CMD_REQUEST` | `data_type(1B) + min_interval_ms(1B) + reserved(1B)` | MSPM0→Maix |
+| 0x21 | `TYPE_CMD_ACK` | `data_type(1B) + max_freq_hz(1B) + payload_size(1B)` | Maix→MSPM0 |
+| 0x22 | `TYPE_CMD_NACK` | `data_type(1B) + reason(1B)` | Maix→MSPM0 |
+| 0x23 | `TYPE_CMD_STOP` | (空) | MSPM0→Maix |
+| 0x24 | `TYPE_DATA_STREAM` | `seq(1B) + data_type(1B) + sub_payload(var)` | Maix→MSPM0 |
 
-> 完整内容定义见 [`protocol_content.md`](protocol_content.md)。
+| 已废弃 (DEPRECATED) |
+| 0x15 | `TYPE_HEARTBEAT` | — | — |
+| 0x17 | `TYPE_VISUAL_SERVO_DATA` | — | — |
+
+> 完整 v3.0 定义见 [`master_slave_protocol.md`](./master_slave_protocol.md) §3.1。
+> 旧类型 0x02/0x03/0x04/0x10/0x11/0x12/0x13/0x14/0x16 已移除。
 
 ---
 
@@ -304,7 +305,7 @@ op_uart_send(0x15, hb_payload, 3);
 
 ```
 Step 1 — 基础设施
-  ├ keil/empty.syscfg: 新增 UART4，配置 921600 8N1，选空闲引脚
+  ├ keil/empty.syscfg: 新增 UART4，配置 115200 8N1，选空闲引脚
   └ 编译验证: 自动生成 ti_msp_dl_config.c/h
 
 Step 2 — 新建 OP_UART 模块
@@ -317,9 +318,11 @@ Step 3 — 中断集成
   └ 编译验证
 
 Step 4 — 应用层接线
-  ├ empty.c: op_uart_init() + 回调注册
-  └ 端到端环回测试（OP ↔ MCU 互发心跳验证链路）
+  ├ empty.c: op_uart_init() + 注册 v3.0 回调（见 §9）
+  └ 端到端验证：
+       MSPM0 发 TYPE_CMD_REQUEST(0x20) → MaixCAM2 回复 TYPE_CMD_ACK(0x21)
+       → MaixCAM2 持续推送 TYPE_DATA_STREAM(0x24) → MSPM0 发 TYPE_CMD_STOP(0x23)
 
-Step 5 — 业务帧对接
-  └ 逐个接入 ARRIVED / ACTION_DONE / CMD / SERVO_DATA 等帧
+Step 5 — 数据处理对接
+  └ 在 on_data_stream 回调中解析各 data_type 子负载（见 master_slave_protocol.md §8.4）
 ```
