@@ -43,3 +43,18 @@
 - **当前平台**: ~300Hz（实测），`MAIN_LOOP_DELAY = 0.00333`，每 tick 最快 3.33ms
 - **目标**: 升级内核配置到 `HZ=1000` + `CONFIG_HIGH_RES_TIMERS=y` 后可将 `MAIN_LOOP_DELAY` 降到 `0.001`
 - **现状**: 更改系统内核tick需要换内核，暂时不做
+
+---
+
+## AI 分割相关 (commit 5909600)
+
+### SegmentationHandler `"yolo_seg"` key 未被触发
+- **严重度**: 中
+- **现象**: `segmentation.py` 注册为 `"yolo_seg"`，但 `project_config.yaml` 中 seg 模型 `model_type: "auto"`，handler 查找 fallback 到 DefaultHandler。cv2 离线帧不叠加 seg mask 彩色填充。
+- **影响范围**: 离线流（RTMP/文件保存）的 cv2 输出帧。板端 LCD 不受影响（走 maix.image display 路径）。
+- **修复方向**: 将 `plate_seg` 的 `model_type` 改为 `"yolo_seg"`，或修改 handler 注册/查找逻辑使 `model_type="auto"` 也能匹配到 SegmentationHandler。
+
+### LCD 端 seg mask 半透明叠加丢失
+- **严重度**: 低
+- **现象**: `_update_display_frame` 改为复用 `pipe.last_results` 缓存（NPU 推理 2→1 次/帧），不再调 `detect()` 内部的 `draw_seg_mask()`。LCD 仅显示 bbox + 标签 + mask 中心红点，无半透明彩色填充。
+- **修复方向**: 若需恢复，可在 Detection 中携带原始 `obj.seg_mask`（maix.image）引用，供 display 线程单独调用 `model.draw_seg_mask()`。
