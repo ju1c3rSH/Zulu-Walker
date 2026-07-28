@@ -118,10 +118,10 @@ class VisionManager:
                 if self._wdt_count % 100 == 0:
                     log_print(f"[WDT] viz feed #{self._wdt_count}")
 
-                self._update_display_frame()
-
                 profiler.start("total")
-                composed, all_results, any_fresh = self.process_all()
+                _, all_results, any_fresh = self.process_all()
+
+                self._update_display_frame()
 
                 if self._event_bus:
                     self._pending_results.append(all_results)
@@ -178,24 +178,45 @@ class VisionManager:
         if not self._ai or not self._ai.loaded:
             return
         for pid, pipe in list(self._pipelines.items()):
-            raw_img = pipe.camera.read_raw()
+            raw_img = getattr(pipe.camera, "_last_raw", None)
             if raw_img is None:
                 continue
+            fps = self.get_pipeline_fps(pid)
             ai_result = pipe.last_results.get("ai_inference")
+            detections = []
             if ai_result is not None and ai_result.success:
                 detections = ai_result.result_data.get("detections", [])
-            else:
-                detections = []
 
-            self._draw_detections_on_image(raw_img, detections)
+            self._draw_overlays(raw_img, pid, fps, detections)
             self._display_frame = raw_img
             return
 
-    def _draw_detections_on_image(self, img, detections) -> None:
+    def _draw_overlays(self, img, pipeline_id: str, fps: float, detections) -> None:
         try:
             import maix.image
         except ImportError:
             return
+
+        self._draw_header(img, pipeline_id, fps)
+        self._draw_detections(img, detections, maix.image)
+
+    def _draw_header(self, img, pipeline_id: str, fps: float) -> None:
+        try:
+            import maix.image
+        except ImportError:
+            return
+        hdr_line = f"{pipeline_id}  FPS:{fps:.1f}"
+        bar_h = 28
+        try:
+            img.draw_rect(0, 0, img.width(), bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
+        except Exception:
+            pass
+        try:
+            img.draw_string(6, 4, hdr_line, color=maix.image.COLOR_WHITE, scale=2.0, thickness=2)
+        except Exception:
+            pass
+
+    def _draw_detections(self, img, detections, maix_image) -> None:
         labels = self._ai.labels if hasattr(self._ai, "labels") and self._ai.labels else []
 
         for det in detections:
@@ -211,7 +232,7 @@ class VisionManager:
             text = f"{label_text}:{det.score:.2f}"
 
             try:
-                size = maix.image.string_size(text, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
+                size = maix_image.string_size(text, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
                 tw, th = size[0], size[1]
             except Exception:
                 tw, th = 80, 24 * 3
@@ -222,20 +243,32 @@ class VisionManager:
                 label_y = y1
 
             try:
-                img.draw_rect(x1, label_y, tw + 8, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
+                img.draw_rect(x1, label_y, tw + 8, bar_h, color=maix_image.COLOR_BLACK, thickness=-1)
             except Exception:
                 pass
             try:
-                img.draw_rect(x1, y1, det.w, det.h, color=maix.image.COLOR_GREEN, thickness=3)
+                img.draw_rect(x1, y1, det.w, det.h, color=maix_image.COLOR_GREEN, thickness=3)
             except Exception:
                 pass
             try:
-                img.draw_string(x1 + 4, label_y + 2, text, color=maix.image.COLOR_WHITE, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
+                img.draw_string(x1 + 4, label_y + 2, text, color=maix_image.COLOR_WHITE, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
             except Exception:
                 pass
 
             if det.mask_stats is not None:
                 self._draw_mask_center(img, det)
+                self._draw_area_text(img, det, y2, maix_image)
+
+    @staticmethod
+    def _draw_area_text(img, det, y_below, maix_image) -> None:
+        stats = det.mask_stats
+        if stats is None or stats.area_px == 0:
+            return
+        text = f"area:{stats.area_px}px"
+        try:
+            img.draw_string(det.x, y_below + 4, text, color=maix_image.COLOR_YELLOW, scale=1.5, thickness=2)
+        except Exception:
+            pass
 
     @staticmethod
     def _draw_mask_center(img, det) -> None:
