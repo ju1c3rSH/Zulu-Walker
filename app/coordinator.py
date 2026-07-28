@@ -67,6 +67,7 @@ class Ti2026Coordinator:
 
         self._running = False
         self._wdt_feed = lambda: None
+        self._wdt_count = 0
         self._last_fps: float = 0.0
         self._last_fps_time: float = 0.0
         self._mem_log_counter: int = 0
@@ -128,6 +129,9 @@ class Ti2026Coordinator:
                         self._stream_seq = (self._stream_seq + 1) & 0xFF
 
         self._wdt_feed()
+        self._wdt_count += 1
+        if self._wdt_count % 200 == 0:
+            log_print(f"[WDT] coord feed #{self._wdt_count}")
 
         self._mem_log_counter += 1
         if self._mem_log_counter >= 300:
