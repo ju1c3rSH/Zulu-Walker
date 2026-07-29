@@ -17,10 +17,13 @@ from .protocol import (
     TYPE_CMD_REQUEST, TYPE_CMD_STOP,
     TYPE_CMD_ACK, TYPE_CMD_NACK, TYPE_DATA_STREAM,
     TYPE_PING, TYPE_PONG,
+    DATA_TYPE_NAMES, NACK_REASON_NAMES,
     FrameData, parse_frame,
     parse_emergency_stop_payload,
     parse_cmd_request_payload,
     parse_cmd_stop_payload,
+    parse_cmd_ack_payload,
+    parse_cmd_nack_payload,
     parse_ping_payload,
     build_pong_frame,
 )
@@ -322,27 +325,41 @@ class STM32UartInterface:
         """
         if frame.frame_type == TYPE_CMD_REQUEST:
             parsed = parse_cmd_request_payload(frame.payload)
-            if parsed is not None and self._event_bus:
-                try:
-                    from .events import CmdRequestEvent
-                    self._event_bus.publish(
-                        CmdRequestEvent(parsed[0], parsed[1]))
-                except ImportError:
-                    pass
+            if parsed is not None:
+                dt_name = DATA_TYPE_NAMES.get(parsed[0], f"0x{parsed[0]:02X}")
+                log_print(f"[UART RX] CMD_REQUEST type={dt_name} interval={parsed[1]}ms")
+                if self._event_bus:
+                    try:
+                        from .events import CmdRequestEvent
+                        self._event_bus.publish(
+                            CmdRequestEvent(parsed[0], parsed[1]))
+                    except ImportError:
+                        pass
 
         elif frame.frame_type == TYPE_CMD_STOP:
-            if parse_cmd_stop_payload(frame.payload) and self._event_bus:
-                try:
-                    from .events import CmdStopEvent
-                    self._event_bus.publish(CmdStopEvent())
-                except ImportError:
-                    pass
+            if parse_cmd_stop_payload(frame.payload):
+                log_print("[UART RX] CMD_STOP")
+                if self._event_bus:
+                    try:
+                        from .events import CmdStopEvent
+                        self._event_bus.publish(CmdStopEvent())
+                    except ImportError:
+                        pass
 
         elif frame.frame_type == TYPE_CMD_ACK:
+            parsed = parse_cmd_ack_payload(frame.payload)
+            if parsed is not None:
+                dt_name = DATA_TYPE_NAMES.get(parsed[0], f"0x{parsed[0]:02X}")
+                log_print(f"[UART RX] CMD_ACK type={dt_name} freq={parsed[1]}Hz size={parsed[2]}B (unexpected, slave)")
             self._logger.warning(
                 "Unexpected CMD_ACK received (slave role)")
 
         elif frame.frame_type == TYPE_CMD_NACK:
+            parsed = parse_cmd_nack_payload(frame.payload)
+            if parsed is not None:
+                dt_name = DATA_TYPE_NAMES.get(parsed[0], f"0x{parsed[0]:02X}")
+                reason_name = NACK_REASON_NAMES.get(parsed[1], f"0x{parsed[1]:02X}")
+                log_print(f"[UART RX] CMD_NACK type={dt_name} reason={reason_name} (unexpected, slave)")
             self._logger.warning(
                 "Unexpected CMD_NACK received (slave role)")
 
