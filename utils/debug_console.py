@@ -25,6 +25,11 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 class DebugConsole:
     _instance: Optional["DebugConsole"] = None
     _singleton_lock = threading.Lock()
+    _global_enabled: bool = True
+
+    @classmethod
+    def set_global_enabled(cls, enabled: bool) -> None:
+        cls._global_enabled = enabled
 
     def __new__(cls):
         if cls._instance is None:
@@ -52,6 +57,8 @@ class DebugConsole:
     # ---- public API ----
 
     def set(self, key: str, value) -> None:
+        if not DebugConsole._global_enabled:
+            return
         with self._status_lock:
             self._status[key] = str(value)
 
@@ -60,16 +67,23 @@ class DebugConsole:
             return self._status.get(key, default)
 
     def log(self, msg: str) -> None:
+        if not DebugConsole._global_enabled:
+            return
         cleaned = _ANSI_RE.sub("", msg)
         ts = time.strftime("%H:%M:%S", time.localtime())
         with self._log_lock:
             self._log_lines.append(f"[{ts}] {cleaned}")
 
     def incr_error(self) -> None:
+        if not DebugConsole._global_enabled:
+            return
         self._error_count += 1
 
     def start(self) -> None:
         if self._running:
+            return
+        if not DebugConsole._global_enabled:
+            self._running = True
             return
         self._running = True
         self._start_time = time.monotonic()
@@ -142,35 +156,12 @@ class DebugConsole:
         table.add_column("Value", no_wrap=True)
 
         rows = [
-            ("Mission", s.get("mission_state", "-"), "white"),
-            ("Visual",  s.get("visual_state", "-"), "white"),
-            ("Link",    self._link_str(s), self._link_color(s)),
+            ("State",      s.get("state", "-"), "white"),
+            ("Link",       self._link_str(s), self._link_color(s)),
+            ("FPS",        s.get("fps", "-"), "white"),
+            ("Detections", s.get("det_count", "0"), "white"),
+            ("Error",      f"{self._error_count}", "red" if self._error_count > 0 else "green"),
         ]
-
-        # Dynamic camera rows (keys: <cam_id>_fps, <cam_id>_queue, <cam_id>_drop)
-        for fps_key in sorted(k for k in s if k.endswith("_fps")):
-            prefix = fps_key[:-4]
-            if not prefix:
-                continue
-            fps_val = s.get(fps_key, "-")
-            q_val   = s.get(f"{prefix}_queue", "-")
-            d_val   = s.get(f"{prefix}_drop", "-")
-            rows.append((f"Cam {prefix}", f"{fps_val} FPS | Q:{q_val} | D:{d_val}", "white"))
-
-        rows.extend([
-            ("Cargo",   s.get("cargo_count", "-"), "white"),
-            ("Batch",   s.get("batch", "-"), "white"),
-            ("Step",    s.get("step", "-"), "white"),
-            ("Task",    s.get("active_task", "-"), "white"),
-            ("Color",   s.get("target_color", "-") or "-", "white"),
-            ("Batch1 Seq", s.get("batch1_order", "-"), "white"),
-            ("Batch2 Seq", s.get("batch2_order", "-"), "white"),
-            ("UART TX", s.get("uart_tx", "-"), "white"),
-            ("UART RX", s.get("uart_rx", "-"), "white"),
-            ("Frame",   s.get("perf_frame", "-"), "white"),
-            ("Detect",  s.get("perf_detect", "-"), "white"),
-            ("Error",   f"{self._error_count}", "red" if self._error_count > 0 else "green"),
-        ])
 
         for key, value, style in rows:
             table.add_row(key, Text(value, style=style))

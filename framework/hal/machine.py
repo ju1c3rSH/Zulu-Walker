@@ -34,19 +34,19 @@ class Machine:
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
         path = Path(config_path)
         if not path.exists():
-            logger.warning("%s not found, using platform=linux defaults", config_path)
-            platform = "linux"
+            logger.warning("%s not found, using platform=maixcam2 defaults", config_path)
+            platform = "maixcam2"
             cameras_config = []
-            uart_config = {"port": "/dev/ttyS4", "baudrate": 921600}
+            uart_config = {"port": "/dev/ttyS1", "baudrate": 921600}
             ai_config = None
         else:
             with open(path) as f:
                 cfg = yaml.safe_load(f)
-            platform = cfg.get("platform", "linux")
+            platform = cfg.get("platform", "maixcam2")
             cameras_config = cfg.get("cameras", [])
             uart_defaults = cfg.get("uart_defaults", {})
             uart_config = {
-                "port": uart_defaults.get("port", "/dev/ttyS4"),
+                "port": uart_defaults.get("port", "/dev/ttyS1"),
                 "baudrate": uart_defaults.get("baudrate", 921600),
             }
             ai_config = cfg.get("ai")
@@ -75,7 +75,7 @@ class Machine:
                 source=source,
                 width=cam_cfg.get("width", 640),
                 height=cam_cfg.get("height", 480),
-                fps=cam_cfg.get("fps", 120),
+                fps=cam_cfg.get("fps"),
                 camera_stream_queue_size=cam_cfg.get("camera_stream_queue_size", 2),
                 focal_length_mm=cam_cfg.get("focal_length_mm"),
                 sensor_width_mm=cam_cfg.get("sensor_width_mm"),
