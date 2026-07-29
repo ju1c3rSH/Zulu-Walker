@@ -6,7 +6,7 @@ from .uart import MaixCam2Uart
 
 def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> MaixCam2Camera:
     camera_id = kwargs.pop("camera_id", str(source))
-    fps = kwargs.pop("fps", 120)
+    fps = kwargs.pop("fps", None)
     buff_num = kwargs.pop("camera_stream_queue_size", 3)
     focal_length_mm = kwargs.pop("focal_length_mm", None)
     sensor_width_mm = kwargs.pop("sensor_width_mm", None)
