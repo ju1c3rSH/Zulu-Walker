@@ -59,6 +59,13 @@ class VisionManager:
         self._exit_icon_size: int = 0
         self._exit_icon_margin: int = 0
 
+        self._calib_button_icon = None
+        self._calib_button_size: int = 48
+        self._calib_button_margin: int = 12
+        self._calib_button_visible: bool = False
+        self._calib_flash_until: float = 0.0
+        self._calib_flash_rect = None  # (x, y, w, h)
+
         self._test_id: int = 0
         self._hdr_prefix: str = ""
         self._test_str_cached: str = ""
@@ -80,6 +87,30 @@ class VisionManager:
         self._exit_icon = icon
         self._exit_icon_size = icon_size
         self._exit_icon_margin = margin
+
+    def set_calib_button(self, icon, size: int = 48, margin: int = 12) -> None:
+        self._calib_button_icon = icon
+        self._calib_button_size = size
+        self._calib_button_margin = margin
+
+    def set_calib_button_visible(self, v: bool) -> None:
+        self._calib_button_visible = v
+
+    def get_calib_button_rect(self) -> Optional[tuple]:
+        if self._display_frame is None or not self._calib_button_visible:
+            return None
+        frame = self._display_frame
+        w = frame.width()
+        h = frame.height()
+        size = self._calib_button_size
+        margin = self._calib_button_margin
+        bx = w - size - margin
+        by = h - size - 8
+        return (bx, by, size, size)
+
+    def trigger_calib_flash(self, bbox: tuple) -> None:
+        self._calib_flash_until = time.monotonic() + 1.0
+        self._calib_flash_rect = bbox
 
     def set_test_id(self, test_id: int) -> None:
         self._test_id = test_id
@@ -218,6 +249,9 @@ class VisionManager:
                 detections = ai_result.result_data.get("detections", [])
 
             self._draw_overlays(raw_img, pid, fps, detections)
+            if self._calib_button_visible:
+                self._draw_calib_button(raw_img)
+            self._draw_calib_flash(raw_img)
             self._draw_exit_icon(raw_img)
             self._display_frame = raw_img
             self._capture_seq += 1
@@ -361,6 +395,37 @@ class VisionManager:
             img.draw_rect(bx - 2, by - 2, self._exit_icon_size + 4,
                           self._exit_icon_size + 4, color=_mi.COLOR_BLACK, thickness=-1)
             img.draw_image(bx, by, self._exit_icon)
+        except Exception:
+            pass
+
+    def _draw_calib_button(self, img) -> None:
+        if self._calib_button_icon is None:
+            return
+        try:
+            import maix.image as _mi
+            h = img.height()
+            w = img.width()
+            size = self._calib_button_size
+            margin = self._calib_button_margin
+            bx = w - size - margin
+            by = h - size - 8
+            img.draw_rect(bx - 2, by - 2, size + 4,
+                          size + 4, color=_mi.COLOR_BLACK, thickness=-1)
+            img.draw_image(bx, by, self._calib_button_icon)
+        except Exception:
+            pass
+
+    def _draw_calib_flash(self, img) -> None:
+        if time.monotonic() >= self._calib_flash_until:
+            return
+        if self._calib_flash_rect is None:
+            return
+        try:
+            import maix.image as _mi
+            rect = self._calib_flash_rect
+            img.draw_rect(int(rect[0]), int(rect[1]),
+                          int(rect[2]), int(rect[3]),
+                          color=_mi.COLOR_GREEN, thickness=3)
         except Exception:
             pass
 

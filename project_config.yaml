@@ -25,6 +25,13 @@ ai:
 pendulum:
   pixels_per_cm: 25.6
   length_cm: 25.0
+  # rail_calibration:          # Auto-generated after Phase 2 origin calibration
+  #   origin_x: 320.0
+  #   origin_y: 320.0
+  #   angle_rad: 0.0
+  #   dir_cos: 1.0
+  #   dir_sin: 0.0
+  #   calibrated: true
 
 streaming:
   wifi_mode: "ap"           # "ap" | "sta" | "off"
