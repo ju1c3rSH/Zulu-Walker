@@ -13,7 +13,8 @@ _ICON_MARGIN = 12
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.makedirs("logs", exist_ok=True)
-
+from utils.log_util import start_log_writer
+start_log_writer()
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -144,11 +145,14 @@ def _build_callbacks(manager, machine, coordinator):
                                         cbx, cby, cbw, _ = calib_rect
                                         if _in_btn(_touch_x, _touch_y, cbx, cby, size=cbw):
                                             if coordinator.calibrate_origin_from_ball():
+                                                log_print("[CALIB] Phase2 done: origin set from ball position")
                                                 bbox = coordinator.get_last_ball_bbox()
                                                 if bbox:
                                                     vm.trigger_calib_flash(bbox)
                                                 vm.set_calib_button_visible(False)
                                                 _persist_calibration(coordinator.get_rail_calibration())
+                                            else:
+                                                log_print("[CALIB] Phase2 FAILED: no ball detected")
                     _touch_down = False
             except Exception:
                 pass
@@ -334,7 +338,14 @@ def _load_persisted_calibration(cfg: dict):
     return None
 
 
-def _run_phase1_calibration(camera):
+_CALIB_PARAM_KEYS = frozenset({
+    'binary_threshold', 'min_contour_area_ratio', 'min_aspect_ratio',
+    'canny_low', 'canny_high', 'hough_threshold', 'hough_min_line_len',
+    'edge_angle_max_deg',
+})
+
+
+def _run_phase1_calibration(camera, calib_params=None):
     """Phase 1: grab one frame, run contour-based calibration.
     Returns RailCalibration or None on failure."""
     from modules.zw_opencv_module.detectors.pendulum_calibrator import PendulumCalibrator
@@ -342,7 +353,10 @@ def _run_phase1_calibration(camera):
         frame = camera.read()
         if frame is None:
             return None
-        calib = PendulumCalibrator(frame_w=frame.shape[1], frame_h=frame.shape[0])
+        kwargs = {}
+        if calib_params:
+            kwargs = {k: calib_params[k] for k in _CALIB_PARAM_KEYS if k in calib_params}
+        calib = PendulumCalibrator(frame_w=frame.shape[1], frame_h=frame.shape[0], **kwargs)
         result = calib.calibrate(frame)
         return result if result.calibrated else None
     except Exception:
@@ -441,7 +455,8 @@ def main():
         try:
             cam = CameraHub.instance().get("main")
             if cam is not None:
-                calib = _run_phase1_calibration(cam)
+                calib_params = _cfg.get("pendulum", {}).get("calib_params", None)
+                calib = _run_phase1_calibration(cam, calib_params)
                 if calib is not None:
                     coordinator.set_rail_calibration(calib)
                     log_print(f"[CALIB] Phase1 done: angle={calib.angle_rad:.4f} "
