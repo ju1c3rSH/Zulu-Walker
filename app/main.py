@@ -304,16 +304,21 @@ def _start_beacon() -> None:
 
 def _load_calib_icon():
     """Load calibrate button icon from assets/calibrate.png."""
-    icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "calibrate.png")
+    base = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(os.path.dirname(base), "assets", "calibrate.png")
     try:
         from maix import image as _mi
         icon = _mi.load(icon_path)
-        if icon is not None:
-            w = icon.width() * 48 // icon.height()
-            if w % 2:
-                w += 1
-            return icon.resize(w, 48)
-    except Exception:
+        if icon is None:
+            log_print(f"[CALIB] Icon load FAILED, path={icon_path}")
+            return None
+        w = icon.width() * 48 // icon.height()
+        if w % 2:
+            w += 1
+        log_print(f"[CALIB] Icon loaded OK, size={w}x48")
+        return icon.resize(w, 48)
+    except Exception as e:
+        log_print(f"[CALIB] Icon load exception: {e}")
         return None
 
 
@@ -439,12 +444,17 @@ def main():
                 calib = _run_phase1_calibration(cam)
                 if calib is not None:
                     coordinator.set_rail_calibration(calib)
+                    log_print(f"[CALIB] Phase1 done: angle={calib.angle_rad:.4f} "
+                              f"origin=({calib.origin_x:.0f},{calib.origin_y:.0f})")
                     calib_icon = _load_calib_icon()
                     if vm is not None and calib_icon is not None:
                         vm.set_calib_button(calib_icon, _ICON_SIZE, _ICON_MARGIN)
                         vm.set_calib_button_visible(True)
-                    log_print(f"[CALIB] Phase1 done: angle={calib.angle_rad:.4f} "
-                              f"origin=({calib.origin_x:.0f},{calib.origin_y:.0f})")
+                        log_print("[CALIB] Calibrate button visible (bottom-right)")
+                    elif calib_icon is None:
+                        log_print("[CALIB] Button NOT shown: icon load failed")
+                    else:
+                        log_print("[CALIB] Button NOT shown: VisionManager is None")
                 else:
                     log_print("[CALIB] Phase1 FAILED, fallback to horizontal axis")
             else:
