@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModuleManager:
-    MAIN_LOOP_DELAY = 0.016
+    MAIN_LOOP_DELAY = 0.002
 
     def __init__(self, machine: Machine, event_bus=None, wdt_feed=None, **module_init_kwargs) -> None:
         self._machine = machine
