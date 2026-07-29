@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import maix.display
-import maix.image
 import maix.err
-import numpy as np
 
 
 class MaixCam2Display:
@@ -12,15 +10,20 @@ class MaixCam2Display:
             open=True,
         )
 
-    def show(self, frame: np.ndarray) -> bool:
+    def show(self, frame) -> bool:
         if self._disp is None:
             return False
         try:
-            img = maix.image.cv2image(frame, bgr=True, copy=True)
-            err = self._disp.show(img)
+            err = self._disp.show(frame)
             return err == maix.err.Err.ERR_NONE
         except Exception:
             return False
+
+    def width(self) -> int:
+        return self._disp.width() if self._disp else 0
+
+    def height(self) -> int:
+        return self._disp.height() if self._disp else 0
 
     def close(self) -> None:
         if self._disp is not None:

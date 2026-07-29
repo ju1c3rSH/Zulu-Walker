@@ -55,7 +55,7 @@ def create_uart(port: str, baudrate: int = 921600) -> LinuxUart:
     return LinuxUart(port=port, baudrate=baudrate)
 
 
-def create_ai() -> LinuxAI:
+def create_ai(**kwargs) -> LinuxAI:
     return LinuxAI()
 
 
