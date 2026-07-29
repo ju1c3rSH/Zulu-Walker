@@ -48,11 +48,8 @@ class AIInferenceProcessor(Processor):
             )
 
         try:
-            camera = (context or {}).get("camera")
-            raw = getattr(camera, "_last_raw", None)
-            kwargs = {"_raw": True} if raw is not None else {}
-            input_img = raw if raw is not None else frame
-            detections = self._ai.detect(input_img, **kwargs)
+            input_img = frame
+            detections = self._ai.detect(input_img)
         except Exception as e:
             logger.error("AIInferenceProcessor detect failed: %s", e)
             return VisionResult(

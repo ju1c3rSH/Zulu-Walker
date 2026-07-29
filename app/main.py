@@ -195,7 +195,7 @@ def main():
 
     machine = Machine.create("project_config.yaml")
     manager = ModuleManager(machine, event_bus=bus, wdt_feed=wdt_feed)
-    manager.register_many(["zw_opencv_module", "zw_uart_module"])
+    manager.register_many(["zw_opencv_module", "zw_uart_module", "zw_wifi_stream"])
 
     from modules.zw_opencv_module import get_vision_manager
     from modules.zw_uart_module import get_interface
@@ -209,6 +209,11 @@ def main():
         coordinator.set_uart_sender(uart.send_raw)
 
     coordinator.set_ai(machine.ai)
+
+    from modules.zw_wifi_stream import get_streamer
+    streamer = get_streamer()
+    if streamer:
+        coordinator.set_streamer(streamer)
 
     pixels_per_cm = _cfg.get("pendulum", {}).get("pixels_per_cm", 25.6)
     cam_cfg = _cfg.get("cameras", [{}])[0]
