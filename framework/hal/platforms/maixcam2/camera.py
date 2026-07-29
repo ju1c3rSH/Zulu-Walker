@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import numpy as np
 
 import maix.camera
 import maix.image
+logger = logging.getLogger(__name__)
 
 _CAP_PROP_FRAME_WIDTH = 3
 _CAP_PROP_FRAME_HEIGHT = 4
@@ -33,6 +35,8 @@ class MaixCam2Camera:
         self._sensor_height_mm = sensor_height_mm
         self._opened = False
         self._cam: Optional[maix.camera.Camera] = None
+        self._read_cam: Optional[maix.camera.Camera] = None
+        self._last_frame: Optional[np.ndarray] = None
         try:
             self._cam = maix.camera.Camera(
                 width=width,
@@ -44,7 +48,8 @@ class MaixCam2Camera:
                 open=True,
             )
             self._opened = True
-        except Exception:
+        except Exception as e:
+            logger.warning("Camera init failed: %s", e)
             self._opened = False
 
     @property
@@ -88,27 +93,37 @@ class MaixCam2Camera:
         return self._cam.is_opened()
 
     def read(self) -> Optional[np.ndarray]:
-        if self._cam is None:
+        cam = self._read_cam or self._cam
+        if cam is None:
             return None
         try:
-            img = self._cam.read(block=False)
+            img = cam.read(block=False)
             if img is None:
                 return None
             self._last_raw = img
-            return maix.image.image2cv(img, ensure_bgr=True, copy=True)
-        except Exception:
+            return maix.image.image2cv(img, ensure_bgr=False, copy=True)[:, :, ::-1]
+        except Exception as e:
+            logger.warning("Camera read failed: %s", e)
             return None
 
     def read_raw(self):
-        if self._cam is None:
+        cam = self._read_cam or self._cam
+        if cam is None:
             return None
         try:
-            img = self._cam.read(block=False)
-            if img is not None:
-                self._last_raw = img
-            return img
-        except Exception:
+            raw = cam.read(block=False)
+            if raw is not None:
+                self._last_raw = raw
+                np_img = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
+                self._last_frame = np_img[:, :, ::-1]
+            return self._last_frame
+        except Exception as e:
+            logger.warning("Camera read_raw failed: %s", e)
             return None
+
+    @property
+    def raw_camera(self):
+        return self._cam
 
     def set(self, prop_id: int, value) -> bool:
         if self._cam is None:
