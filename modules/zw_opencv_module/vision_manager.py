@@ -51,6 +51,7 @@ class VisionManager:
         self._wdt_count = 0
 
         self._streamer = None
+        self._stream_tick = 0
 
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
@@ -194,7 +195,8 @@ class VisionManager:
 
             self._draw_overlays(raw_img, pid, fps, detections)
             self._display_frame = raw_img
-            if self._streamer is not None:
+            self._stream_tick += 1
+            if self._streamer is not None and self._stream_tick % 2 == 0:
                 self._streamer.push_frame(raw_img)
             return
 
