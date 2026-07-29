@@ -88,6 +88,7 @@ class Ti2026Coordinator:
         self._pixels_per_cm: float = 25.6
         self._frame_width: int = 640
         self._frame_height: int = 640
+        self._streamer = None
 
     def set_pendulum_calibration(self, pixels_per_cm: float, frame_width: int = 640, frame_height: int = 640) -> None:
         self._pixels_per_cm = pixels_per_cm
@@ -105,6 +106,9 @@ class Ti2026Coordinator:
 
     def set_ai(self, ai) -> None:
         self._ai = ai
+
+    def set_streamer(self, streamer) -> None:
+        self._streamer = streamer
 
     def _send(self, frame: bytes) -> bool:
         if self._uart_sender:
@@ -163,9 +167,13 @@ class Ti2026Coordinator:
         self._running = True
         self._wire_events()
         self._last_cmd_time = time.monotonic()
+        if self._streamer:
+            self._streamer.start_async()
 
     def stop(self) -> None:
         self._running = False
+        if self._streamer:
+            self._streamer.stop()
 
     def _wire_events(self) -> None:
         self.event_bus.subscribe(CmdRequestEvent, self._on_cmd_request)
