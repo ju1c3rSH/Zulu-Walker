@@ -132,6 +132,7 @@ def _build_callbacks(manager, machine):
     def _display_loop():
         nonlocal _last_seen_frame
         import time
+        _tick = 0
         while True:
             vision_mod = manager.modules.get("zw_opencv_module")
             if vision_mod and machine and machine.display:
@@ -140,6 +141,9 @@ def _build_callbacks(manager, machine):
                     frame = vm.get_display_frame()
                     if frame is not None and frame is not _last_seen_frame:
                         _last_seen_frame = frame
+                        _tick += 1
+                        if _tick % 2 != 0:
+                            continue
                         try:
                             import maix.image as _mi3
                             h = frame.height()
