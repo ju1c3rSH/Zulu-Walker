@@ -3,7 +3,7 @@ import os
 import sys
 import threading
 import time
-from utils.log_util import log_print
+from utils.log_util import log_print, start_log_writer
 
 _DISPLAY_EVERY_N = 2
 _ICON_SIZE = 48
@@ -212,6 +212,7 @@ def main():
         _cfg = {}
     from utils.debug_console import DebugConsole
     DebugConsole.set_global_enabled(_cfg.get("debug_console_enabled", True))
+    start_log_writer()
 
     wdt_feed = _make_wdt_feed()
 
