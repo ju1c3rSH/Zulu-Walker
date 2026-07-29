@@ -35,6 +35,7 @@ class MaixCam2Camera:
         self._sensor_height_mm = sensor_height_mm
         self._opened = False
         self._cam: Optional[maix.camera.Camera] = None
+        self._last_raw: Optional[maix.image.Image] = None
         self._last_frame: Optional[np.ndarray] = None
         try:
             self._cam = maix.camera.Camera(
@@ -90,6 +91,11 @@ class MaixCam2Camera:
         if self._cam is None:
             return False
         return self._cam.is_opened()
+
+    @property
+    def last_raw(self):
+        """The most recent raw maix Image frame (RGB888)."""
+        return self._last_raw
 
     def read(self) -> Optional[np.ndarray]:
         if self._cam is None:
