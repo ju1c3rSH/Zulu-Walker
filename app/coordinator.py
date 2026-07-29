@@ -38,6 +38,7 @@ from modules.zw_uart_module.protocol import (
     DATA_DETECTION_STATUS,
     DATA_ALL_TARGETS,
     DATA_SEGMENTATION_MASK,
+    DATA_PENDULUM_POSITION,
     NACK_UNSUPPORTED_TYPE,
     NACK_NOT_READY,
 )
@@ -84,6 +85,14 @@ class Ti2026Coordinator:
         # Vision result cache
         self._latest_line: dict = {}
         self._latest_ai: dict = {}
+        self._pixels_per_cm: float = 25.6
+        self._frame_width: int = 640
+        self._frame_height: int = 640
+
+    def set_pendulum_calibration(self, pixels_per_cm: float, frame_width: int = 640, frame_height: int = 640) -> None:
+        self._pixels_per_cm = pixels_per_cm
+        self._frame_width = frame_width
+        self._frame_height = frame_height
 
     def set_wdt_feed(self, feed_fn) -> None:
         self._wdt_feed = feed_fn
@@ -239,6 +248,8 @@ class Ti2026Coordinator:
             return self._build_all_targets_payload()
         elif data_type == DATA_SEGMENTATION_MASK:
             return self._build_seg_mask_payload()
+        elif data_type == DATA_PENDULUM_POSITION:
+            return self._build_pendulum_position_payload()
         return None
 
     def _build_line_position_payload(self) -> bytes:
@@ -306,6 +317,26 @@ class Ti2026Coordinator:
                 min(s["area_px"], 65535).to_bytes(2, 'little')
             )
         return payload
+
+    def _build_pendulum_position_payload(self) -> bytes:
+        data = self._latest_ai
+        detections = data.get("detections", [])
+        ball = max((d for d in detections if d.class_id == 0), key=lambda d: d.score, default=None)
+        if ball is not None:
+            cx = ball.x + ball.w / 2
+            frame_w = self._frame_width
+            half = max(frame_w, self._frame_height) / 2.0
+            pe_x = int(((cx - frame_w / 2.0) / half) * 5000.0)
+            ball_cm = (cx - frame_w / 2.0) / self._pixels_per_cm
+            ball_cm_scaled = int(ball_cm * 100)
+            flags = 0x01
+        else:
+            pe_x = 0
+            ball_cm_scaled = 0
+            flags = 0x00
+        return (pe_x.to_bytes(2, 'little', signed=True) +
+                ball_cm_scaled.to_bytes(2, 'little', signed=True) +
+                bytes([flags, 0x00]))
 
     # ===== memory logging =====
 
