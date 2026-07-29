@@ -194,6 +194,13 @@ def main():
     coordinator.set_wdt_feed(wdt_feed)
 
     machine = Machine.create("project_config.yaml")
+
+    try:
+        from maix import display
+        display.set_trans_image_quality(20)
+    except Exception:
+        pass
+
     manager = ModuleManager(machine, event_bus=bus, wdt_feed=wdt_feed)
     manager.register_many(["zw_opencv_module", "zw_uart_module", "zw_wifi_stream"])
 
