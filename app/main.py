@@ -2,7 +2,10 @@ import logging
 import os
 import sys
 import threading
+import time
 from utils.log_util import log_print
+
+_DISPLAY_EVERY_N = 2
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -131,7 +134,6 @@ def _build_callbacks(manager, machine):
 
     def _display_loop():
         nonlocal _last_seen_frame
-        import time
         _tick = 0
         while True:
             vision_mod = manager.modules.get("zw_opencv_module")
@@ -142,7 +144,7 @@ def _build_callbacks(manager, machine):
                     if frame is not None and frame is not _last_seen_frame:
                         _last_seen_frame = frame
                         _tick += 1
-                        if _tick % 2 != 0:
+                        if _tick % _DISPLAY_EVERY_N != 0:
                             continue
                         try:
                             import maix.image as _mi3
@@ -195,6 +197,14 @@ def _make_wdt_feed():
         return lambda: None
 
 
+def _init_streamer(vm) -> None:
+    from modules.zw_wifi_stream import get_streamer
+    s = get_streamer()
+    if s is not None and vm is not None:
+        vm.set_capture_sink(s.push_frame)
+        s.start_async()
+
+
 def main():
     log_print("0xfb709394")
 
@@ -239,12 +249,7 @@ def main():
 
     coordinator.set_ai(machine.ai)
 
-    from modules.zw_wifi_stream import get_streamer
-    streamer = get_streamer()
-    if streamer:
-        coordinator.set_streamer(streamer)
-        if vm:
-            vm.set_streamer(streamer)
+    _init_streamer(vm)
 
     pixels_per_cm = _cfg.get("pendulum", {}).get("pixels_per_cm", 25.6)
     cam_cfg = _cfg.get("cameras", [{}])[0]
