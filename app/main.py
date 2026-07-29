@@ -6,6 +6,8 @@ import time
 from utils.log_util import log_print
 
 _DISPLAY_EVERY_N = 2
+_ICON_SIZE = 48
+_ICON_MARGIN = 12
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -52,31 +54,35 @@ def _push_coordinator_status(coordinator) -> None:
     dc.set("fps", f"{info.get('fps', 0.0):.1f}")
 
 
+def _load_exit_icon():
+    try:
+        from maix import image as _mi
+        icon = _mi.load("/maixapp/share/icon/ret.png")
+        if icon is not None:
+            w = icon.width() * 48 // icon.height()
+            if w % 2:
+                w += 1
+            return icon.resize(w, 48)
+    except Exception:
+        return None
+
+
 def _build_callbacks(manager, machine):
     """Returns (main_callback, start_display_thread).
-    
-    main_callback: fast touch/input handling (~0ms), runs in main loop.
-    display thread: exit icon drawing + display.show(), runs independently.
+
+    main_callback: touch/input handling (~0ms), runs in main loop.
+    display thread: display.show() only, runs independently.
+    exit icon is drawn by VisionManager (via set_exit_icon).
     """
     _last_seen_frame = None
 
-    _icon_exit = None
     _touch = None
     try:
-        from maix import image as _mi
         from maix import touchscreen
         _touch = touchscreen.TouchScreen()
-        _icon_exit = _mi.load("/maixapp/share/icon/ret.png")
-        if _icon_exit is not None:
-            w = _icon_exit.width() * 48 // _icon_exit.height()
-            if w % 2:
-                w += 1
-            _icon_exit = _icon_exit.resize(w, 48)
     except Exception:
         pass
 
-    _ICON_SIZE = 48
-    _MARGIN = 12
     _touch_down = False
     _touch_x = _touch_y = 0
 
@@ -124,7 +130,7 @@ def _build_callbacks(manager, machine):
                                 if frame is not None:
                                     h = frame.height()
                                     by = h - _ICON_SIZE - 8
-                                    bx = _MARGIN
+                                    bx = _ICON_MARGIN
                                     if _in_btn(_touch_x, _touch_y, bx, by):
                                         import os
                                         os._exit(0)
@@ -146,16 +152,6 @@ def _build_callbacks(manager, machine):
                         _tick += 1
                         if _tick % _DISPLAY_EVERY_N != 0:
                             continue
-                        try:
-                            import maix.image as _mi3
-                            h = frame.height()
-                            by = h - _ICON_SIZE - 8
-                            bx = _MARGIN
-                            if _icon_exit is not None:
-                                frame.draw_rect(bx - 2, by - 2, _ICON_SIZE + 4, _ICON_SIZE + 4, color=_mi3.COLOR_BLACK, thickness=-1)
-                                frame.draw_image(bx, by, _icon_exit)
-                        except Exception:
-                            pass
                         if _check_cmm_pressure():
                             continue
                         try:
@@ -250,6 +246,10 @@ def main():
     coordinator.set_ai(machine.ai)
 
     _init_streamer(vm)
+
+    exit_icon = _load_exit_icon()
+    if exit_icon is not None and vm is not None:
+        vm.set_exit_icon(exit_icon, _ICON_SIZE, _ICON_MARGIN)
 
     pixels_per_cm = _cfg.get("pendulum", {}).get("pixels_per_cm", 25.6)
     cam_cfg = _cfg.get("cameras", [{}])[0]
