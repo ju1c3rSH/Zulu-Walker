@@ -44,6 +44,7 @@ from modules.zw_uart_module.protocol import (
     NACK_NOT_READY,
 )
 from modules.zw_opencv_module.processors.base import VisionResult
+from modules.zw_opencv_module.detectors.pendulum_calibrator import RailCalibration
 
 
 _CMD_TIMEOUT = 5.0
@@ -96,11 +97,47 @@ class Ti2026Coordinator:
         self._pixels_per_cm: float = 25.6
         self._frame_width: int = 640
         self._frame_height: int = 640
+        self._rail_calib: Optional[RailCalibration] = None
+        self._origin_from_ball: bool = False
 
     def set_pendulum_calibration(self, pixels_per_cm: float, frame_width: int = 640, frame_height: int = 640) -> None:
         self._pixels_per_cm = pixels_per_cm
         self._frame_width = frame_width
         self._frame_height = frame_height
+
+    def set_rail_calibration(self, calib: RailCalibration) -> None:
+        self._rail_calib = calib
+
+    def get_rail_calibration(self) -> Optional[RailCalibration]:
+        return self._rail_calib
+
+    def is_origin_exact(self) -> bool:
+        return self._origin_from_ball
+
+    def calibrate_origin_from_ball(self) -> bool:
+        calib = self._rail_calib
+        if calib is None or not calib.calibrated:
+            return False
+        data = self._latest_ai
+        detections = data.get("detections", [])
+        ball = max((d for d in detections if d.class_id == 0),
+                   key=lambda d: d.score, default=None)
+        if ball is None:
+            return False
+        cx = ball.x + ball.w / 2
+        cy = ball.y + ball.h / 2
+        self._rail_calib = calib.replace_origin(cx, cy)
+        self._origin_from_ball = True
+        return True
+
+    def get_last_ball_bbox(self) -> Optional[tuple]:
+        data = self._latest_ai
+        detections = data.get("detections", [])
+        ball = max((d for d in detections if d.class_id == 0),
+                   key=lambda d: d.score, default=None)
+        if ball is None:
+            return None
+        return (ball.x, ball.y, ball.w, ball.h)
 
     def set_wdt_feed(self, feed_fn) -> None:
         self._wdt_feed = feed_fn
@@ -340,9 +377,15 @@ class Ti2026Coordinator:
             ball = max((d for d in detections if d.class_id == 0), key=lambda d: d.score, default=None)
             if ball is not None:
                 cx = ball.x + ball.w / 2
+                cy = ball.y + ball.h / 2
+                calib = self._rail_calib
+                if calib is not None and calib.calibrated:
+                    dist_px = calib.project(cx, cy)
+                else:
+                    dist_px = cx - self._frame_width / 2.0
                 half = max(self._frame_width, self._frame_height) / 2.0
-                pe_x = int(((cx - self._frame_width / 2.0) / half) * 5000.0)
-                ball_cm = (cx - self._frame_width / 2.0) / self._pixels_per_cm
+                pe_x = int((dist_px / half) * 5000.0)
+                ball_cm = dist_px / self._pixels_per_cm
                 return f"pe_x={pe_x} ball_cm={ball_cm:.1f} found=1"
             return "pe_x=0 ball_cm=0 found=0"
 
@@ -420,10 +463,15 @@ class Ti2026Coordinator:
         ball = max((d for d in detections if d.class_id == 0), key=lambda d: d.score, default=None)
         if ball is not None:
             cx = ball.x + ball.w / 2
-            frame_w = self._frame_width
-            half = max(frame_w, self._frame_height) / 2.0
-            pe_x = int(((cx - frame_w / 2.0) / half) * 5000.0)
-            ball_cm = (cx - frame_w / 2.0) / self._pixels_per_cm
+            cy = ball.y + ball.h / 2
+            calib = self._rail_calib
+            if calib is not None and calib.calibrated:
+                dist_px = calib.project(cx, cy)
+            else:
+                dist_px = cx - self._frame_width / 2.0
+            half = max(self._frame_width, self._frame_height) / 2.0
+            pe_x = int(((dist_px) / half) * 5000.0)
+            ball_cm = dist_px / self._pixels_per_cm
             ball_cm_scaled = int(ball_cm * 100)
             flags = 0x01
         else:

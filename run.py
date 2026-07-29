@@ -9,6 +9,7 @@ Zulu-Walker 启动器
     python run.py debug circle                  # 圆靶检测调试器
     python run.py debug ring                    # 环检测调试器
     python run.py debug line                    # 黑线循迹调试器
+    python run.py debug pendulum_calib          # 摆杆标定调试器
     python run.py debug cargo -c 1              # 指定摄像头
     python run.py debug cargo -W 1280 -H 720    # 指定分辨率
 """
@@ -29,6 +30,7 @@ _RUNNER_MAP = {
     "circle": ("modules.zw_opencv_module.detectors.circle_target_detector.debug.runner", "CircleTargetDebugRunner"),
     "ring":   ("modules.zw_opencv_module.detectors.ring_detector.debug.runner", "RingDebugRunner"),
     "line":   ("modules.zw_opencv_module.detectors.line_detector.debug.runner", "LineDebugRunner"),
+    "pendulum_calib": ("modules.zw_opencv_module.detectors.pendulum_calibrator.debug.runner", "PendulumCalibDebugRunner"),
 }
 
 
