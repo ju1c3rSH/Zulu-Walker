@@ -32,6 +32,7 @@ from modules.zw_uart_module.protocol import (
     build_data_stream_frame,
     DATA_PAYLOAD_SIZES,
     SUPPORTED_DATA_TYPES,
+    DATA_TYPE_NAMES, NACK_REASON_NAMES,
     DATA_LINE_POSITION,
     DATA_TARGET_POSITION,
     DATA_TARGET_COUNT,
@@ -74,6 +75,9 @@ class Ti2026Coordinator:
         self._last_cmd_time = 0.0
         self._master_linked = False
         self._cmd_lock = threading.Lock()
+
+        self._stream_log_count = 0
+        self._last_streamed_type = 0
 
         self._running = False
         self._wdt_feed = lambda: None
@@ -133,6 +137,11 @@ class Ti2026Coordinator:
                 self._sm_queue.popleft()()
         self.state_machine.run_to_completion()
 
+        self._wdt_feed()
+        self._wdt_count += 1
+        if self._wdt_count % 200 == 0:
+            log_print(f"[WDT] coord feed #{self._wdt_count}")
+
         now = time.monotonic()
         with self._cmd_lock:
             streaming = self._streaming_type
@@ -144,15 +153,20 @@ class Ti2026Coordinator:
                 else:
                     payload = self._build_stream_payload(streaming)
                     if payload:
+                        current_seq = self._stream_seq
                         frame = build_data_stream_frame(
-                            self._stream_seq, streaming, payload)
+                            current_seq, streaming, payload)
                         self._send(frame)
-                        self._stream_seq = (self._stream_seq + 1) & 0xFF
+                        self._stream_seq = (current_seq + 1) & 0xFF
 
-        self._wdt_feed()
-        self._wdt_count += 1
-        if self._wdt_count % 200 == 0:
-            log_print(f"[WDT] coord feed #{self._wdt_count}")
+                        self._stream_log_count += 1
+                        type_changed = (streaming != self._last_streamed_type)
+                        if type_changed or self._stream_log_count >= 30:
+                            self._stream_log_count = 0
+                            self._last_streamed_type = streaming
+                            type_name = DATA_TYPE_NAMES.get(streaming, f"0x{streaming:02X}")
+                            desc = self._stream_payload_desc(streaming)
+                            log_print(f"[UART TX] DATA_STREAM seq={current_seq} type={type_name} {desc}")
 
         self._mem_log_counter += 1
         if self._mem_log_counter >= 300:
@@ -189,12 +203,14 @@ class Ti2026Coordinator:
 
     def _on_cmd_request(self, event: CmdRequestEvent) -> None:
         data_type = event.data_type
+        dt_name = DATA_TYPE_NAMES.get(data_type, f"0x{data_type:02X}")
         now = time.monotonic()
         with self._cmd_lock:
             self._last_cmd_time = now
             self._master_linked = True
 
         if data_type not in SUPPORTED_DATA_TYPES:
+            log_print(f"[UART TX] CMD_NACK type={dt_name} reason=UNSUPPORTED_TYPE")
             frame = build_cmd_nack_frame(data_type, NACK_UNSUPPORTED_TYPE)
             self._send(frame)
             return
@@ -203,6 +219,7 @@ class Ti2026Coordinator:
             nick = _DATA_TYPE_MODEL.get(data_type)
             if nick and self._ai.active_model != nick:
                 if not self._ai.switch(nick):
+                    log_print(f"[UART TX] CMD_NACK type={dt_name} reason=NOT_READY")
                     frame = build_cmd_nack_frame(data_type, NACK_NOT_READY)
                     self._send(frame)
                     return
@@ -213,6 +230,7 @@ class Ti2026Coordinator:
         payload_size = DATA_PAYLOAD_SIZES.get(data_type, 0)
         if payload_size is None:
             payload_size = 0
+        log_print(f"[UART TX] CMD_ACK type={dt_name} freq=60fps size={payload_size}B")
         frame = build_cmd_ack_frame(data_type, 60, payload_size)
         self._send(frame)
 
@@ -222,6 +240,7 @@ class Ti2026Coordinator:
             self._last_cmd_time = now
             self._streaming_type = 0
             self._stream_seq = 0
+        log_print("[UART TX] CMD_ACK type=STOP")
         frame = build_cmd_ack_frame(0x00, 0, 0)
         self._send(frame)
 
@@ -251,6 +270,59 @@ class Ti2026Coordinator:
         elif data_type == DATA_PENDULUM_POSITION:
             return self._build_pendulum_position_payload()
         return None
+
+    def _stream_payload_desc(self, data_type: int) -> str:
+        ai = self._latest_ai
+        line = self._latest_line
+        detections = ai.get("detections", [])
+
+        if data_type == DATA_LINE_POSITION:
+            pe_x = line.get("percent_error_x", 0)
+            pe_y = line.get("percent_error_y", 0)
+            found = 1 if line.get("target_found", False) else 0
+            state = self.state_machine.current_state_id
+            return f"pe_x={pe_x} pe_y={pe_y} found={found} state={state}"
+
+        if data_type == DATA_TARGET_POSITION:
+            if detections:
+                best = max(detections, key=lambda d: d.score)
+                return f"x={int(best.x)} y={int(best.y)} conf={int(best.score * 255)} found=1"
+            return "x=0 y=0 conf=0 found=0"
+
+        if data_type == DATA_TARGET_COUNT:
+            return f"count={len(detections)}"
+
+        if data_type == DATA_DETECTION_STATUS:
+            return f"vstate=0 vflags=0 count={len(detections)}"
+
+        if data_type == DATA_ALL_TARGETS:
+            count = min(len(detections), 16)
+            items = " ".join(
+                f"[{i}:cls={d.class_id} x={int(d.x)} y={int(d.y)}]"
+                for i, d in enumerate(detections[:count])
+            )
+            return f"count={count} {items}"
+
+        if data_type == DATA_SEGMENTATION_MASK:
+            segments = ai.get("segments", [])
+            count = min(len(segments), 4)
+            items = " ".join(
+                f"[{i}:cls={s['class_id']} cx={s['center_x']} cy={s['center_y']} area={s['area_px']}]"
+                for i, s in enumerate(segments[:count])
+            )
+            return f"count={count} {items}"
+
+        if data_type == DATA_PENDULUM_POSITION:
+            ball = max((d for d in detections if d.class_id == 0), key=lambda d: d.score, default=None)
+            if ball is not None:
+                cx = ball.x + ball.w / 2
+                half = max(self._frame_width, self._frame_height) / 2.0
+                pe_x = int(((cx - self._frame_width / 2.0) / half) * 5000.0)
+                ball_cm = (cx - self._frame_width / 2.0) / self._pixels_per_cm
+                return f"pe_x={pe_x} ball_cm={ball_cm:.1f} found=1"
+            return "pe_x=0 ball_cm=0 found=0"
+
+        return ""
 
     def _build_line_position_payload(self) -> bytes:
         data = self._latest_line
