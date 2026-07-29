@@ -171,7 +171,7 @@ def _build_callbacks(manager, machine):
 def _make_wdt_feed():
     try:
         from maix.peripheral import wdt as _mwdt
-        _w = _mwdt.WDT(0, 5000)
+        _w = _mwdt.WDT(0, 10000)
         import time
         _last = [0.0]
         _fail_count = [0]

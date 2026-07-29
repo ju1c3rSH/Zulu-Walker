@@ -1,7 +1,7 @@
 id: zulu_walker
 name: zulu_walker
 name[zh]: 祖鲁行者
-version: 1.1.6
+version: 1.1.7
 icon: app.png
 author: Electric Competition 2026
 desc: YOLO11n steel ball detection + line following robot based on MaixCAM2
@@ -36,19 +36,40 @@ files:
   - app\line_follow_sm.py
   - app\main.py
   - app\mission_state_machine.py
+  - assets\restart.png
   - docs\architecture\hal_architecture_plan.md
   - docs\architecture\hal_overview.md
   - docs\architecture\segmentation_design.md
   - docs\architecture\state_machine.md
   - docs\architecture\thread_tick_topology.md
+  - docs\competition\extracted\images\docx_img_01.jpeg
+  - docs\competition\extracted\images\docx_img_02.png
+  - docs\competition\extracted\images\docx_img_03.png
+  - docs\competition\extracted\images\docx_img_04.png
+  - docs\competition\extracted\images\docx_img_05.png
+  - docs\competition\extracted\images\pdf_img_p1_1.jpeg
+  - docs\competition\extracted\images\pdf_img_p1_2.jpeg
+  - docs\competition\extracted\images\pdf_img_p1_3.jpeg
+  - docs\competition\extracted\images\pdf_img_p2_1.jpeg
+  - docs\competition\extracted\images\pdf_img_p3_1.jpeg
+  - docs\competition\extracted\images\pdf_img_p3_2.jpeg
+  - docs\competition\extracted\H题_车载平衡滚球运动控制系统.md
+  - docs\competition\extract_docs.py
+  - docs\competition\H题_车载平衡滚球运动控制系统.docx
+  - docs\competition\H题_车载平衡滚球运动控制系统.pdf
   - docs\competition\master_slave_protocol.md
   - docs\competition\mspm0_protocol_impl.md
   - docs\competition\protocol_content.md
+  - docs\competition\protocol_pendulum.md
+  - docs\competition\protocol_ping_pong.md
+  - docs\competition\protocol_steel_sheet.md
   - docs\competition\protocol.md
   - docs\competition\servo_math.md
+  - docs\competition\streaming_plan.md
   - docs\experience\ffmpeg_rtmp_streaming.md
   - docs\pitfalls\mission_state_names_dict_access.md
   - docs\pitfalls\vision_data_flow.md
+  - docs\technical_notes\streaming_and_fps_optimization.md
   - docs\vision\cargo_edge_drawing_strategy.md
   - docs\vision\detector_init_order.md
   - docs\migration_plan.md
@@ -85,6 +106,7 @@ files:
   - framework\log.py
   - framework\module_manager.py
   - framework\visual_state_machine.py
+  - logs\app.log
   - modules\zw_opencv_module\ai\qrcode\detect.caffemodel
   - modules\zw_opencv_module\ai\qrcode\detect.prototxt
   - modules\zw_opencv_module\ai\qrcode\download_models.py
@@ -212,6 +234,8 @@ files:
   - modules\zw_uart_module\README_CN.md
   - modules\zw_uart_module\README.md
   - modules\zw_uart_module\uart_driver.py
+  - modules\zw_wifi_stream\__init__.py
+  - modules\zw_wifi_stream\streamer.py
   - modules\uart_test.py
   - stories\秘封俱乐部·朝夕之间.md
   - stories\秘封俱乐部·星夜物语.md
@@ -225,6 +249,7 @@ files:
   - utils\log_util.py
   - utils\point.py
   - AGENTS.md
+  - app.png
   - app.yaml
   - main.py
   - project_config.yaml
