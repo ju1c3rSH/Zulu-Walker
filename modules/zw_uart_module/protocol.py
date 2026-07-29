@@ -54,9 +54,10 @@ DATA_TARGET_COUNT     = 0x03
 DATA_DETECTION_STATUS = 0x04
 DATA_ALL_TARGETS           = 0x05
 DATA_SEGMENTATION_MASK    = 0x06
+DATA_PENDULUM_POSITION    = 0x07
 
 # Payload sizes for each data type (None = variable length)
-# sub_payload is the type-specific bytes (excludes seq + data_type header)
+# Total TYPE_DATA_STREAM payload size (seq + data_type + sub_payload)
 DATA_PAYLOAD_SIZES = {
     DATA_LINE_POSITION: 8,
     DATA_TARGET_POSITION: 8,
@@ -64,6 +65,7 @@ DATA_PAYLOAD_SIZES = {
     DATA_DETECTION_STATUS: 6,
     DATA_ALL_TARGETS: None,
     DATA_SEGMENTATION_MASK: None,
+    DATA_PENDULUM_POSITION: 8,
 }
 
 SUPPORTED_DATA_TYPES = set(DATA_PAYLOAD_SIZES.keys())
