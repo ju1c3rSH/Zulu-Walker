@@ -50,11 +50,16 @@ class VisionManager:
         self._wdt_feed = lambda: None
         self._wdt_count = 0
 
+        self._streamer = None
+
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
 
     def set_wdt_feed(self, feed_fn) -> None:
         self._wdt_feed = feed_fn
+
+    def set_streamer(self, streamer) -> None:
+        self._streamer = streamer
 
     def start(self) -> None:
         if self._running:
@@ -189,6 +194,8 @@ class VisionManager:
 
             self._draw_overlays(raw_img, pid, fps, detections)
             self._display_frame = raw_img
+            if self._streamer is not None:
+                self._streamer.push_frame(raw_img)
             return
 
     def _draw_overlays(self, img, pipeline_id: str, fps: float, detections) -> None:
