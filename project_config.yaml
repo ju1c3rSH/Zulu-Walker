@@ -11,7 +11,7 @@ cameras:
     camera_stream_queue_size: 3
 
 uart_defaults:
-  port: "/dev/ttyS3"
+  port: "/dev/ttyS4"
   baudrate: 115200
 
 ai:
