@@ -62,6 +62,10 @@ class Ti2026Coordinator:
         self.event_bus = event_bus
         self.state_machine = Ti2026StateMachine()
 
+        self._test_id: int = 0
+        self._last_sm_state: str = self.state_machine.current_state
+        self._record_cmd_sender: Optional[Callable] = None
+
         self._uart_sender: Optional[callable] = None
         self._vision_manager: Optional[VisionManager] = None
         self._ai = None
@@ -101,6 +105,9 @@ class Ti2026Coordinator:
     def set_wdt_feed(self, feed_fn) -> None:
         self._wdt_feed = feed_fn
 
+    def set_record_cmd_sender(self, sender: callable) -> None:
+        self._record_cmd_sender = sender
+
     def connect_vision(self, vision_manager: VisionManager) -> None:
         self._vision_manager = vision_manager
 
@@ -136,6 +143,23 @@ class Ti2026Coordinator:
             while self._sm_queue:
                 self._sm_queue.popleft()()
         self.state_machine.run_to_completion()
+
+        current_state = self.state_machine.current_state
+        if current_state != self._last_sm_state:
+            old_state = self._last_sm_state
+            self._last_sm_state = current_state
+            if self._record_cmd_sender:
+                try:
+                    if current_state == self.state_machine.States.LINE_FOLLOW:
+                        self._test_id += 1
+                        if self._vision_manager:
+                            self._vision_manager.set_test_id(self._test_id)
+                        self._record_cmd_sender("start", self._test_id)
+                    elif (old_state == self.state_machine.States.LINE_FOLLOW and
+                          current_state != self.state_machine.States.LINE_FOLLOW):
+                        self._record_cmd_sender("stop", self._test_id)
+                except Exception:
+                    pass
 
         self._wdt_feed()
         self._wdt_count += 1

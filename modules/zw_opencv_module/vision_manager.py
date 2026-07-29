@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import time
@@ -58,6 +59,14 @@ class VisionManager:
         self._exit_icon_size: int = 0
         self._exit_icon_margin: int = 0
 
+        self._test_id: int = 0
+        self._hdr_prefix: str = ""
+        self._test_str_cached: str = ""
+        self._test_str_width_cached: int = 0
+        self._time_str_cached: str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        self._time_str_width_cached: int = 0
+        self._time_counter: int = 0
+
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
 
@@ -71,6 +80,9 @@ class VisionManager:
         self._exit_icon = icon
         self._exit_icon_size = icon_size
         self._exit_icon_margin = margin
+
+    def set_test_id(self, test_id: int) -> None:
+        self._test_id = test_id
 
     def start(self) -> None:
         if self._running:
@@ -127,6 +139,7 @@ class VisionManager:
         from utils.cpu_affinity import bind_current_thread
         bind_current_thread("vision_processing")
 
+        _frame_count = 0
         while self._running:
             try:
                 self._wdt_feed()
@@ -154,6 +167,10 @@ class VisionManager:
                     profiler.end_frame()
                 else:
                     time.sleep(0.001)
+
+                _frame_count += 1
+                if _frame_count % 60 == 0:
+                    gc.collect(0)
             except Exception:
                 traceback.print_exc()
                 time.sleep(1.0)
@@ -222,16 +239,43 @@ class VisionManager:
             import maix.image
         except ImportError:
             return
-        hdr_line = f"{pipeline_id}  FPS:{fps:.1f}"
-        bar_h = 28
+        w = img.width()
+        bar_h = 32
         try:
-            img.draw_rect(0, 0, img.width(), bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
+            img.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
         except Exception:
             pass
+        if not self._hdr_prefix:
+            self._hdr_prefix = f"{pipeline_id}  FPS:"
         try:
-            img.draw_string(6, 4, hdr_line, color=maix.image.COLOR_WHITE, scale=2.0, thickness=2)
+            img.draw_string(6, 2, f"{self._hdr_prefix}{fps:.1f}",
+                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
         except Exception:
             pass
+        self._time_counter += 1
+        if self._time_counter % 60 == 0:
+            self._time_str_cached = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        if not self._time_str_width_cached:
+            self._time_str_width_cached = maix.image.string_size(
+                self._time_str_cached, scale=1.2, thickness=1)[0]
+        try:
+            img.draw_string((w - self._time_str_width_cached) // 2, 2,
+                            self._time_str_cached,
+                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+        except Exception:
+            pass
+        if self._test_id > 0:
+            try:
+                test_str = f"第{self._test_id}次测试"
+                if test_str != self._test_str_cached:
+                    self._test_str_cached = test_str
+                    self._test_str_width_cached = maix.image.string_size(
+                        test_str, scale=1.2, thickness=1)[0]
+                img.draw_string(w - self._test_str_width_cached - 8, 2,
+                                self._test_str_cached,
+                                color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+            except Exception:
+                pass
 
     def _draw_detections(self, img, detections, maix_image) -> None:
         labels = self._ai.labels if hasattr(self._ai, "labels") and self._ai.labels else []
@@ -256,8 +300,8 @@ class VisionManager:
 
             bar_h = th + 6
             label_y = y1 - bar_h
-            if label_y < 0:
-                label_y = y1
+            if label_y < 34:
+                label_y = y1 if y1 >= 34 else 34
 
             try:
                 img.draw_rect(x1, label_y, tw + 8, bar_h, color=maix_image.COLOR_BLACK, thickness=-1)

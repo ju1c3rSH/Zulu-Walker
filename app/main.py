@@ -3,7 +3,7 @@ import os
 import sys
 import threading
 import time
-from utils.log_util import log_print, start_log_writer
+from utils.log_util import log_print
 
 _DISPLAY_EVERY_N = 2
 _ICON_SIZE = 48
@@ -201,6 +201,70 @@ def _init_streamer(vm) -> None:
         s.start_async()
 
 
+def _init_wifi(cfg: dict):
+    streaming = cfg.get("streaming", {})
+    mode = streaming.get("wifi_mode", "off")
+    if mode not in ("ap", "sta"):
+        return None
+    try:
+        from maix.network import wifi as _mw
+        w = _mw.Wifi()
+        if mode == "ap":
+            if w.is_connected():
+                log_print("[WiFi] Disconnecting existing STA before AP...")
+                e = w.disconnect()
+                if e != 0:
+                    log_print(f"[WiFi] Disconnect failed, err={e}")
+            ssid = streaming.get("ap_ssid", "Zulu-Walker")
+            password = streaming.get("ap_password", "88888888")
+            e = w.start_ap(ssid, password, ip="192.168.1.1")
+            if e != 0:
+                log_print(f"[WiFi] AP start failed, err={e}")
+                return None
+            time.sleep(0.5)
+            if not w.is_ap_mode():
+                log_print("[WiFi] AP mode not confirmed after start_ap")
+                return None
+            ip = w.get_ip()
+            log_print(f"[WiFi] AP mode started, SSID={ssid}, IP={ip}")
+            return ip
+        elif mode == "sta":
+            ip = w.get_ip()
+            if ip:
+                log_print(f"[WiFi] STA mode, system-managed, IP={ip}")
+            else:
+                log_print("[WiFi] STA mode, no IP yet (waiting for system connection)")
+            return ip
+    except Exception as e:
+        log_print(f"[WiFi] init FAIL: {e}")
+        return None
+
+
+def _send_record_cmd(cmd: str, test_id: int) -> None:
+    try:
+        import socket
+        import json
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            msg = json.dumps({"cmd": cmd, "test_id": test_id})
+            encoded = msg.encode()
+            for _ in range(3):
+                s.sendto(encoded, ("255.255.255.255", 5000))
+                time.sleep(0.05)
+        finally:
+            s.close()
+    except Exception:
+        pass
+
+
+def _setup_record_signaling(coordinator, cfg) -> None:
+    streaming = cfg.get("streaming", {})
+    mode = streaming.get("wifi_mode", "off")
+    if mode in ("ap", "sta"):
+        coordinator.set_record_cmd_sender(_send_record_cmd)
+
+
 def main():
     log_print("0xfb709394")
 
@@ -212,15 +276,18 @@ def main():
         _cfg = {}
     from utils.debug_console import DebugConsole
     DebugConsole.set_global_enabled(_cfg.get("debug_console_enabled", True))
-    start_log_writer()
 
     wdt_feed = _make_wdt_feed()
+
+    _init_wifi(_cfg)
 
     from framework.event_bus import EventBus
     from app.coordinator import Ti2026Coordinator
     bus = EventBus()
     coordinator = Ti2026Coordinator(bus)
     coordinator.set_wdt_feed(wdt_feed)
+
+    _setup_record_signaling(coordinator, _cfg)
 
     machine = Machine.create("project_config.yaml")
 
