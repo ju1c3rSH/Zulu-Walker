@@ -75,7 +75,7 @@ class Machine:
                 source=source,
                 width=cam_cfg.get("width", 640),
                 height=cam_cfg.get("height", 480),
-                fps=cam_cfg.get("fps", 120),
+                fps=cam_cfg.get("fps"),
                 camera_stream_queue_size=cam_cfg.get("camera_stream_queue_size", 2),
                 focal_length_mm=cam_cfg.get("focal_length_mm"),
                 sensor_width_mm=cam_cfg.get("sensor_width_mm"),
