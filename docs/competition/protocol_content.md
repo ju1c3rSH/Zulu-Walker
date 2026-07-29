@@ -34,7 +34,38 @@
 
 ---
 
-## 2. 子命令（TYPE_CMD_FROM_MCU）
+## 2. Master-Slave 数据流类型（v3.0）
+
+MaixCAM2（Slave）与 MSPM0（Master）之间的订阅式数据推送。
+
+### 2.1 帧类型
+
+| Type | 名称 | 方向 | Payload | 说明 |
+|:---|:---|:---|:---|:---|
+| **0x20** | `TYPE_CMD_REQUEST` | Master → Slave | `data_type(1B) + min_interval_ms(1B) + reserved(1B)` | Master 请求订阅某类数据 |
+| **0x21** | `TYPE_CMD_ACK` | Slave → Master | `data_type(1B) + max_freq_hz(1B) + payload_size(1B)` | Slave 确认订阅 |
+| **0x22** | `TYPE_CMD_NACK` | Slave → Master | `data_type(1B) + reason(1B)` | Slave 拒绝订阅 |
+| **0x23** | `TYPE_CMD_STOP` | Master → Slave | 无 | Master 停止订阅 |
+| **0x24** | `TYPE_DATA_STREAM` | Slave → Master | `seq(1B) + data_type(1B) + sub_payload` | Slave 推送数据帧 |
+
+### 2.2 数据流类型（TYPE_DATA_STREAM 的 data_type 字段）
+
+| data_type | 常量名 | Payload 大小 | 说明 | 文档 |
+|:---|:---|:---|:---|:---|
+| 0x01 | `DATA_LINE_POSITION` | 8B | 黑线循迹偏差 | — |
+| 0x02 | `DATA_TARGET_POSITION` | 8B | 目标检测位置 | — |
+| 0x03 | `DATA_TARGET_COUNT` | 3B | 目标数量 | — |
+| 0x04 | `DATA_DETECTION_STATUS` | 6B | 检测状态 | — |
+| 0x05 | `DATA_ALL_TARGETS` | 可变 | 全部目标列表 | — |
+| 0x06 | `DATA_SEGMENTATION_MASK` | 可变 | 钢板掩码（已废弃） | [`protocol_steel_sheet.md`](protocol_steel_sheet.md) |
+| **0x07** | `DATA_PENDULUM_POSITION` | **8B** | **摆杆钢球位置** | **[`protocol_pendulum.md`](protocol_pendulum.md)** |
+
+> Payload 大小为整个 TYPE_DATA_STREAM 帧 payload（含 seq + data_type header）。  
+> 详细 sub_payload 格式见各自文档。
+
+---
+
+## 3. 子命令（TYPE_CMD_FROM_MCU）
 
 | cmd_id | 名称 | 参数 | 说明 |
 |:---|:---|:---|:---|
@@ -48,7 +79,7 @@
 
 ---
 
-## 3. VisualFlags（STATUS_FROM_VISION / VISUAL_SERVO_DATA 共用的 flags 字节）
+## 4. VisualFlags（STATUS_FROM_VISION / VISUAL_SERVO_DATA 共用的 flags 字节）
 
 ```
 bit 0: TARGET_FOUND      当前帧检测到目标
@@ -63,7 +94,7 @@ bit 7: RING_CENTERED      色环已居中（发现阶段使用）
 
 ---
 
-## 4. action_id 映射（TYPE_ACTION_DONE）
+## 5. action_id 映射（TYPE_ACTION_DONE）
 
 每完成一个动作，MCU 发一次 `ACTION_DONE`，`action_id` 标识动作类型（代码层使用 `ActionId` 枚举，见 `protocol.py`）：
 
@@ -78,7 +109,7 @@ bit 7: RING_CENTERED      色环已居中（发现阶段使用）
 
 ---
 
-## 5. 结果码
+## 6. 结果码
 
 | 值 | 名称 | 含义 |
 |:---|:---|:---|
@@ -90,9 +121,9 @@ bit 7: RING_CENTERED      色环已居中（发现阶段使用）
 
 ---
 
-## 6. 典型通信时序
+## 7. 典型通信时序
 
-### 6.1 标准流程（区域自动控制）
+### 7.1 标准流程（区域自动控制）
 
 ```
 OP 上电 → STATUS_FROM_VISION state=IDLE
@@ -143,7 +174,7 @@ OP → RETURN_HOME → FINISHED
 - **`ARRIVED_*` 同步职责**：MCU 决定前往某区域后，更新自身 MissionSM + 发 `TYPE_ARRIVED`；
   OP 收到后更新镜像 MissionSM。双方状态机保持同步。
 
-### 6.2 视觉伺服数据流
+### 7.2 视觉伺服数据流
 
 ```
 OP 每帧发送 VISUAL_SERVO_DATA（无论是否检测到目标）：
@@ -175,7 +206,7 @@ OP 进入 stable tracking（连续 N 帧稳定检测到目标）后，锁存 `RE
 
 > **RAW 原料区风险**：圆盘旋转供料，MCU 收到 READY 后若机械臂动作期间目标随圆盘转走，可能抓空。此时 MCU 应自行判断失败 → ERROR 恢复，或在下一次圆盘停顿时重新锁定。
 
-### 6.3 心跳（纯监控信号，不参与决策）
+### 7.3 心跳（纯监控信号，不参与决策）
 
 ```
 双方每 100ms 互发 HEARTBEAT：
@@ -192,7 +223,7 @@ OP 进入 stable tracking（连续 N 帧稳定检测到目标）后，锁存 `RE
 两侧均提供 Vision_Protocol_IsLinkActive() 供调试面板使用。
 ```
 
-### 6.4 错误恢复
+### 7.4 错误恢复
 
 ```
 MCU/OP 发现异常 → 切 ERROR
@@ -204,7 +235,7 @@ MCU/OP 发现异常 → 切 ERROR
    → 状态机回到 WAIT_START
 ```
 
-### 6.5 色环发现流程（RING_DISCOVERY）
+### 7.5 色环发现流程（RING_DISCOVERY）
 
 到达 ROUGH/TEMP 区后执行，用于建立颜色→世界坐标映射。
 
@@ -238,7 +269,7 @@ OP: RING_DISCOVERY → ALIGN_ROUGH/TEMP → PLACE_ROUGH/TEMP（瞬时级联）
 
 ---
 
-## 7. 同步规则
+## 8. 同步规则
 
 1. **谁触发转换，谁负责通知对方**。
    - MCU 触发的转换（到达区域、执行完成）→ MCU 发 `TYPE_ARRIVED` / `TYPE_ACTION_DONE`
@@ -252,7 +283,7 @@ OP: RING_DISCOVERY → ALIGN_ROUGH/TEMP → PLACE_ROUGH/TEMP（瞬时级联）
 
 ---
 
-## 8. 代码映射
+## 9. 代码映射
 
 | 协议元素 | Python 常量 | 位置 |
 |---|---|---|
@@ -271,7 +302,7 @@ OP: RING_DISCOVERY → ALIGN_ROUGH/TEMP → PLACE_ROUGH/TEMP（瞬时级联）
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
-| **v2.1** | 2026-07-26 | 帧结构加固同步（CRC16 + 双字节 SOF），内容定义不变 |
+| **v2.2** | 2026-07-29 | 新增 Master-Slave 数据流类型 §2；新增 `DATA_PENDULUM_POSITION(0x07)` |
 | **v2.0** | 2026-07-26 | 从 `protocol.md` 独立为内容定义文档 |
 | **v1.3** | 2026-07-18 | 新增 `CMD_START_CARGO_STACKING_DISCOVERY(0x09)` |
 | **v1.2** | 2026-07-04 | 删除多组不再使用的 CMD，时序补充 |
