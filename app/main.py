@@ -214,7 +214,7 @@ def main():
     cam_cfg = _cfg.get("cameras", [{}])[0]
     cam_w = cam_cfg.get("width", 640)
     cam_h = cam_cfg.get("height", 640)
-    log_print("ppc:"+pixels_per_cm +"w:" + cam_w +"h:"+cam_h)
+    log_print(f"ppc:{pixels_per_cm} w:{cam_w} h:{cam_h}")
     coordinator.set_pendulum_calibration(pixels_per_cm, cam_w, cam_h)
 
     display_callback = _build_display_callback(manager, machine)

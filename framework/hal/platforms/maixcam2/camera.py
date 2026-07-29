@@ -20,7 +20,7 @@ class MaixCam2Camera:
         source,
         width: int = 640,
         height: int = 480,
-        fps: float = -1,
+        fps: Optional[float] = None,
         camera_id: str = "maixcam2",
         buff_num: int = 3,
         focal_length_mm: Optional[float] = None,
@@ -39,7 +39,7 @@ class MaixCam2Camera:
                 height=height,
                 format=maix.image.Format.FMT_RGB888,
                 device=str(source) if source is not None else None,
-                fps=fps if fps > 0 else -1,
+                fps=fps,
                 buff_num=buff_num,
                 open=True,
             )
@@ -121,8 +121,7 @@ class MaixCam2Camera:
                 self._cam.set_resolution(self._cam.width(), int(value))
                 return True
             elif prop_id == _CAP_PROP_FPS:
-                self._cam.set_fps(float(value))
-                return True
+                return False
             elif prop_id == _CAP_PROP_EXPOSURE:
                 self._cam.exposure(int(value))
                 return True
