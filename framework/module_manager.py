@@ -62,6 +62,13 @@ class ModuleManager:
         except ImportError:
             pass
 
+        _CHECK_EXIT = False
+        try:
+            from maix import app as _maix_app
+            _CHECK_EXIT = True
+        except ImportError:
+            pass
+
         while self._running:
             try:
                 self._wdt_feed()
@@ -88,6 +95,9 @@ class ModuleManager:
                         display_callback()
                     except Exception:
                         logger.exception("display_callback() failed")
+
+                if _CHECK_EXIT and _maix_app.need_exit():
+                    break
 
                 time.sleep(self.MAIN_LOOP_DELAY)
             except KeyboardInterrupt:
