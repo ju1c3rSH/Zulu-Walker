@@ -1,7 +1,7 @@
 id: zulu_walker
 name: zulu_walker
 name[zh]: 祖鲁行者
-version: 1.2.2
+version: 1.2.3
 icon: app.png
 author: Electric Competition 2026
 desc: YOLO11n steel ball detection + line following robot based on MaixCAM2
@@ -25,23 +25,24 @@ exclude:
   - modules/zw_opencv_module/processors/handlers
   - modules/zw_opencv_module/processors/ai_inference_processor.py
 files:
-  - .claude\settings.local.json
-  - .pytest_cache\v\cache\lastfailed
-  - .pytest_cache\v\cache\nodeids
-  - .pytest_cache\CACHEDIR.TAG
-  - .pytest_cache\README.md
   - app\__init__.py
   - app\coordinator.py
   - app\events.py
   - app\line_follow_sm.py
   - app\main.py
   - app\mission_state_machine.py
+  - assets\calibrate.png
   - assets\restart.png
+  - docs\architecture\building_apps.md
+  - docs\architecture\core_framework.md
   - docs\architecture\hal_architecture_plan.md
   - docs\architecture\hal_overview.md
+  - docs\architecture\hal.md
+  - docs\architecture\overview.md
   - docs\architecture\segmentation_design.md
   - docs\architecture\state_machine.md
   - docs\architecture\thread_tick_topology.md
+  - docs\architecture\threading.md
   - docs\competition\extracted\images\docx_img_01.jpeg
   - docs\competition\extracted\images\docx_img_02.png
   - docs\competition\extracted\images\docx_img_03.png
@@ -73,6 +74,7 @@ files:
   - docs\vision\cargo_edge_drawing_strategy.md
   - docs\vision\detector_init_order.md
   - docs\migration_plan.md
+  - docs\README.md
   - docs\TODO.md
   - framework\hal\interface\__init__.py
   - framework\hal\interface\ai.py
@@ -107,6 +109,7 @@ files:
   - framework\module_manager.py
   - framework\visual_state_machine.py
   - logs\app.log
+  - logs\performance.log
   - modules\zw_opencv_module\ai\qrcode\detect.caffemodel
   - modules\zw_opencv_module\ai\qrcode\detect.prototxt
   - modules\zw_opencv_module\ai\qrcode\download_models.py
@@ -177,6 +180,9 @@ files:
   - modules\zw_opencv_module\detectors\circle_target_detector\__init__.py
   - modules\zw_opencv_module\detectors\line_detector\debug\runner.py
   - modules\zw_opencv_module\detectors\line_detector\__init__.py
+  - modules\zw_opencv_module\detectors\pendulum_calibrator\debug\__init__.py
+  - modules\zw_opencv_module\detectors\pendulum_calibrator\debug\runner.py
+  - modules\zw_opencv_module\detectors\pendulum_calibrator\__init__.py
   - modules\zw_opencv_module\detectors\ring_detector\debug\__init__.py
   - modules\zw_opencv_module\detectors\ring_detector\debug\config.py
   - modules\zw_opencv_module\detectors\ring_detector\debug\params.yaml
@@ -216,6 +222,8 @@ files:
   - modules\zw_opencv_module\processors\qr_processor.py
   - modules\zw_opencv_module\processors\registry.py
   - modules\zw_opencv_module\processors\ring_discovery_processor.py
+  - modules\zw_opencv_module\utils\__init__.py
+  - modules\zw_opencv_module\utils\focal_distance_util.py
   - modules\zw_opencv_module\__init__.py
   - modules\zw_opencv_module\camera_hub.py
   - modules\zw_opencv_module\camera_stream.py
@@ -240,6 +248,9 @@ files:
   - stories\秘封俱乐部·朝夕之间.md
   - stories\秘封俱乐部·星夜物语.md
   - stories\秘封俱乐部·星夜物语·番外.md
+  - utils\state_machine\__init__.py
+  - utils\state_machine\base.py
+  - utils\state_machine\visual_state_machine.py
   - utils\__init__.py
   - utils\camera_misc_util.py
   - utils\console_capture.py
@@ -254,6 +265,7 @@ files:
   - main.py
   - project_config.yaml
   - PROJECT_CONTEXT.md
+  - README.md
   - requirements-linux.txt
   - requirements.txt
   - run.py
