@@ -3,18 +3,74 @@ import logging.handlers
 import json
 import os
 from pathlib import Path
+import queue
 import sys
 import threading
 from typing import Optional, Dict, Any
 from datetime import datetime
 
 _LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "debug.log")
-_LOG_LOCK = threading.Lock()
+_LOG_QUEUE: queue.Queue = queue.Queue(maxsize=2048)
+_WRITER_THREAD: Optional[threading.Thread] = None
+_SENTINEL: object = object()
 
 try:
     os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
 except Exception:
     pass
+
+
+def _writer_loop() -> None:
+    while True:
+        item = _LOG_QUEUE.get()
+        if item is _SENTINEL:
+            _LOG_QUEUE.task_done()
+            break
+
+        line, msg = item
+
+        try:
+            with open(_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+        except Exception:
+            pass
+
+        try:
+            from utils.debug_console import DebugConsole
+            dc = DebugConsole()
+            if not DebugConsole._global_enabled:
+                sys.__stdout__.write(line)
+                sys.__stdout__.flush()
+            else:
+                dc.log(msg)
+                if not dc._running:
+                    sys.__stdout__.write(line)
+                    sys.__stdout__.flush()
+        except Exception:
+            pass
+
+        _LOG_QUEUE.task_done()
+
+
+def start_log_writer() -> None:
+    global _WRITER_THREAD
+    if _WRITER_THREAD is not None and _WRITER_THREAD.is_alive():
+        return
+    _WRITER_THREAD = threading.Thread(target=_writer_loop, daemon=True, name="log-writer")
+    _WRITER_THREAD.start()
+
+
+def stop_log_writer(timeout: float = 2.0) -> None:
+    global _WRITER_THREAD
+    if _WRITER_THREAD is None:
+        return
+    try:
+        _LOG_QUEUE.put(_SENTINEL, timeout=1.0)
+    except queue.Full:
+        pass
+    _WRITER_THREAD.join(timeout=timeout)
+    _WRITER_THREAD = None
 
 
 def log_print(msg: str = "", *args, **kwargs) -> None:
@@ -26,24 +82,8 @@ def log_print(msg: str = "", *args, **kwargs) -> None:
         msg = str(msg)
     line = f"{ts}{msg}\n"
     try:
-        with _LOG_LOCK:
-            with open(_LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(line)
-                f.flush()
-    except Exception:
-        pass
-    try:
-        from utils.debug_console import DebugConsole
-        dc = DebugConsole()
-        if not DebugConsole._global_enabled:
-            sys.__stdout__.write(line)
-            sys.__stdout__.flush()
-        else:
-            dc.log(msg)
-            if not dc._running:
-                sys.__stdout__.write(line)
-                sys.__stdout__.flush()
-    except Exception:
+        _LOG_QUEUE.put_nowait((line, msg))
+    except queue.Full:
         pass
 
 
