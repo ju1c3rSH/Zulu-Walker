@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import time
@@ -15,9 +16,8 @@ import yaml
 
 from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference
+from utils.log_util import log_print
 
-from .frame_composer import FrameComposer
-from .ffmpeg_pusher import FFmpegPusher
 from .pipeline_camera import PipelineCamera
 from .performance import profiler
 
@@ -27,6 +27,9 @@ _module_dir = os.path.dirname(__file__)
 
 
 class VisionManager:
+    _DISPLAY_TEXT_SCALE = 3.0
+    _DISPLAY_TEXT_THICKNESS = 2
+
     def __init__(self, camera_hub: CameraHub, config_path: str = None, ai: Optional[AIInference] = None) -> None:
         self._hub = camera_hub
         self._config_path = config_path or os.path.join(
@@ -34,8 +37,6 @@ class VisionManager:
         )
         self._pipelines: Dict[str, PipelineCamera] = {}
         self._ai = ai
-        self.frame_composer: Optional[FrameComposer] = None
-        self.ffmpeg_pusher: Optional[FFmpegPusher] = None
         self._running = False
         self._process_thread: Optional[Thread] = None
         self._result_callbacks: List[Callable[[Dict], None]] = []
@@ -43,12 +44,45 @@ class VisionManager:
 
         self._fps_data: Dict[str, dict] = {}
 
-        self._composed_frame = None
         self._any_fresh = False
         self._pending_results: deque = deque(maxlen=5)
+        self._display_frame = None
+
+        self._wdt_feed = lambda: None
+        self._wdt_count = 0
+
+        self._capture_sink: callable = None
+        self._capture_seq: int = 0
+        self._CAPTURE_EVERY_N: int = 4
+
+        self._exit_icon = None
+        self._exit_icon_size: int = 0
+        self._exit_icon_margin: int = 0
+
+        self._test_id: int = 0
+        self._hdr_prefix: str = ""
+        self._test_str_cached: str = ""
+        self._test_str_width_cached: int = 0
+        self._time_str_cached: str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        self._time_str_width_cached: int = 0
+        self._time_counter: int = 0
 
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
+
+    def set_wdt_feed(self, feed_fn) -> None:
+        self._wdt_feed = feed_fn
+
+    def set_capture_sink(self, sink: callable) -> None:
+        self._capture_sink = sink
+
+    def set_exit_icon(self, icon, icon_size: int = 48, margin: int = 12) -> None:
+        self._exit_icon = icon
+        self._exit_icon_size = icon_size
+        self._exit_icon_margin = margin
+
+    def set_test_id(self, test_id: int) -> None:
+        self._test_id = test_id
 
     def start(self) -> None:
         if self._running:
@@ -57,8 +91,12 @@ class VisionManager:
         if not os.path.exists(self._config_path):
             return
 
-        with open(self._config_path) as f:
-            cfg = yaml.safe_load(f)
+        try:
+            with open(self._config_path) as f:
+                cfg = yaml.safe_load(f)
+        except Exception:
+            logger.error("Failed to load vision config: %s", self._config_path)
+            return
 
         pipelines = cfg.get("pipelines", [])
         for pipe_cfg in pipelines:
@@ -93,11 +131,6 @@ class VisionManager:
             )
             self._pipelines[pipeline_id] = pipe
 
-        self.frame_composer = FrameComposer(
-            layout="grid",
-            output_size=(640, 480),
-        )
-
         self._running = True
         self._process_thread = Thread(target=self._process_loop, daemon=True)
         self._process_thread.start()
@@ -106,15 +139,21 @@ class VisionManager:
         from utils.cpu_affinity import bind_current_thread
         bind_current_thread("vision_processing")
 
+        _frame_count = 0
         while self._running:
             try:
-                profiler.start("total")
-                composed, all_results, any_fresh = self.process_all()
-                self._composed_frame = composed
-                self._any_fresh = any_fresh
+                self._wdt_feed()
+                self._wdt_count += 1
+                if self._wdt_count % 100 == 0:
+                    log_print(f"[WDT] viz feed #{self._wdt_count}")
 
-                if self.ffmpeg_pusher and composed is not None:
-                    self.ffmpeg_pusher.push_frame_sync(composed)
+                profiler.start("total")
+                _, all_results, any_fresh = self.process_all()
+
+                self._update_display_frame()
+
+                if self._event_bus:
+                    self._pending_results.append(all_results)
 
                 for cb in self._result_callbacks:
                     try:
@@ -122,14 +161,16 @@ class VisionManager:
                     except Exception as e:
                         pass
 
-                if self._event_bus:
-                    self._pending_results.append(all_results)
-
                 profiler.stop("total")
+                time.sleep(0)
                 if any_fresh:
                     profiler.end_frame()
                 else:
                     time.sleep(0.001)
+
+                _frame_count += 1
+                if _frame_count % 60 == 0:
+                    gc.collect(0)
             except Exception:
                 traceback.print_exc()
                 time.sleep(1.0)
@@ -137,10 +178,7 @@ class VisionManager:
     def process_all(
         self,
     ) -> Tuple[Optional[np.ndarray], Dict[str, Dict], bool]:
-        frames = []
         all_results: Dict[str, Dict] = {}
-        pipeline_ids = []
-        fps_values = []
         any_fresh = False
 
         for pid, pipe in list(self._pipelines.items()):
@@ -158,22 +196,173 @@ class VisionManager:
                     d["fps"] = d["count"] / elapsed
                     d["count"] = 0
                     d["start"] = time.time()
-            else:
-                frame = self._make_placeholder()
 
-            frames.append(frame)
-            pipeline_ids.append(pid)
             all_results[pid] = results
-            fps_values.append(self._fps_data.get(pid, {}).get("fps", 0.0))
 
-        if not frames:
-            return None, all_results, False
+        return None, all_results, any_fresh
 
-        composed = self.frame_composer.compose(frames, pipeline_ids, fps_list=fps_values)
-        return composed, all_results, any_fresh
+    def get_display_frame(self):
+        return self._display_frame
 
-    def compose_frame(self) -> Optional[np.ndarray]:
-        return self._composed_frame
+    def _update_display_frame(self) -> None:
+        if not self._ai or not self._ai.loaded:
+            return
+        for pid, pipe in list(self._pipelines.items()):
+            raw_img = getattr(pipe.camera, "last_raw", None)
+            if raw_img is None:
+                continue
+            fps = self.get_pipeline_fps(pid)
+            ai_result = pipe.last_results.get("ai_inference")
+            detections = []
+            if ai_result is not None and ai_result.success:
+                detections = ai_result.result_data.get("detections", [])
+
+            self._draw_overlays(raw_img, pid, fps, detections)
+            self._draw_exit_icon(raw_img)
+            self._display_frame = raw_img
+            self._capture_seq += 1
+            if self._capture_sink is not None and self._capture_seq % self._CAPTURE_EVERY_N == 0:
+                self._capture_sink(raw_img)
+            return
+
+    def _draw_overlays(self, img, pipeline_id: str, fps: float, detections) -> None:
+        try:
+            import maix.image
+        except ImportError:
+            return
+
+        self._draw_header(img, pipeline_id, fps)
+        self._draw_detections(img, detections, maix.image)
+
+    def _draw_header(self, img, pipeline_id: str, fps: float) -> None:
+        try:
+            import maix.image
+        except ImportError:
+            return
+        w = img.width()
+        bar_h = 32
+        try:
+            img.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
+        except Exception:
+            pass
+        if not self._hdr_prefix:
+            self._hdr_prefix = f"{pipeline_id}  FPS:"
+        try:
+            img.draw_string(6, 2, f"{self._hdr_prefix}{fps:.1f}",
+                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+        except Exception:
+            pass
+        self._time_counter += 1
+        if self._time_counter % 60 == 0:
+            self._time_str_cached = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        if not self._time_str_width_cached:
+            self._time_str_width_cached = maix.image.string_size(
+                self._time_str_cached, scale=1.2, thickness=1)[0]
+        try:
+            img.draw_string((w - self._time_str_width_cached) // 2, 2,
+                            self._time_str_cached,
+                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+        except Exception:
+            pass
+        if self._test_id > 0:
+            try:
+                test_str = f"第{self._test_id}次测试"
+                if test_str != self._test_str_cached:
+                    self._test_str_cached = test_str
+                    self._test_str_width_cached = maix.image.string_size(
+                        test_str, scale=1.2, thickness=1)[0]
+                img.draw_string(w - self._test_str_width_cached - 8, 2,
+                                self._test_str_cached,
+                                color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+            except Exception:
+                pass
+
+    def _draw_detections(self, img, detections, maix_image) -> None:
+        labels = self._ai.labels if hasattr(self._ai, "labels") and self._ai.labels else []
+
+        for det in detections:
+            x1, y1 = det.x, det.y
+            x2 = x1 + det.w
+            y2 = y1 + det.h
+
+            label_text = (
+                labels[det.class_id]
+                if det.class_id < len(labels)
+                else str(det.class_id)
+            )
+            text = f"{label_text}:{det.score:.2f}"
+
+            try:
+                size = maix_image.string_size(text, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
+                tw, th = size[0], size[1]
+            except Exception:
+                tw, th = 80, 24 * 3
+
+            bar_h = th + 6
+            label_y = y1 - bar_h
+            if label_y < 34:
+                label_y = y1 if y1 >= 34 else 34
+
+            try:
+                img.draw_rect(x1, label_y, tw + 8, bar_h, color=maix_image.COLOR_BLACK, thickness=-1)
+            except Exception:
+                pass
+            try:
+                img.draw_rect(x1, y1, det.w, det.h, color=maix_image.COLOR_GREEN, thickness=3)
+            except Exception:
+                pass
+            try:
+                img.draw_string(x1 + 4, label_y + 2, text, color=maix_image.COLOR_WHITE, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
+            except Exception:
+                pass
+
+            if det.mask_stats is not None:
+                self._draw_mask_center(img, det)
+                self._draw_area_text(img, det, y2, maix_image)
+
+    @staticmethod
+    def _draw_area_text(img, det, y_below, maix_image) -> None:
+        stats = det.mask_stats
+        if stats is None or stats.area_px == 0:
+            return
+        text = f"area:{stats.area_px}px"
+        try:
+            img.draw_string(det.x, y_below + 4, text, color=maix_image.COLOR_YELLOW, scale=1.5, thickness=2)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _draw_mask_center(img, det) -> None:
+        try:
+            import maix.image
+        except ImportError:
+            return
+        stats = det.mask_stats
+        if stats is None or stats.area_px == 0:
+            return
+        cx = int(stats.center_x)
+        cy = int(stats.center_y)
+        try:
+            img.draw_circle(cx, cy, 3, color=maix.image.COLOR_RED, thickness=-1)
+        except Exception:
+            try:
+                img.draw_rect(cx - 2, cy - 2, 5, 5, color=maix.image.COLOR_RED, thickness=-1)
+            except Exception:
+                pass
+
+    def _draw_exit_icon(self, img) -> None:
+        if self._exit_icon is None:
+            return
+        try:
+            import maix.image as _mi
+            h = img.height()
+            by = h - self._exit_icon_size - 8
+            bx = self._exit_icon_margin
+            img.draw_rect(bx - 2, by - 2, self._exit_icon_size + 4,
+                          self._exit_icon_size + 4, color=_mi.COLOR_BLACK, thickness=-1)
+            img.draw_image(bx, by, self._exit_icon)
+        except Exception:
+            pass
 
     def drain_results(self):
         results = []
@@ -181,13 +370,14 @@ class VisionManager:
             results.append(self._pending_results.popleft())
         return results
 
+    def get_pipeline_fps(self, pipeline_id: str) -> float:
+        fd = self._fps_data.get(pipeline_id)
+        return fd.get("fps", 0.0) if fd else 0.0
+
     def release_pipeline(self, pipeline_id: str) -> None:
         pipe = self._pipelines.pop(pipeline_id, None)
         if pipe is not None and hasattr(pipe.camera, 'release'):
             pipe.camera.release()
-
-    def _make_placeholder(self) -> np.ndarray:
-        return np.zeros((480, 640, 3), dtype=np.uint8)
 
     def enable_task(self, pipeline_id: str, task_name: str) -> bool:
         pipe = self._pipelines.get(pipeline_id)
@@ -232,9 +422,6 @@ class VisionManager:
 
     def release(self) -> None:
         self.stop()
-        if self.ffmpeg_pusher:
-            self.ffmpeg_pusher.close_sync()
-            self.ffmpeg_pusher = None
         self._pipelines.clear()
 
 
@@ -248,7 +435,7 @@ class _LegacyCameraManagerShim:
     def disable_task(self, camera_id: str, task_name: str) -> bool:
         return self._vm.disable_task(camera_id, task_name)
 
-    def get_all_results(self) -> Dict:
+    def get_all_results(self) -> dict:
         return self._vm.get_all_results()
 
     def add_result_callback(self, callback) -> None:
@@ -258,9 +445,5 @@ class _LegacyCameraManagerShim:
         self._vm.remove_result_callback(callback)
 
     @property
-    def cameras(self) -> Dict:
+    def cameras(self) -> dict:
         return {}
-
-
-class CameraManager:
-    pass

@@ -8,12 +8,12 @@ from typing import Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_VISION_PROCESSING = {4, 5, 6, 7}
-_DEFAULT_CAMERA_CAPTURE = {0, 1, 2, 3}
-_DEFAULT_MAIN_LOOP = {4, 5, 6, 7}
-_DEFAULT_HEARTBEAT = {0, 1}
-_DEFAULT_UART_RECEIVER = {0, 1}
-_DEFAULT_DEBUG_CONSOLE = {0, 1}
+_DEFAULT_VISION_PROCESSING = {1}
+_DEFAULT_CAMERA_CAPTURE = {0}
+_DEFAULT_MAIN_LOOP = {0}
+_DEFAULT_HEARTBEAT = {0}
+_DEFAULT_UART_RECEIVER = {0}
+_DEFAULT_DEBUG_CONSOLE = {0}
 
 _global_config: Optional["CpuAffinityConfig"] = None
 

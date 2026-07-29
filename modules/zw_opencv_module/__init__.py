@@ -15,14 +15,25 @@ _vision_manager: Optional[VisionManager] = None
 _legacy_shim: Optional[_LegacyCameraManagerShim] = None
 _running: bool = False
 
-cv2.ocl.setUseOpenCL(True)
+try:
+    pass
+except Exception:
+    pass
 
 
-def init(machine: Machine, event_bus=None) -> None:
+def init(machine: Machine, event_bus=None, wdt_feed=None) -> None:
     from utils.cpu_affinity import get_config as get_cpu_affinity_config
     _cpu_cfg = get_cpu_affinity_config()
     if _cpu_cfg and _cpu_cfg.opencv_threads > 0:
-        cv2.setNumThreads(_cpu_cfg.opencv_threads)
+        try:
+            cv2.setNumThreads(_cpu_cfg.opencv_threads)
+        except Exception:
+            pass
+    else:
+        try:
+            cv2.setNumThreads(1)
+        except Exception:
+            pass
     global _vision_manager, _legacy_shim
 
     config_path = os.path.join(_module_dir, "config", "vision_config.yaml")
@@ -33,6 +44,8 @@ def init(machine: Machine, event_bus=None) -> None:
     )
     if event_bus is not None:
         _vision_manager.set_event_bus(event_bus)
+    if wdt_feed is not None:
+        _vision_manager.set_wdt_feed(wdt_feed)
     _legacy_shim = _LegacyCameraManagerShim(_vision_manager)
 
 
