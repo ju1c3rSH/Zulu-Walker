@@ -8,6 +8,7 @@ cameras:
     source: null
     width: 640
     height: 640
+    fps: 60
     camera_stream_queue_size: 3
 
 uart_defaults:
