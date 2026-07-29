@@ -413,7 +413,8 @@ class VisionManager:
                           size + 4, color=_mi.COLOR_BLACK, thickness=-1)
             img.draw_image(bx, by, self._calib_button_icon)
         except Exception:
-            pass
+            from utils.log_util import log_print
+            log_print("[CALIB] Button draw exception")
 
     def _draw_calib_flash(self, img) -> None:
         if time.monotonic() >= self._calib_flash_until:
