@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import threading
 from utils.log_util import log_print
 
 
@@ -48,7 +49,12 @@ def _push_coordinator_status(coordinator) -> None:
     dc.set("fps", f"{info.get('fps', 0.0):.1f}")
 
 
-def _build_display_callback(manager, machine):
+def _build_callbacks(manager, machine):
+    """Returns (main_callback, start_display_thread).
+    
+    main_callback: fast touch/input handling (~0ms), runs in main loop.
+    display thread: exit icon drawing + display.show(), runs independently.
+    """
     _last_seen_frame = None
 
     _icon_exit = None
@@ -74,8 +80,9 @@ def _build_display_callback(manager, machine):
     def _in_btn(x, y, bx, by):
         return bx - 4 <= x <= bx + _ICON_SIZE + 4 and by - 4 <= y <= by + _ICON_SIZE + 4
 
-    def display_fn():
-        nonlocal _last_seen_frame, _touch_down, _touch_x, _touch_y
+    def main_callback():
+        """Touch handling only — fast (~0ms), no JPEG encoding, no GIL hog."""
+        nonlocal _touch_down, _touch_x, _touch_y
 
         if _touch is not None:
             try:
@@ -122,30 +129,41 @@ def _build_display_callback(manager, machine):
             except Exception:
                 pass
 
-        vision_mod = manager.modules.get("zw_opencv_module")
-        if vision_mod and machine and machine.display:
-            vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
-            if vm:
-                frame = vm.get_display_frame()
-                if frame is not None and frame is not _last_seen_frame:
-                    _last_seen_frame = frame
-                    try:
-                        import maix.image as _mi3
-                        h = frame.height()
-                        by = h - _ICON_SIZE - 8
-                        bx = _MARGIN
-                        if _icon_exit is not None:
-                            frame.draw_rect(bx - 2, by - 2, _ICON_SIZE + 4, _ICON_SIZE + 4, color=_mi3.COLOR_BLACK, thickness=-1)
-                            frame.draw_image(bx, by, _icon_exit)
-                    except Exception:
-                        pass
-                    if _check_cmm_pressure():
-                        return
-                    try:
-                        machine.display.show(frame)
-                    except Exception:
-                        pass
-    return display_fn
+    def _display_loop():
+        nonlocal _last_seen_frame
+        import time
+        while True:
+            vision_mod = manager.modules.get("zw_opencv_module")
+            if vision_mod and machine and machine.display:
+                vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
+                if vm:
+                    frame = vm.get_display_frame()
+                    if frame is not None and frame is not _last_seen_frame:
+                        _last_seen_frame = frame
+                        try:
+                            import maix.image as _mi3
+                            h = frame.height()
+                            by = h - _ICON_SIZE - 8
+                            bx = _MARGIN
+                            if _icon_exit is not None:
+                                frame.draw_rect(bx - 2, by - 2, _ICON_SIZE + 4, _ICON_SIZE + 4, color=_mi3.COLOR_BLACK, thickness=-1)
+                                frame.draw_image(bx, by, _icon_exit)
+                        except Exception:
+                            pass
+                        if _check_cmm_pressure():
+                            continue
+                        try:
+                            machine.display.show(frame)
+                        except Exception:
+                            pass
+            time.sleep(0.001)
+
+    def start_display_thread():
+        t = threading.Thread(target=_display_loop, daemon=True)
+        t.start()
+        return t
+
+    return main_callback, start_display_thread
 
 
 def _make_wdt_feed():
@@ -197,7 +215,7 @@ def main():
 
     try:
         from maix import display
-        display.set_trans_image_quality(20)
+        display.set_trans_image_quality(10)
     except Exception:
         pass
 
@@ -231,10 +249,11 @@ def main():
     log_print(f"ppc:{pixels_per_cm} w:{cam_w} h:{cam_h}")
     coordinator.set_pendulum_calibration(pixels_per_cm, cam_w, cam_h)
 
-    display_callback = _build_display_callback(manager, machine)
+    main_callback, start_display_thread = _build_callbacks(manager, machine)
 
     coordinator.start()
-    manager.run_main_loop(coordinator, tick_callback=_push_coordinator_status, display_callback=display_callback)
+    start_display_thread()
+    manager.run_main_loop(coordinator, tick_callback=_push_coordinator_status, display_callback=main_callback)
 
 
 if __name__ == "__main__":
