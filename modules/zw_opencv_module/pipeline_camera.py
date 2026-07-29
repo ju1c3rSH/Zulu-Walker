@@ -93,18 +93,21 @@ class PipelineCamera:
         return None
 
     def process_frame(self, fps: float = 0.0) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
-        frame = self.camera.read()
-        if frame is None:
-            frame = self._last_frame
-        else:
-            self._last_frame = frame.copy()
+        raw_img = self.camera.read_raw()
 
+        if raw_img is not None:
+            frame = raw_img
+            self._last_frame = frame
+        else:
+            frame = self._last_frame
+ 
         if frame is None:
             return None, {}
 
         env_context = {
             "fps": fps,
             "focal_calculator": self.focal_calculator,
+            "camera": self.camera,
         }
         processed_frame, task_results = self.task_manager.run_tasks_serial(
             frame, context=env_context,

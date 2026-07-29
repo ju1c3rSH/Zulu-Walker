@@ -1,17 +1,10 @@
 pipelines:
-  - pipeline_id: "cam_qr"
-    camera_id: "qr"
+  - pipeline_id: "cam_main"
+    camera_id: "main"
     tasks:
-      - name: "qr_detect"
-        type: "QRCodeProcessor"
+      - name: "ai_inference"
+        type: "AIInferenceProcessor"
         enabled: true
-
-  - pipeline_id: "cam_cargo"
-    camera_id: "cargo"
-    tasks:
-      - name: "track_cargo"
-        type: "TrackCargoProcessor"
-        enabled: false
-      - name: "ring_discovery"
-        type: "RingDiscoveryProcessor"
+      - name: "line_follow"
+        type: "LineFollowProcessor"
         enabled: false

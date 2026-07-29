@@ -1,0 +1,19 @@
+# 基础依赖
+opencv-python>=4.5.0
+opencv-contrib-python>=4.5.0
+numpy>=1.19.0
+
+# 测试依赖
+pytest>=6.0.0
+pytest-asyncio>=0.16.0
+qrcode[pil]>=7.0.0
+
+# QR 码解码
+pyzbar>=0.1.9
+
+# 可选：用于生成测试QR码
+Pillow>=8.0.0
+
+# 注意：ffmpeg需要单独安装
+# 在Ubuntu/Debian: sudo apt install ffmpeg
+# 在Windows: 从 https://ffmpeg.org/download.html 下载

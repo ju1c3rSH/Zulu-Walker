@@ -110,6 +110,10 @@ class LinuxAI:
         logger.warning("LinuxAI.detect() called but no NPU is available")
         return []
 
+    def segment(self, frame: np.ndarray, **kwargs) -> list:
+        logger.warning("LinuxAI.segment() called but no NPU is available")
+        return []
+
     def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
         logger.warning("LinuxAI.classify() called but no NPU is available")
         return []
