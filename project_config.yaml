@@ -19,8 +19,8 @@ ai:
     - nick_name: "yolo11n"
       model: "/root/models/steelball_640.mud"
       model_type: "auto"
-    - nick_name: "plate_seg"
-      model: "/root/models/steelsheet_640.mud"
-      model_type: "auto"
   active: "yolo11n"
-  #active: "plate_seg"  # switch to seg model for steel plate detection
+
+pendulum:
+  pixels_per_cm: 25.6
+  length_cm: 25.0
