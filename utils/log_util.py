@@ -22,6 +22,7 @@ except Exception:
 
 
 def _writer_loop() -> None:
+    global _DROP_COUNT
     while True:
         item = _LOG_QUEUE.get()
         if item is _SENTINEL:
@@ -98,6 +99,7 @@ def stop_log_writer(timeout: float = 2.0) -> None:
 
 
 def log_print(msg: str = "", *args, **kwargs) -> None:
+    global _DROP_COUNT
     ts = datetime.now().strftime("[%H:%M:%S] ")
     if args:
         parts = [str(msg)] + [str(a) for a in args]
