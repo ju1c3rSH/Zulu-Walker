@@ -51,8 +51,77 @@ def _push_coordinator_status(coordinator) -> None:
 def _build_display_callback(manager, machine):
     _last_seen_frame = None
 
+    _icon_exit = None
+    _touch = None
+    try:
+        from maix import image as _mi
+        from maix import touchscreen
+        _touch = touchscreen.TouchScreen()
+        _icon_exit = _mi.load("/maixapp/share/icon/ret.png")
+        if _icon_exit is not None:
+            w = _icon_exit.width() * 48 // _icon_exit.height()
+            if w % 2:
+                w += 1
+            _icon_exit = _icon_exit.resize(w, 48)
+    except Exception:
+        pass
+
+    _ICON_SIZE = 48
+    _MARGIN = 12
+    _touch_down = False
+    _touch_x = _touch_y = 0
+
+    def _in_btn(x, y, bx, by):
+        return bx - 4 <= x <= bx + _ICON_SIZE + 4 and by - 4 <= y <= by + _ICON_SIZE + 4
+
     def display_fn():
-        nonlocal _last_seen_frame
+        nonlocal _last_seen_frame, _touch_down, _touch_x, _touch_y
+
+        if _touch is not None:
+            try:
+                x, y, pressed = _touch.read()
+                if pressed:
+                    _touch_down = True
+                    try:
+                        vision_mod = manager.modules.get("zw_opencv_module")
+                        if vision_mod:
+                            vm2 = getattr(vision_mod, "get_vision_manager", lambda: None)()
+                            if vm2:
+                                frame2 = vm2.get_display_frame()
+                                if frame2 is not None and machine is not None:
+                                    import maix.image as _mi2
+                                    pt = _mi2.resize_map_pos_reverse(
+                                        frame2.width(), frame2.height(),
+                                        machine.display.width(), machine.display.height(),
+                                        _mi2.Fit.FIT_CONTAIN, x, y,
+                                    )
+                                    _touch_x, _touch_y = int(pt[0]), int(pt[1])
+                                else:
+                                    _touch_x, _touch_y = x, y
+                            else:
+                                _touch_x, _touch_y = x, y
+                        else:
+                            _touch_x, _touch_y = x, y
+                    except Exception:
+                        _touch_x, _touch_y = x, y
+                else:
+                    if _touch_down:
+                        vision_mod = manager.modules.get("zw_opencv_module")
+                        if vision_mod:
+                            vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
+                            if vm:
+                                frame = vm.get_display_frame()
+                                if frame is not None:
+                                    h = frame.height()
+                                    by = h - _ICON_SIZE - 8
+                                    bx = _MARGIN
+                                    if _in_btn(_touch_x, _touch_y, bx, by):
+                                        import os
+                                        os._exit(0)
+                    _touch_down = False
+            except Exception:
+                pass
+
         vision_mod = manager.modules.get("zw_opencv_module")
         if vision_mod and machine and machine.display:
             vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
@@ -60,6 +129,16 @@ def _build_display_callback(manager, machine):
                 frame = vm.get_display_frame()
                 if frame is not None and frame is not _last_seen_frame:
                     _last_seen_frame = frame
+                    try:
+                        import maix.image as _mi3
+                        h = frame.height()
+                        by = h - _ICON_SIZE - 8
+                        bx = _MARGIN
+                        if _icon_exit is not None:
+                            frame.draw_rect(bx - 2, by - 2, _ICON_SIZE + 4, _ICON_SIZE + 4, color=_mi3.COLOR_BLACK, thickness=-1)
+                            frame.draw_image(bx, by, _icon_exit)
+                    except Exception:
+                        pass
                     if _check_cmm_pressure():
                         return
                     try:
