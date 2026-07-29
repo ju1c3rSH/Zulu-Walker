@@ -1,7 +1,7 @@
 id: zulu_walker
 name: zulu_walker
 name[zh]: 祖鲁行者
-version: 1.2.1
+version: 1.2.2
 icon: app.png
 author: Electric Competition 2026
 desc: YOLO11n steel ball detection + line following robot based on MaixCAM2

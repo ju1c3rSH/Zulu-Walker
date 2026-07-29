@@ -265,6 +265,28 @@ def _setup_record_signaling(coordinator, cfg) -> None:
         coordinator.set_record_cmd_sender(_send_record_cmd)
 
 
+def _start_beacon() -> None:
+    def _beacon_loop():
+        import socket
+        import json
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except Exception as e:
+            log_print(f"[Beacon] socket init FAIL: {e}")
+            return
+        while True:
+            try:
+                msg = json.dumps({"type": "beacon", "service": "zulu-walker", "port": 8000})
+                sock.sendto(msg.encode(), ("255.255.255.255", 9999))
+            except Exception:
+                pass
+            time.sleep(2)
+
+    t = threading.Thread(target=_beacon_loop, daemon=True)
+    t.start()
+
+
 def main():
     log_print("0xfb709394")
 
@@ -280,6 +302,8 @@ def main():
     wdt_feed = _make_wdt_feed()
 
     _init_wifi(_cfg)
+
+    _start_beacon()
 
     from framework.event_bus import EventBus
     from app.coordinator import Ti2026Coordinator
