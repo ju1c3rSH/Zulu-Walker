@@ -35,7 +35,6 @@ class MaixCam2Camera:
         self._sensor_height_mm = sensor_height_mm
         self._opened = False
         self._cam: Optional[maix.camera.Camera] = None
-        self._read_cam: Optional[maix.camera.Camera] = None
         self._last_frame: Optional[np.ndarray] = None
         try:
             self._cam = maix.camera.Camera(
@@ -93,11 +92,10 @@ class MaixCam2Camera:
         return self._cam.is_opened()
 
     def read(self) -> Optional[np.ndarray]:
-        cam = self._read_cam or self._cam
-        if cam is None:
+        if self._cam is None:
             return None
         try:
-            img = cam.read(block=False)
+            img = self._cam.read(block=False)
             if img is None:
                 return None
             self._last_raw = img
@@ -107,11 +105,10 @@ class MaixCam2Camera:
             return None
 
     def read_raw(self):
-        cam = self._read_cam or self._cam
-        if cam is None:
+        if self._cam is None:
             return None
         try:
-            raw = cam.read(block=False)
+            raw = self._cam.read(block=False)
             if raw is not None:
                 self._last_raw = raw
                 np_img = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
