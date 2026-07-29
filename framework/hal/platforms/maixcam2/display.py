@@ -19,6 +19,12 @@ class MaixCam2Display:
         except Exception:
             return False
 
+    def width(self) -> int:
+        return self._disp.width() if self._disp else 0
+
+    def height(self) -> int:
+        return self._disp.height() if self._disp else 0
+
     def close(self) -> None:
         if self._disp is not None:
             try:
