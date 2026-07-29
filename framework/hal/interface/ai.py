@@ -1,9 +1,15 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Protocol, TypedDict, Unpack, runtime_checkable
+from typing import Callable, Optional, Protocol, TypedDict, Unpack, runtime_checkable
 
 import numpy as np
+
+# Detection filtering constants — tune these on-site
+MIN_AREA = 200
+MAX_AREA = 3000
+MAX_RATIO = 2.0
+MARGIN = 10
 
 
 class DetectKwargs(TypedDict, total=False):
@@ -60,6 +66,43 @@ class Detection:
     mask_index: int = -1
     seg_mask: Optional[np.ndarray] = None
     mask_stats: Optional[MaskStats] = None
+
+
+def filter_detections(
+    detections: list[Detection],
+    *,
+    min_area: int = MIN_AREA,
+    max_area: int = MAX_AREA,
+    max_ratio: float = MAX_RATIO,
+    margin: int = MARGIN,
+    image_width: int = 640,
+    image_height: int = 640,
+    on_discard: Optional[Callable[[Detection, str], None]] = None,
+) -> list[Detection]:
+    filtered: list[Detection] = []
+    for obj in detections:
+        area = obj.w * obj.h
+        if area < min_area:
+            if on_discard:
+                on_discard(obj, "area_too_small")
+            continue
+        if area > max_area:
+            if on_discard:
+                on_discard(obj, "area_too_large")
+            continue
+        ratio = max(obj.w, obj.h) / max(min(obj.w, obj.h), 1)
+        if ratio > max_ratio:
+            if on_discard:
+                on_discard(obj, "aspect_ratio")
+            continue
+        if (obj.x < margin or obj.y < margin
+                or obj.x + obj.w > image_width - margin
+                or obj.y + obj.h > image_height - margin):
+            if on_discard:
+                on_discard(obj, "edge_proximity")
+            continue
+        filtered.append(obj)
+    return filtered
 
 
 @runtime_checkable
