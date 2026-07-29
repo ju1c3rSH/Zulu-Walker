@@ -1,0 +1,31 @@
+EDGE_DRAWING_RING:
+  blur_kernel: 3
+  blur_sigma: 150
+  ed_gradient_threshold: 36
+  ed_min_path_length: 50
+  edge_morph_iterations: 1
+  edge_morph_kernel: 3
+  min_area: 150
+FAST_RING:
+  max_roi_miss: 5
+  min_area: 150
+  roi_size: 150
+  smooth_window: 5
+HEURISTIC_RING:
+  blur_kernel: 7
+  blur_sigma: 253
+  ed_gradient_threshold: 22
+  ed_min_path_length: 132
+  ed_nfa_validation: 0
+  edge_morph_iterations: 2
+  edge_morph_kernel: 3
+  max_roi_miss: 7
+  min_area: 1612
+  ring_gap_px: 10
+  roi_size: 350
+  smooth_window: 10
+SHARED:
+  max_lost_frames: 10
+  q_base: 20
+  q_vel_base: 15
+_method_index: 2

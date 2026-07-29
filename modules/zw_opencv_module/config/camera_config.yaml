@@ -1,53 +1,21 @@
-# Camera System Configuration
-# 检测方法说明:
-#   contour_ellipse: 轮廓检测 + 椭圆拟合（颜色二值化）
-#   edge_contour_ellipse: 边缘检测 + 椭圆拟合（无需颜色二值化，使用Canny+膨胀）
-# 检测参数由 debug_params.yaml 控制，使用 debug_detector.py 进行参数整定
 system:
-  output_width: 640
-  output_height: 480
-  layout: "grid"  # grid, horizontal, vertical
-  enable_streaming: False  # 是否启用RTMP推流
-  rtmp_url: "rtmp://192.168.31.158/live/livestream"
-  enable_local_display: True  # 是否启用本地显示窗口（需要X11环境）
+  output_width: 544
+  output_height: 544
+  layout: "grid"
+  enable_streaming: False
+  enable_local_display: True
 
 cameras:
-  - id: "cam_qr"
-    source: 2
-    width: 640
-    height: 480
-    # 相机内参
-    focal_length_mm: 2.885          # 焦距 (mm)
-    sensor_width_mm: 3.6          # 传感器宽度 (mm)
-    sensor_height_mm: 2.7         # 传感器高度 (mm)
-
-    camera_stream_queue_size: 2  # 摄像头帧缓冲队列大小，默认2，帧率波动时可增大
-    enabled: true
-    preprocess:
-      gaussian_blur:
-        enabled: false
-        kernel_size: 5
-        sigma: 1.5
-    tasks:
-      - name: "qr_detect"
-        type: "QRCodeProcessor"
-        enabled: true
-
-  - id: "cam_cargo"
+  - id: "cam_main"
     source: 0
-    width: 640
-    height: 480
+    width: 544
+    height: 544
     camera_stream_queue_size: 2
     enabled: true
     tasks:
-      - name: "track_cargo"
-        type: "TrackCargoProcessor"
-        enabled: false
-      - name: "ring_discovery"
-        type: "RingDiscoveryProcessor"
-        enabled: false
-
-
-    #   1/4": 3.2mm x 2.4mm (网络摄像头)
-    #   1/3": 4.8mm x 3.6mm (工业相机)
-    #   1/2.5": 5.8mm x 4.3mm (高端相机)
+      - name: "ai_inference"
+        type: "AIInferenceProcessor"
+        enabled: true
+      - name: "line_follow"
+        type: "LineFollowProcessor"
+        enabled: true

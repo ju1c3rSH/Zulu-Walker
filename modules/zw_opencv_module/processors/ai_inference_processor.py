@@ -6,6 +6,8 @@ from typing import Optional
 import numpy as np
 
 from framework.hal.interface import AIInference, Detection
+from framework.hal.interface.ai import filter_detections
+from utils.log_util import log_print
 
 from .registry import register_processor
 from .base import Processor, VisionResult
@@ -20,6 +22,7 @@ class AIInferenceProcessor(Processor):
         super().__init__(name)
         self._ai: Optional[AIInference] = None
         self._handler = None
+        self._filter_logged: bool = False
 
     def set_ai(self, ai: AIInference) -> None:
         self._ai = ai
@@ -46,18 +49,65 @@ class AIInferenceProcessor(Processor):
                 self.name, success=False,
                 error_message="AI model not loaded",
             )
+        if frame is None:
+            return VisionResult(
+                self.name, success=False,
+                error_message="frame is None",
+            )
 
         try:
-            detections = self._ai.detect(frame)
+            camera = (context or {}).get("camera")
+            raw = getattr(camera, "last_raw", None)
+            if raw is not None:
+                detections = self._ai.detect(raw, _raw=True)
+                h, w = raw.height(), raw.width()
+            else:
+                detections = self._ai.detect(frame)
+                h, w = frame.shape[:2]
         except Exception as e:
             logger.error("AIInferenceProcessor detect failed: %s", e)
             return VisionResult(
                 self.name, success=False, error_message=str(e),
             )
 
+        # Filter detections before any downstream consumption
+        pre_count = len(detections)
+        discard_log: list[tuple[Detection, str]] = []
+        detections = filter_detections(
+            detections,
+            image_width=w,
+            image_height=h,
+            on_discard=lambda obj, reason: discard_log.append((obj, reason)),
+        )
+        for obj, reason in discard_log:
+            log_print(
+                f"filter_discard reason={reason} "
+                f"cls={obj.class_id} score={obj.score:.2f} "
+                f"xywh=({obj.x},{obj.y},{obj.w},{obj.h}) area={obj.w * obj.h}"
+            )
+        if discard_log and not self._filter_logged:
+            self._filter_logged = True
+            log_print(
+                f"filter_detections: {pre_count} -> {len(detections)} "
+                f"(removed {len(discard_log)})"
+            )
+
+        segment_dicts = []
+        for d in detections:
+            if d.mask_stats is not None and d.mask_stats.area_px > 0:
+                segment_dicts.append({
+                    "class_id": d.class_id,
+                    "center_x": d.mask_stats.center_x,
+                    "center_y": d.mask_stats.center_y,
+                    "area_px": d.mask_stats.area_px,
+                })
+
         return VisionResult(
             self.name,
-            result_data={"detections": detections},
+            result_data={
+                "detections": detections,
+                "segments": segment_dicts,
+            },
             success=True,
         )
 

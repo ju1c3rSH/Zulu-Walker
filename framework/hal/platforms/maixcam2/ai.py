@@ -8,7 +8,7 @@ import numpy as np
 import maix.image
 import maix.nn
 
-from framework.hal.interface.ai import Detection, Keypoint
+from framework.hal.interface.ai import Detection, Keypoint, MaskStats, SegmentResult
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,9 @@ class MaixCam2AI:
         del self._registry[nick_name]
         logger.info("Removed model '%s'", nick_name)
 
+    # TODO: 预加载所有模型到 NPU，switch() 改为纯指针交换 (O(1), ~1µs)
+    # 当前每次 switch() 重新从 flash 加载 .mud 到 NPU (~200-500ms)
+    # 双模型 CMM 约 30-40MB，256MB CMM 完全可接受
     def switch(self, nick_name: str) -> bool:
         if nick_name not in self._registry:
             logger.error("Cannot switch to unknown model '%s'", nick_name)
@@ -83,8 +86,7 @@ class MaixCam2AI:
             return False
 
         try:
-            # self._model = slot_cls(path, dual_buff=True, **kwargs)
-            self._model = slot_cls(path, **kwargs)
+            self._model = slot_cls(path, dual_buff=True, **kwargs)
             self._model_path = path
             self._model_type = model_type
             self._active_name = nick_name
@@ -159,16 +161,22 @@ class MaixCam2AI:
     # ------------------------------------------------------------------ #
 
     def detect(
-        self, frame: np.ndarray,
+        self, frame,
         **kwargs
     ) -> list[Detection]:
         """Run object detection on frame.
 
+        *frame* can be:
+        - a BGR numpy array (standard pipeline path)
+        - a ``maix.image.Image`` (zero-copy path, pass ``_raw=True``)
+
         Returns a list of Detection dataclasses.  Returns an empty list
         when no model is loaded or inference fails.
         """
-        conf_th = kwargs.get("conf_th", 0.5)
-        iou_th = kwargs.get("iou_th", 0.45)
+        conf_th = kwargs.pop("conf_th", 0.48)
+        iou_th = kwargs.pop("iou_th", 0.5)
+
+        _is_raw = kwargs.pop("_raw", False)
 
         if self._model is None:
             logger.warning("detect() called but no model is loaded")
@@ -183,8 +191,11 @@ class MaixCam2AI:
             return []
 
         try:
-            frame_rgb = frame[:, :, ::-1].copy()
-            img = maix.image.cv2image(frame_rgb, bgr=False, copy=False)
+            if _is_raw:
+                img = frame
+            else:
+                frame_rgb = frame[:, :, ::-1]
+                img = maix.image.cv2image(frame_rgb, bgr=False, copy=True)
         except Exception as e:
             logger.error("cv2image conversion failed: %s", e)
             return []
@@ -195,6 +206,14 @@ class MaixCam2AI:
             logger.error("Model detect() failed: %s", e)
             return []
 
+        # Post-filter: some models don't fully honor conf_th internally
+        objects = [o for o in objects if o.score >= conf_th]
+
+        if not objects:
+            logger.debug("detect() returned 0 objects")
+        else:
+            logger.debug("detect() returned %d objects", len(objects))
+
         results: list = []
         for obj in objects:
             kps = self._convert_keypoints(obj, self._model_type)
@@ -203,6 +222,20 @@ class MaixCam2AI:
                 angle = float(obj.angle)
             else:
                 angle = None
+
+            seg_mask_np: Optional[np.ndarray] = None
+            mask_stats: Optional[MaskStats] = None
+
+            if hasattr(obj, "seg_mask") and obj.seg_mask is not None:
+                seg_mask_np = self._extract_seg_mask(obj.seg_mask)
+                if seg_mask_np is not None:
+                    ys, xs = np.nonzero(seg_mask_np > 127)
+                    if xs.size:
+                        mask_stats = MaskStats(
+                            center_x=float(obj.x + xs.mean()),
+                            center_y=float(obj.y + ys.mean()),
+                            area_px=int(xs.size),
+                        )
 
             det = Detection(
                 x=obj.x,
@@ -215,8 +248,47 @@ class MaixCam2AI:
                 angle=angle,
                 keypoints=kps,
                 mask_index=-1,
+                seg_mask=seg_mask_np,
+                mask_stats=mask_stats,
             )
             results.append(det)
+
+        if _is_raw and self._model is not None:
+            for obj in objects:
+                if hasattr(obj, "seg_mask") and obj.seg_mask is not None:
+                    try:
+                        self._model.draw_seg_mask(img, obj.x, obj.y, obj.seg_mask, threshold=127)
+                    except Exception:
+                        pass
+
+        return results
+
+    def segment(
+        self, frame: np.ndarray, **kwargs
+    ) -> list[SegmentResult]:
+        """Run segmentation inference and return structured mask data.
+
+        Calls ``detect()`` internally, then extracts ``mask_stats``
+        from each returned ``Detection``.  Returns an empty list when
+        no model is loaded or the model does not produce segmentation
+        masks.
+        """
+        detections = self.detect(frame, **kwargs)
+        results: list[SegmentResult] = []
+        for d in detections:
+            if d.mask_stats is not None and d.mask_stats.area_px > 0:
+                results.append(SegmentResult(
+                    class_id=d.class_id,
+                    center_x=d.mask_stats.center_x,
+                    center_y=d.mask_stats.center_y,
+                    area_px=d.mask_stats.area_px,
+                    bbox_x=d.x,
+                    bbox_y=d.y,
+                    bbox_w=d.w,
+                    bbox_h=d.h,
+                    score=d.score,
+                    detection=d,
+                ))
         return results
 
     def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
@@ -240,8 +312,7 @@ class MaixCam2AI:
             return []
 
         try:
-            frame_rgb = frame[:, :, ::-1].copy()
-            img = maix.image.cv2image(frame_rgb, bgr=False, copy=False)
+            img = maix.image.cv2image(frame, bgr=True, copy=True)
         except Exception as e:
             logger.error("cv2image conversion failed: %s", e)
             return []
@@ -252,7 +323,6 @@ class MaixCam2AI:
             logger.error("Model classify() failed: %s", e)
             return []
 
-        # results is expected as list of (class_id, score) or similar iterable
         out: list[tuple[int, float]] = []
         for item in results[:top_k]:
             if isinstance(item, (list, tuple)):
@@ -305,6 +375,8 @@ class MaixCam2AI:
     def _convert_keypoints(obj, model_type: str = "") -> list[Keypoint]:
         """Convert a MaixPy flat *points* list to `list[Keypoint]`."""
         kps: list[Keypoint] = []
+        if not hasattr(obj, "points"):
+            return kps
         pts = obj.points
         if not pts:
             return kps
@@ -327,3 +399,18 @@ class MaixCam2AI:
                 )
             )
         return kps
+
+    # ------------------------------------------------------------------ #
+    #  Mask analysis
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _extract_seg_mask(mask_img) -> Optional[np.ndarray]:
+        try:
+            mask_np = maix.image.image2cv(mask_img, ensure_bgr=False, copy=True)
+            if mask_np.ndim == 3:
+                mask_np = mask_np[:, :, 0]
+            return mask_np
+        except Exception as e:
+            logger.warning("Failed to convert seg_mask: %s", e)
+            return None
