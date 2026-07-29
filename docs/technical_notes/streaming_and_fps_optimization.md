@@ -1,259 +1,239 @@
-# 推流与 FPS 优化 — 技术踩坑笔记
+# 推流架构 — 最终技术报告
 
-> 面向 MaixCAM2 (Axera AX630C) + MaixPy 固件 + YOLO11n 检测
-
----
-
-## 1. 格式三角难题
-
-### 三个约束
-
-| 组件 | 强制格式 | 来源 |
-|------|---------|------|
-| RTSP `bind_camera` | **FMT_YVU420SP (NV21) only** | 固件运行时错误 `bind camera failed! support FMT_YVU420SP only!` |
-| AI 模型 (YOLO11n) | **FMT_RGB888** | `model.input_format()` 返回值 |
-| 显示/LCD `display.show()` | 两者均可 | 官方示例验证 |
-
-### 结论
-
-单相机格式无法同时满足 RTSP (NV21) + 模型 (RGB888)。**必须二选一**，另一端做软件转换。选择 RGB888：(a) 模型零拷贝推理，(b) 推流改用 `http.JpegStreamer`（硬件编码器内部处理 RGB→YUV）。
+> MaixCAM2 (Axera AX630C) + YOLO11n 钢珠检测 + WiFi 远程图传  
+> 2026 电子设计竞赛 H 题 · 车载平衡滚球运动控制系统
 
 ---
 
-## 2. NV21 格式转换陷阱
+## 1. 结论：不可调和的三方约束
 
-### 固件限制
-
-`maix.image.Image.to_format()` **不支持源格式 FMT_YVU420SP (format=8)**。任何 `to_format(FMT_RGB888)` 或 `to_format(FMT_BGR888)` 调用都会触发 C++ 错误：
+MaixCAM2 的硬件固件存在一个**死结**，单相机传感器无法同时满足以下三方：
 
 ```
--- [E] convert format failed, not support format 8
+                    单传感器 = 单 Camera 对象 = 单格式
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        ▼                           ▼                           ▼
+RTSP bind_camera()          模型 detect(img)              LCD + IDE 预览
+  需: FMT_YVU420SP          需: FMT_RGB888               支持: 两者均可
+  拒绝: RGB888              拒绝: NV21
+  无 push_frame API         无自动格式转换
 ```
 
-### 哪些操作会触发
+| 路线 | 相机 | 模型 | RTSP | 结果 |
+|------|:---:|:---:|:---:|------|
+| A: 相机 = RGB888 | ✓ AI _raw 零拷贝 | ✓ | **✗** `support FMT_YVU420SP only!` | RTSP 启动报错 |
+| B: 相机 = NV21 | — | **✗** `input_type: RGB888, image format: YVU420SP` | ✓ | 模型检测报错 |
+| C: NV21 → cv2 RGB | ✓`to_bytes` 有数据 | **✗** 转出的帧无法注入 RTSP | ✓ | RTSP 无 push_frame API |
+| D: RGB888 → cv2 NV21 | ✓ | ✓ | **✗** 同上 | 同上 |
+| E: 重训模型 NV21 | ✗ MaixCDK YOLO11 只支持 `rgb`/`bgr` | — | — | 工具链不支持 |
 
-| 操作 | 会触发? | 说明 |
-|------|:---:|------|
-| `img.to_format(FMT_RGB888)` | **会** | 软件格式转换，NV21→RGB 未实现 |
-| `img.to_format(FMT_BGR888)` | **会** | 同上 |
-| `img.to_bytes()` | **会** | 内部疑似调用了 to_format |
-| `image2cv(img, ensure_bgr=True)` | **会** | 内部调 `to_format(BGR888)` |
-| `img.to_jpeg(quality)` | **不会** | 走 VPU 硬件 JPEG 编码器，NV21 为原生输入 |
-| `image2cv(img, ensure_bgr=False)` | **不会** | 纯 memcpy，不调用 to_format |
-| `display.show(NV21_img)` | **不会** | 走硬件 VO 控制器 |
-| `http.JpegStreamer.write(NV21_img)` | **不会** | 走 VPU 硬件编码 |
+### 关键实验证据
 
-### 可行绕过
+**实验 1**: NV21 相机 + 模型 `_raw=True`（2026-07-29）
+```
+RuntimeError: input_type: RGB888, image format: YVU420SP
+```
+→ MaixCDK SDK **不做**自动格式转换，格式不匹配直接抛异常。
 
-**NV21 → BGR 通过 JPEG 中介**：
-
+**实验 2**: `to_bytes()` 在 NV21 上（2026-07-29）
 ```python
-jpg_img = nv21_img.to_jpeg(quality=95)           # VPU 硬件编码，NV21 原生输入
-jpg_bytes = jpg_img.to_bytes()                    # JPEG 字节
-bgr = cv2.imdecode(np.frombuffer(jpg_bytes, np.uint8), cv2.IMREAD_COLOR)  # OpenCV 解码
+cam = camera.Camera(640, 640, FMT_YVU420SP)
+img = cam.read()
+data = img.to_bytes()   # → OK, len=614400 (640×640×1.5)
 ```
+→ `to_bytes()` 返回了正确的 NV21 字节数据。之前的 `[E] convert format failed, not support format 8` **仅是 stderr 噪音**，不影响数据完整性。
 
-代价：每帧 ~6ms（编码 ~4ms + 解码 ~2ms），FPS 从 35 降至 10+。
+**实验 3**: RTSP `bind_camera` 格式检查（2026-07-29）
+```
+bind camera failed! support FMT_YVU420SP only!
+```
+→ 固件硬限制，RGB888 相机无法绑定到 RTSP 服务。
+
+**实验 4**: MaixCDK `input_type` 枚举检查
+```cpp
+// F:\MaixPy-main\components\maix\...\maix_nn_yolo11.hpp
+if (input_type == "rgb")
+    _input_img_fmt = FMT_RGB888;
+else if (input_type == "bgr")
+    _input_img_fmt = FMT_BGR888;
+else
+    log::error("unknown input type: %s");
+```
+→ 仅支持 `rgb`/`bgr` 两种。`nv21` 不是合法值。
 
 ---
 
-## 3. RGB888 相机 — 最终选择
+## 2. 最优解：RGB888 + HTTP JPEG
 
-模型 `input_format = FMT_RGB888`，相机切为同格式后所有路径均走硬件：
-
-```python
-# camera.py
-self._cam = maix.camera.Camera(..., format=maix.image.Format.FMT_RGB888)
-
-# read_raw() — AI 推理用 BGR numpy
-np_img = maix.image.image2cv(img, ensure_bgr=False, copy=True)  # 纯 memcpy ~1ms
-self._last_frame = np_img[:, :, ::-1]                            # BGR view 零拷贝
-
-# AI 推理 — 零拷贝直通模型
-self._ai.detect(raw, _raw=True)   # 相机 Image 直传，格式一致无需转换
-```
-
-`_raw=True` 路径只对 RGB888 安全（格式与模型匹配）。**NV21 相机下切勿使用**，否则 `model.detect()` 内部触发 to_format 崩溃。
-
----
-
-## 4. 推流方案演变
-
-### RTSP → HTTP JPEG
-
-| | RTSP | HTTP JPEG (JpegStreamer) |
-|------|------|------|
-| 接入方式 | `bind_camera(cam)` | `stream.write(img)` 手动推送 |
-| 格式要求 | **NV21 only** | 任意格式（VPU 编码器内转换） |
-| 标注帧支持 | **不支持** (只推原始相机帧) | **支持** (推送已绘制的 `_display_frame`) |
-| 客户端 | VLC/ffplay `rtsp://` | 浏览器 `http://<ip>:8000/stream` |
-| 编码 | H.264 硬件 | JPEG 硬件 (VPU) |
-
-### 最终方案：HTTP JPEG
-
-```python
-# streamer.py — JpegStreamer 异步推流
-class JpegStreamer:
-    def push_frame(self, img):
-        with self._lock:
-            self._queue.appendleft(img)       # 仅压队列，~0ms
-
-    def _send_loop(self):                     # 后台线程消费
-        while self._is_running:
-            img = self._queue.pop()
-            self._server.write(img)           # VPU JPEG 编码 + HTTP 发送
-```
-
-### 数据流
+三条路口全堵死后，唯一可行路线：
 
 ```
-RGB888 Camera (640×640)
+RGB888 Camera (FMT_RGB888, 640×640)
   │
-  ├─ _last_raw (maix Image) ──→ _draw_overlays ──→ _display_frame
-  │                                                        │
-  │                                     ┌─────────────────┤
-  │                                     ↓                  ↓
-  ├─ image2cv → BGR numpy ──→ AI (_raw=True)    streamer.push_frame()
-  │                                                           │
-  └─ display.show() ←── _display_loop daemon               deque
-                                                              │
-                                                     _send_loop daemon
-                                                     http.JpegStreamer.write()
+  ├── _last_raw (maix Image) ──→ _draw_overlays() ──→ _display_frame
+  │                                    │                    │
+  │                          ┌────────┤          ┌────────┘
+  │                          ▼        │          ▼
+  ├── image2cv(ensure_bgr=False)      │   display.show()  ──→ LCD + IDE预览
+  │     [:,:,::-1] → BGR numpy       │   (daemon 线程, 帧跳 1/2)
+  │                          │        │
+  │     AI detect(_raw=True) │        │
+  │     零拷贝 RGB888 直通   │        │
+  │     NPU 推理 ~12ms       │        │
+  │                          │        │
+  └──────────────────────────┼────────┘
+                             ▼
+                     push_frame img
+                       deque(maxlen=1)
+                             │
+                             ▼
+                  _send_loop (daemon)
+                  JpegStreamer.write()
+                  VPU JPEG 硬件编码
+                  HTTP MJPEG :8000/stream
+                  (帧跳 1/4, 省 CPU)
 ```
+
+### 为什么是 JPEG
+
+| 推流方式 | 能否接收标注帧 | 相机格式约束 | 适用 |
+|------|:---:|------|:---:|
+| `rtsp.Rtsp.bind_camera()` | **否** (只绑 Camera) | NV21 only | ✗ |
+| `http.JpegStreamer.write()` | **是** (推任意 Image) | 任意格式 | ✓ |
+| `uvc` (USB) | 是 | USB 线缆 | 非 WiFi |
+
+### 性能参数
+
+| 指标 | 值 | 说明 |
+|------|:---:|------|
+| 管线 FPS | **60** | 优化后 |
+| AI 推理 | ~12ms (NPU) | `_raw=True` 零拷贝 |
+| BGR 转换 | ~1ms | `image2cv` memcpy + `[::-1]` view |
+| IDE 预览 | ~2ms (VPU JPEG q=10) + 10ms GIL 持 |
+| HTTP 推流 | ~8ms (VPU JPEG) | 帧跳后均摊 ~2ms |
+| 线程数 | 4 | 主循环 + 管线 + 显示 daemon + 推流 daemon |
+| 推流 URL | `http://<ip>:8000/stream` | 浏览器/VLC 直连 |
+| RTSP 备用 | 不可用 | — |
 
 ---
 
-## 5. GIL 序列化 — FPS 瓶颈的根本原因
+## 3. FPS 优化历程
 
-### 问题
-
-Python GIL 同一时刻只允许一个线程执行 Python 代码。`display.show()` 和 `JpegStreamer.write()` 在 C++ JPEG 编码期间**全程持 GIL**，阻塞管线线程。
-
-### FPS 演变
-
-| 阶段 | 架构 | FPS | 瓶颈 |
+| 阶段 | 改动 | FPS | 关键瓶颈 |
 |------|------|:---:|------|
-| 初始 | 无推流 | 35 | `display.show()` 在主循环持 GIL ~10ms |
-| 分离线程 | display.show() 移入 daemon | 35 | GIL 依旧序列化 |
-| 帧跳 show | 每 2 帧调一次 show | 43 | 隔帧释放但不稳定 |
-| 帧跳 show+write | 两者都做帧跳 | 35 | `time.sleep(0.016)` 主循环 |
-| **MAIN_LOOP_DELAY** | 16ms→2ms + 帧跳 | **60** | 接近瓶颈 |
+| 基线 | 无推流 | 35 | `display.show()` 在主循环持 GIL 10ms |
+| 分离线程 | show() → daemon | 35 | GIL 仍序列化 |
+| 帧跳 show | 每 2 帧调一次 show | 40 | `MAIN_LOOP_DELAY=16ms` |
+| **降 DELAY** | 16ms→2ms | **60** | 接近理论峰值 |
+| 降 IDE 画质 | `set_trans_image_quality(10)` | 60 | 稳定 |
+| 帧跳推流 | 每 4 帧推到 HTTP | 60 | 稳定 |
+| 队列压缩 | `maxlen=2→1` | 60 | 省 CMM |
 
-### 关键发现
+### GIL 瓶颈详解
 
-**`MAIN_LOOP_DELAY = 0.016`** (16ms) 是隐蔽瓶颈：
-
-```python
-# module_manager.py
-MAIN_LOOP_DELAY = 0.002   # 优化后
-```
-
-`time.sleep(0.016)` 虽然释放 GIL，但主循环恢复后会立即调用 `display_callback`，触发 `display.show()` 再次持 GIL。缩短 sleep 让主循环更快完成迭代、更快释放 GIL。
-
-### 最终架构
+Python GIL 序列化了三个线程的 JPEF 编码。`display.show()` 和 `JpegStreamer.write()` 在 VPU 编码期间**全程持 GIL**。帧跳（display 1/2, stream 1/4）使得大部分帧不触发 GIL 争抢。
 
 ```
-线程 1 — 管线 (vision_manager._process_loop)
-  process_all() → AI 推理 (NPU, 12ms, GIL 释放) → draw overlays → time.sleep(0)
-
-线程 2 — 显示 (_display_loop daemon)
-  每 _DISPLAY_EVERY_N 帧: draw exit icon → display.show(frame) → time.sleep(0.001)
-
-线程 3 — 推流 (_send_loop daemon)
-  每 _CAPTURE_EVERY_N 帧: dequeue → JpegStreamer.write(img) → time.sleep(0.005)
-
-主线程 — 控制 (run_main_loop)
-  coordinator.loop() → touch_handler → time.sleep(0.002)
-  不阻塞，不持 GIL 过久
-```
-
-**核心优化**：
-1. `display.show()` 从主线程剥离到独立 daemon（避免主循环卡住）
-2. 显示 + 推流都做帧跳（隔帧释放 GIL）
-3. `MAIN_LOOP_DELAY` 从 16ms 降至 2ms
-4. AI 推理走 `_raw=True` 零拷贝（BGR→RGB 转换、memcpy 全消除）
-5. IDE 预览 JPEG 质量降为 20（硬件编码更快）
-
----
-
-## 6. 关键代码片段
-
-### camera.py — RGB888 格式 + 公开属性
-
-```python
-self._cam = maix.camera.Camera(..., format=maix.image.Format.FMT_RGB888)
-self._last_raw: Optional[maix.image.Image] = None
-
-@property
-def last_raw(self):
-    """The most recent raw maix Image frame (RGB888)."""
-    return self._last_raw
-```
-
-### ai_inference_processor.py — 零拷贝推理
-
-```python
-raw = getattr(camera, "last_raw", None)
-if raw is not None:
-    detections = self._ai.detect(raw, _raw=True)   # RGB888 零拷贝直通
-else:
-    detections = self._ai.detect(frame)             # 回退 BGR numpy
-```
-
-### vision_manager.py — 帧跳推流
-
-```python
-_CAPTURE_EVERY_N = 2
-
-self._capture_seq += 1
-if self._capture_sink is not None and self._capture_seq % self._CAPTURE_EVERY_N == 0:
-    self._capture_sink(raw_img)
-```
-
-### main.py — 统一初始化
-
-```python
-def _init_streamer(vm):
-    s = get_streamer()
-    if s and vm:
-        vm.set_capture_sink(s.push_frame)
-        s.start_async()
+时间轴 (优化后, 60 FPS):
+管线:    [AI:12ms]──[draw:0.5ms]──[AI:12ms]──[draw:0.5ms]──[AI:12ms]
+显示:                    [show:10ms GIL]                           [show:10ms]
+推流:                                                           [write:8ms]
+        ←────────── 27ms, 含 2 帧管线 ──────────→
 ```
 
 ---
 
-## 7. `add_channel` 的正确用法
+## 4. 代码架构
 
-`cam.add_channel(w, h)` 创建一个**同格式**的独立相机读取通道。用于多个消费者同时读帧（如 RTSP 推流 + 管线推理），**不能**用于格式转换。
+### 线程模型
 
-```python
-cam = camera.Camera(..., format=FMT_YVU420SP)
-cam2 = cam.add_channel(disp_w, disp_h)  # 第二通道，同格式 NV21
-server.bind_camera(cam)                  # RTSP 绑原始 cam
-img = cam2.read()                        # 管线读通道
-```
+| 线程 | 线程名 | 职责 | 阻塞操作 |
+|------|------|------|:---:|
+| **1\. 主循环** | `main_loop` | coordinator.loop() + touch_handler + WDT feed | `time.sleep(0.002)` |
+| **2\. 视觉管线** | `vision_processing` | `process_all()` → AI detect → `_update_display_frame()` | NPU (GIL 释放) |
+| **3\. 显示 daemon** | `_display_loop` | `get_display_frame()` → `display.show()` | VPU JPEG (GIL 持) |
+| **4\. 推流 daemon** | `_run` (JpegStreamer) | `dequeue` → `write()` HTTP MJPEG | VPU JPEG (GIL 持) |
 
-当不再使用 `bind_camera` 后（改用 HTTP JPEG 推流），不再需要 channel 分离。
+### 关键文件
+
+| 文件 | 角色 |
+|------|------|
+| `framework/hal/platforms/maixcam2/camera.py` | `FMT_RGB888` 相机, `last_raw` 属性, `image2cv` BGR 转换 |
+| `modules/zw_opencv_module/vision_manager.py` | 管线线程, `_update_display_frame()`, `_capture_sink()` 帧跳推流 |
+| `modules/zw_opencv_module/processors/ai_inference_processor.py` | `_raw=True` 零拷贝 AI 推理 |
+| `modules/zw_wifi_stream/streamer.py` | `JpegStreamer`: async queue + HTTP JPEG MJPEG 推流 |
+| `app/main.py` | 入口: `_init_streamer()`, `_build_callbacks()`, touch/display 线程管理 |
+| `framework/module_manager.py` | `MAIN_LOOP_DELAY = 0.002` |
+
+### frame-skip 策略
+
+| 组件 | 常量 | 值 | 原因 |
+|------|------|:---:|------|
+| 显示 LCD + IDE | `_DISPLAY_EVERY_N` | 2 | VPU JPEG 编码持 GIL ~10ms |
+| 推流 HTTP MJPEG | `_CAPTURE_EVERY_N` | 4 | VPU JPEG 编码持 GIL ~8ms |
+| 推流队列 | `_QUEUE_MAX` | 1 | 仅缓存最新帧 |
 
 ---
 
-## 8. 推流 URL 对照
+## 5. 资源使用排查
 
-| 方式 | URL | 客户端 |
-|------|-----|--------|
-| Maix Vision IDE | 自动 (USB RNDIS) | Maix Vision 软件 |
-| RTSP `bind_camera` | `rtsp://<ip>:8554/live` | VLC, ffplay |
-| HTTP JPEG `JpegStreamer` | `http://<ip>:8000/stream` | 浏览器, Python requests |
-| `display.set_trans_image_quality(20)` | IDE 预览 JPEG 质量 | — (启动时一行) |
+### VPU
+
+VPU 是独立硬件，JPEG 编码过程 **不消耗 CPU 算力**。但 C++ 绑定在等待 VPU 完成时**持 GIL 不释放**，阻塞其他 Python 线程。
+
+### CPU 消耗来源
+
+| 操作 | CPU | 频率 |
+|------|:---:|:---:|
+| `image2cv` memcpy 1.2MB | ~1ms/帧 | 每帧 |
+| `context switch` 4 线程间 | ~0.1ms | 持续 |
+| `coordinator.loop()` Python 逻辑 | ~0.2ms | 500Hz |
+| `touch.read()` 硬件读取 | ~0.1ms | 500Hz |
+
+### 内存
+
+| 对象 | 大小 |
+|------|:---:|
+| RGB888 相机帧 (DMA 缓冲) | 640×640×3 = **1.2MB** ×3 buff = 3.6MB CMM |
+| `image2cv` numpy 副本 | 1.2MB (堆) |
+| LCD framebuffer | 480×640×4 = 1.2MB |
+| HTTP server + JPEG buffer | ~2MB CMM |
+| YOLO11n 模型 CMM | ~20MB CMM |
+| **总计估算** | **~30MB / 256MB CMM** (12% 占用) |
 
 ---
 
-## 9. 经验总结
+## 6. 已探索但不可行的替代方案
 
-1. **相机格式必须匹配模型 input_format()** — 任何不匹配都会引入转换链，且固件对 NV21 的软件转换支持非常有限
-2. **JPEG 硬件编码器是 NV21→JPEG 的安全通路** — `to_jpeg()` 不走 `to_format()`，不触发 format 8 错误
-3. **GIL 是 Python 多线程的性能天花板** — `display.show()` / `JpegStreamer.write()` 等 C++ 调用持 GIL 时间需精确控制
-4. **帧跳是低成本 GIL 优化手段** — 简单且有效，不引入额外同步开销
-5. **`MAIN_LOOP_DELAY` 影响全局吞吐** — 看似无害的 sleep 可能是隐蔽的瓶颈
-6. **跨模块私有属性访问 (`_attr`) 增加耦合** — 用 property 公开化，减少脆弱性
-7. **推流方式应按需选择** — RTSP/H.264 适合高画质低码率，HTTP JPEG 适合标注帧推流；Maix Vision IDE USB 预览足以覆盖调试场景
+### RTSP + NV21 相机 + 模型 NV21
+- 前提：模型 `input_type=nv21`
+- 验证：MaixCDK YOLO11 只支持 `rgb`/`bgr`，**不可行**
+
+### NV21 相机 + SDK 自动 NV21→RGB
+- 前提：`model.detect(NV21_image)` 正常推理
+- 验证：SDK 不自动转换，直接抛 `RuntimeError`，**不可行**
+
+### RGB888 → cv2 NV21 → RTSP
+- 前提：RTSP 有 `push_frame` API
+- 验证：`rtsp.Rtsp` 无任何手动帧推送接口，**不可行**
+
+### NV21 相机 + `to_jpeg` + `imdecode` → BGR
+- 验证：`to_jpeg(95)` VPU 编码 ~4ms + `imdecode` ~2ms = 6ms/帧
+- 可行但 FPS 仅 ~10+，**被否决**
+
+### display.show() → send_to_maixvision() 截获
+- Maix Vision IDE 走私有 CommProtocol 协议，无 HTTP 端口
+- 无法被外部程序拦截，**不可行**
+
+---
+
+## 7. 经验总结
+
+1. **三色约束无法调和**：单 Camera 对象 = 单格式。设计之初应确认所有下游消费者（RTSP、模型、显示）能否接受同一格式。
+2. **MaixCDK 的格式支持极有限**：YOLO11 模型仅 `rgb`/`bgr`，无 `nv21`。与 RTSP 的 NV21-only 约束结合形成死局。
+3. **GIL 是 Python 多线程的天花板**：`display.show()` 和 `JpegStreamer.write()` 在 C++ 编码期间**全程持 GIL**。帧跳是唯一低成本缓解手段。
+4. **`MAIN_LOOP_DELAY` 是隐蔽瓶颈**：从 16ms 降至 2ms 收益 15 FPS。
+5. **跨模块私有属性访问 (`_attr`) 脆弱**：公开 property 化 (`last_raw`) 后大幅减少耦合。
+6. **JPEG vs H.264 对 CPU 差异不大**：两者都走 VPU 硬件编码，真正的开销在 Python→C++ 调用路径的 GIL 持。#
+
