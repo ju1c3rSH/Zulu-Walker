@@ -27,5 +27,8 @@ pendulum:
   length_cm: 25.0
 
 streaming:
-  wifi_ssid: ""
-  wifi_password: ""
+  wifi_mode: "ap"           # "ap" | "sta" | "off"
+  ap_ssid: "Zulu-Walker"
+  ap_password: "88888888"
+  sta_ssid: ""
+  sta_password: ""
