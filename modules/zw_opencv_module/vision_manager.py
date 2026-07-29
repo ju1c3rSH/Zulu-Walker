@@ -50,8 +50,9 @@ class VisionManager:
         self._wdt_feed = lambda: None
         self._wdt_count = 0
 
-        self._streamer = None
-        self._stream_tick = 0
+        self._capture_sink: callable = None
+        self._capture_seq: int = 0
+        self._CAPTURE_EVERY_N: int = 2
 
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
@@ -59,8 +60,8 @@ class VisionManager:
     def set_wdt_feed(self, feed_fn) -> None:
         self._wdt_feed = feed_fn
 
-    def set_streamer(self, streamer) -> None:
-        self._streamer = streamer
+    def set_capture_sink(self, sink: callable) -> None:
+        self._capture_sink = sink
 
     def start(self) -> None:
         if self._running:
@@ -174,9 +175,6 @@ class VisionManager:
 
         return None, all_results, any_fresh
 
-    def compose_frame(self):
-        return self._display_frame
-
     def get_display_frame(self):
         return self._display_frame
 
@@ -184,7 +182,7 @@ class VisionManager:
         if not self._ai or not self._ai.loaded:
             return
         for pid, pipe in list(self._pipelines.items()):
-            raw_img = getattr(pipe.camera, "_last_raw", None)
+            raw_img = getattr(pipe.camera, "last_raw", None)
             if raw_img is None:
                 continue
             fps = self.get_pipeline_fps(pid)
@@ -195,9 +193,9 @@ class VisionManager:
 
             self._draw_overlays(raw_img, pid, fps, detections)
             self._display_frame = raw_img
-            self._stream_tick += 1
-            if self._streamer is not None and self._stream_tick % 2 == 0:
-                self._streamer.push_frame(raw_img)
+            self._capture_seq += 1
+            if self._capture_sink is not None and self._capture_seq % self._CAPTURE_EVERY_N == 0:
+                self._capture_sink(raw_img)
             return
 
     def _draw_overlays(self, img, pipeline_id: str, fps: float, detections) -> None:
@@ -357,31 +355,3 @@ class VisionManager:
     def release(self) -> None:
         self.stop()
         self._pipelines.clear()
-
-
-class _LegacyCameraManagerShim:
-    def __init__(self, vision_manager: VisionManager) -> None:
-        self._vm = vision_manager
-
-    def enable_task(self, camera_id: str, task_name: str) -> bool:
-        return self._vm.enable_task(camera_id, task_name)
-
-    def disable_task(self, camera_id: str, task_name: str) -> bool:
-        return self._vm.disable_task(camera_id, task_name)
-
-    def get_all_results(self) -> Dict:
-        return self._vm.get_all_results()
-
-    def add_result_callback(self, callback) -> None:
-        self._vm.add_result_callback(callback)
-
-    def remove_result_callback(self, callback) -> None:
-        self._vm.remove_result_callback(callback)
-
-    @property
-    def cameras(self) -> Dict:
-        return {}
-
-
-class CameraManager:
-    pass

@@ -49,7 +49,7 @@ class AIInferenceProcessor(Processor):
 
         try:
             camera = (context or {}).get("camera")
-            raw = getattr(camera, "_last_raw", None)
+            raw = getattr(camera, "last_raw", None)
             if raw is not None:
                 detections = self._ai.detect(raw, _raw=True)
             else:
