@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 from utils.log_util import log_print
+from typing import Optional
 
 _DISPLAY_EVERY_N = 2
 _ICON_SIZE = 48
@@ -67,12 +68,13 @@ def _load_exit_icon():
         return None
 
 
-def _build_callbacks(manager, machine):
+def _build_callbacks(manager, machine, coordinator):
     """Returns (main_callback, start_display_thread).
 
     main_callback: touch/input handling (~0ms), runs in main loop.
     display thread: display.show() only, runs independently.
     exit icon is drawn by VisionManager (via set_exit_icon).
+    calibrate button is drawn by VisionManager and handled here.
     """
     _last_seen_frame = None
 
@@ -86,8 +88,10 @@ def _build_callbacks(manager, machine):
     _touch_down = False
     _touch_x = _touch_y = 0
 
-    def _in_btn(x, y, bx, by):
-        return bx - 4 <= x <= bx + _ICON_SIZE + 4 and by - 4 <= y <= by + _ICON_SIZE + 4
+    def _in_btn(x, y, bx, by, size=None):
+        if size is None:
+            size = _ICON_SIZE
+        return bx - 4 <= x <= bx + size + 4 and by - 4 <= y <= by + size + 4
 
     def main_callback():
         """Touch handling only — fast (~0ms), no JPEG encoding, no GIL hog."""
@@ -134,6 +138,17 @@ def _build_callbacks(manager, machine):
                                     if _in_btn(_touch_x, _touch_y, bx, by):
                                         import os
                                         os._exit(0)
+                                    # Check calibrate button
+                                    calib_rect = vm.get_calib_button_rect()
+                                    if calib_rect is not None:
+                                        cbx, cby, cbw, _ = calib_rect
+                                        if _in_btn(_touch_x, _touch_y, cbx, cby, size=cbw):
+                                            if coordinator.calibrate_origin_from_ball():
+                                                bbox = coordinator.get_last_ball_bbox()
+                                                if bbox:
+                                                    vm.trigger_calib_flash(bbox)
+                                                vm.set_calib_button_visible(False)
+                                                _persist_calibration(coordinator.get_rail_calibration())
                     _touch_down = False
             except Exception:
                 pass
@@ -287,6 +302,66 @@ def _start_beacon() -> None:
     t.start()
 
 
+def _load_calib_icon():
+    """Load calibrate button icon from assets/calibrate.png."""
+    icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "calibrate.png")
+    try:
+        from maix import image as _mi
+        icon = _mi.load(icon_path)
+        if icon is not None:
+            w = icon.width() * 48 // icon.height()
+            if w % 2:
+                w += 1
+            return icon.resize(w, 48)
+    except Exception:
+        return None
+
+
+def _load_persisted_calibration(cfg: dict):
+    """Load RailCalibration from project_config.yaml if persisted."""
+    from modules.zw_opencv_module.detectors.pendulum_calibrator import RailCalibration
+    data = cfg.get("pendulum", {}).get("rail_calibration", None)
+    if data and data.get("calibrated"):
+        try:
+            return RailCalibration.from_dict(data)
+        except Exception:
+            pass
+    return None
+
+
+def _run_phase1_calibration(camera):
+    """Phase 1: grab one frame, run contour-based calibration.
+    Returns RailCalibration or None on failure."""
+    from modules.zw_opencv_module.detectors.pendulum_calibrator import PendulumCalibrator
+    try:
+        frame = camera.read()
+        if frame is None:
+            return None
+        calib = PendulumCalibrator(frame_w=frame.shape[1], frame_h=frame.shape[0])
+        result = calib.calibrate(frame)
+        return result if result.calibrated else None
+    except Exception:
+        return None
+
+
+def _persist_calibration(calib):
+    """Write RailCalibration to project_config.yaml, preserving existing content."""
+    import yaml
+    try:
+        with open("project_config.yaml", "r") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception:
+        cfg = {}
+    if "pendulum" not in cfg:
+        cfg["pendulum"] = {}
+    cfg["pendulum"]["rail_calibration"] = calib.to_dict()
+    try:
+        with open("project_config.yaml", "w") as f:
+            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    except Exception:
+        pass
+
+
 def main():
     log_print("0xfb709394")
 
@@ -307,6 +382,7 @@ def main():
 
     from framework.event_bus import EventBus
     from app.coordinator import Ti2026Coordinator
+    from framework.hal.camera_hub import CameraHub
     bus = EventBus()
     coordinator = Ti2026Coordinator(bus)
     coordinator.set_wdt_feed(wdt_feed)
@@ -350,7 +426,33 @@ def main():
     log_print(f"ppc:{pixels_per_cm} w:{cam_w} h:{cam_h}")
     coordinator.set_pendulum_calibration(pixels_per_cm, cam_w, cam_h)
 
-    main_callback, start_display_thread = _build_callbacks(manager, machine)
+    # --- Pendulum rail calibration ---
+    rail_calib = _load_persisted_calibration(_cfg)
+    if rail_calib is not None:
+        coordinator.set_rail_calibration(rail_calib)
+        log_print(f"[CALIB] Loaded persisted: angle={rail_calib.angle_rad:.4f} "
+                  f"origin=({rail_calib.origin_x:.0f},{rail_calib.origin_y:.0f})")
+    else:
+        try:
+            cam = CameraHub.instance().get("main")
+            if cam is not None:
+                calib = _run_phase1_calibration(cam)
+                if calib is not None:
+                    coordinator.set_rail_calibration(calib)
+                    calib_icon = _load_calib_icon()
+                    if vm is not None and calib_icon is not None:
+                        vm.set_calib_button(calib_icon, _ICON_SIZE, _ICON_MARGIN)
+                        vm.set_calib_button_visible(True)
+                    log_print(f"[CALIB] Phase1 done: angle={calib.angle_rad:.4f} "
+                              f"origin=({calib.origin_x:.0f},{calib.origin_y:.0f})")
+                else:
+                    log_print("[CALIB] Phase1 FAILED, fallback to horizontal axis")
+            else:
+                log_print("[CALIB] No camera available, skip calibration")
+        except Exception as e:
+            log_print(f"[CALIB] Phase1 error: {e}")
+
+    main_callback, start_display_thread = _build_callbacks(manager, machine, coordinator)
 
     coordinator.start()
     start_display_thread()
