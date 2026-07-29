@@ -13,6 +13,7 @@ _LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "de
 _LOG_QUEUE: queue.Queue = queue.Queue(maxsize=2048)
 _WRITER_THREAD: Optional[threading.Thread] = None
 _SENTINEL: object = object()
+_DROP_COUNT: int = 0  # queue full 丢包累计计数，GIL 保护，无需额外 Lock
 
 try:
     os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
@@ -50,6 +51,29 @@ def _writer_loop() -> None:
         except Exception:
             pass
 
+        # 队列排空后，若发生过丢包，由 writer 线程统一输出警告。
+        # 这样 log_print 调用者完全零 I/O，对 MaixCAM2 视觉管线无任何阻塞风险。
+        if _DROP_COUNT > 0 and _LOG_QUEUE.empty():
+            drops = _DROP_COUNT
+            _DROP_COUNT = 0
+            warn_ts = datetime.now().strftime("[%H:%M:%S] ")
+            warn = f"{warn_ts}[WARN] log_print queue full, dropped {drops} messages\n"
+            try:
+                with open(_LOG_FILE, "a", encoding="utf-8") as f:
+                    f.write(warn)
+                    f.flush()
+            except Exception:
+                pass
+            sys.__stdout__.write(warn)
+            sys.__stdout__.flush()
+            try:
+                from utils.debug_console import DebugConsole
+                dc = DebugConsole()
+                dc.log(warn.rstrip("\n"))
+                dc.set("log_drop", str(drops))
+            except Exception:
+                pass
+
         _LOG_QUEUE.task_done()
 
 
@@ -84,7 +108,9 @@ def log_print(msg: str = "", *args, **kwargs) -> None:
     try:
         _LOG_QUEUE.put_nowait((line, msg))
     except queue.Full:
-        pass
+        # 仅计数，零 I/O，不阻塞调用者。
+        # MaixCAM2 等嵌入式设备上任何 I/O 阻塞都可能影响视觉管线帧率。
+        _DROP_COUNT += 1
 
 
 class LoggerFactory:
