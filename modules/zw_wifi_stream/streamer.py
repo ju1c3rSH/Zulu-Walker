@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import sys
 import threading
+from collections import deque
 from typing import Optional
 
+_QUEUE_MAX = 2
 
-class RtspStreamer:
+
+class JpegStreamer:
     def __init__(self) -> None:
-        self._raw_cam: Optional[object] = None
         self._server: Optional[object] = None
         self._is_running: bool = False
         self._url: str = ""
         self._thread: Optional[threading.Thread] = None
-
-    def setup_camera(self, raw_cam) -> None:
-        self._raw_cam = raw_cam
-        print("[RTSP] camera set (%dx%d)" % (raw_cam.width(), raw_cam.height()))
-        sys.stdout.flush()
+        self._send_thread: Optional[threading.Thread] = None
+        self._queue: deque = deque(maxlen=_QUEUE_MAX)
+        self._lock: threading.Lock = threading.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -28,32 +28,53 @@ class RtspStreamer:
 
     def start_async(self) -> None:
         if self._thread is not None and self._thread.is_alive():
-            print("[RTSP] already starting")
             return
         self._thread = threading.Thread(target=self._do_start, daemon=True)
         self._thread.start()
 
     def _do_start(self) -> None:
-        if self._raw_cam is None:
-            print("[RTSP] no camera, abandoned")
-            sys.stdout.flush()
-            return
-
         try:
-            from maix import rtsp
-            self._server = rtsp.Rtsp()
-            self._server.bind_camera(self._raw_cam)
-            self._server.start()
-            self._url = self._server.get_url()
+            from maix import http
+            html = '<html><body><img src="/stream" /></body></html>'
+            srv = http.JpegStreamer()
+            srv.set_html(html)
+            srv.start()
+            self._server = srv
+            self._url = "http://{}:{}/".format(srv.host(), srv.port())
             self._is_running = True
-            print("[RTSP] %s" % self._url)
+            print("[HTTP] %s" % self._url)
             sys.stdout.flush()
         except Exception as e:
-            print("[RTSP] start failed: %s" % e)
+            print("[HTTP] start failed: %s" % e)
             sys.stdout.flush()
             self._server = None
-            self._url = ""
             self._is_running = False
+            return
+
+        self._send_thread = threading.Thread(target=self._send_loop, daemon=True)
+        self._send_thread.start()
+
+    def push_frame(self, img) -> None:
+        if not self._is_running or self._server is None:
+            return
+        with self._lock:
+            self._queue.appendleft(img)
+
+    def _send_loop(self) -> None:
+        while self._is_running:
+            with self._lock:
+                try:
+                    img = self._queue.pop()
+                except IndexError:
+                    img = None
+            if img is not None:
+                try:
+                    self._server.write(img)
+                except Exception:
+                    pass
+            else:
+                import time
+                time.sleep(0.005)
 
     def stop(self) -> None:
         self._is_running = False
@@ -64,6 +85,5 @@ class RtspStreamer:
                 pass
             self._server = None
         self._url = ""
-        self._raw_cam = None
-        print("[RTSP] stopped")
+        print("[HTTP] stopped")
         sys.stdout.flush()

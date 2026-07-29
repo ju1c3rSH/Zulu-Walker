@@ -214,6 +214,8 @@ def main():
     streamer = get_streamer()
     if streamer:
         coordinator.set_streamer(streamer)
+        if vm:
+            vm.set_streamer(streamer)
 
     pixels_per_cm = _cfg.get("pendulum", {}).get("pixels_per_cm", 25.6)
     cam_cfg = _cfg.get("cameras", [{}])[0]
