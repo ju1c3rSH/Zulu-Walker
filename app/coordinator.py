@@ -1,13 +1,13 @@
 """
-Line-following mission coordinator (v3.0 master-slave protocol).
+Ti2026 mission coordinator (v3.0 master-slave protocol).
 
 Bridges vision results -> UART data streaming for MSPM0 master.
 Slave role: waits for CMD_REQUEST/CMD_STOP from master, streams data when active.
+Manages VisionState for operational mode tracking and PC recording signaling.
 """
 import threading
 import time
-from collections import deque
-from typing import Optional, Callable, Deque
+from typing import Optional, Callable
 
 from modules.zw_opencv_module.vision_manager import VisionManager
 from utils.log_util import log_print
@@ -25,7 +25,6 @@ from modules.zw_uart_module.events import (
     CmdRequestEvent,
     CmdStopEvent,
 )
-from app.line_follow_sm import Ti2026StateMachine
 from modules.zw_uart_module.protocol import (
     build_cmd_ack_frame,
     build_cmd_nack_frame,
@@ -45,6 +44,7 @@ from modules.zw_uart_module.protocol import (
 )
 from modules.zw_opencv_module.processors.base import VisionResult
 from modules.zw_opencv_module.detectors.pendulum_calibrator import RailCalibration
+from app.vision_state import VisionState
 
 
 _CMD_TIMEOUT = 5.0
@@ -61,18 +61,15 @@ class Ti2026Coordinator:
 
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
-        self.state_machine = Ti2026StateMachine()
 
+        self._vision_state = VisionState.IDLE
+        self._recording_test_id: int = 0
         self._test_id: int = 0
-        self._last_sm_state: str = self.state_machine.current_state
         self._record_cmd_sender: Optional[Callable] = None
 
         self._uart_sender: Optional[callable] = None
         self._vision_manager: Optional[VisionManager] = None
         self._ai = None
-
-        self._sm_queue: Deque[Callable] = deque()
-        self._sm_lock = threading.Lock()
 
         # Master-slave streaming state
         self._streaming_type = 0
@@ -162,9 +159,38 @@ class Ti2026Coordinator:
                 return False
         return False
 
-    def _enqueue_sm(self, fn: Callable) -> None:
-        with self._sm_lock:
-            self._sm_queue.append(fn)
+    @property
+    def vision_state(self) -> VisionState:
+        return self._vision_state
+
+    def change_state(self, new_state: VisionState) -> None:
+        """线程安全的状态转换，自动处理录制生命周期。"""
+        if self._vision_state == new_state:
+            return
+        with self._cmd_lock:
+            old_state = self._vision_state
+            log_print(f"[State] {old_state.name} \u2192 {new_state.name}")
+
+            if old_state == VisionState.STREAMING and new_state != VisionState.STREAMING:
+                self._stop_recording()
+            elif new_state == VisionState.STREAMING and old_state != VisionState.STREAMING:
+                self._start_recording()
+
+            self._vision_state = new_state
+
+    def _start_recording(self) -> None:
+        self._test_id += 1
+        self._recording_test_id = self._test_id
+        if self._vision_manager:
+            self._vision_manager.set_test_id(self._test_id)
+        if self._record_cmd_sender:
+            self._record_cmd_sender("start", self._test_id)
+
+    def _stop_recording(self) -> None:
+        if self._recording_test_id != 0:
+            if self._record_cmd_sender:
+                self._record_cmd_sender("stop", self._recording_test_id)
+            self._recording_test_id = 0
 
     def loop(self) -> None:
         if self._vision_manager:
@@ -175,28 +201,6 @@ class Ti2026Coordinator:
             if now - self._last_fps_time >= 1.0:
                 self._last_fps = self._vision_manager.get_pipeline_fps("cam_main")
                 self._last_fps_time = now
-
-        with self._sm_lock:
-            while self._sm_queue:
-                self._sm_queue.popleft()()
-        self.state_machine.run_to_completion()
-
-        current_state = self.state_machine.current_state
-        if current_state != self._last_sm_state:
-            old_state = self._last_sm_state
-            self._last_sm_state = current_state
-            if self._record_cmd_sender:
-                try:
-                    if current_state == self.state_machine.States.LINE_FOLLOW:
-                        self._test_id += 1
-                        if self._vision_manager:
-                            self._vision_manager.set_test_id(self._test_id)
-                        self._record_cmd_sender("start", self._test_id)
-                    elif (old_state == self.state_machine.States.LINE_FOLLOW and
-                          current_state != self.state_machine.States.LINE_FOLLOW):
-                        self._record_cmd_sender("stop", self._test_id)
-                except Exception:
-                    pass
 
         self._wdt_feed()
         self._wdt_count += 1
@@ -211,6 +215,7 @@ class Ti2026Coordinator:
                     self._streaming_type = 0
                     self._master_linked = False
                     streaming = 0
+                    self.change_state(VisionState.IDLE)
                 else:
                     payload = self._build_stream_payload(streaming)
                     if payload:
@@ -295,6 +300,8 @@ class Ti2026Coordinator:
         frame = build_cmd_ack_frame(data_type, 60, payload_size)
         self._send(frame)
 
+        self.change_state(VisionState.STREAMING)
+
     def _on_cmd_stop(self, event: CmdStopEvent) -> None:
         now = time.monotonic()
         with self._cmd_lock:
@@ -305,13 +312,13 @@ class Ti2026Coordinator:
         frame = build_cmd_ack_frame(0x00, 0, 0)
         self._send(frame)
 
+        self.change_state(VisionState.IDLE)
+
     def _on_emergency(self, event: EmergencyStopEvent) -> None:
-        captured_reason = event.reason
         with self._cmd_lock:
             self._streaming_type = 0
-        self._enqueue_sm(
-            lambda: self.state_machine.set_error(99, f"Emergency stop: reason={captured_reason}")
-        )
+        self.change_state(VisionState.ERROR)
+        log_print(f"[Emergency] Emergency stop: reason={event.reason}")
 
     # ===== streaming payload builders =====
 
@@ -341,7 +348,7 @@ class Ti2026Coordinator:
             pe_x = line.get("percent_error_x", 0)
             pe_y = line.get("percent_error_y", 0)
             found = 1 if line.get("target_found", False) else 0
-            state = self.state_machine.current_state_id
+            state = int(self._vision_state)
             return f"pe_x={pe_x} pe_y={pe_y} found={found} state={state}"
 
         if data_type == DATA_TARGET_POSITION:
@@ -397,7 +404,7 @@ class Ti2026Coordinator:
         pe_y = data.get("percent_error_y", 0)
         target_found = data.get("target_found", False)
         flags = 1 if target_found else 0
-        state = self.state_machine.current_state_id
+        state = int(self._vision_state)
         return (pe_x.to_bytes(2, 'little', signed=True) +
                 pe_y.to_bytes(2, 'little', signed=True) +
                 bytes([flags, state]))
@@ -427,7 +434,7 @@ class Ti2026Coordinator:
         data = self._latest_ai
         detections = data.get("detections", [])
         count = len(detections)
-        visual_state = 0
+        visual_state = int(self._vision_state)
         visual_flags = 0
         return (bytes([visual_state, visual_flags]) +
                 count.to_bytes(2, 'little'))
@@ -507,8 +514,8 @@ class Ti2026Coordinator:
             linked = self._master_linked
         detections = self._latest_ai.get("detections", [])
         return {
-            "state": self.state_machine.current_state,
-            "state_id": self.state_machine.current_state_id,
+            "state": self._vision_state.name,
+            "state_id": int(self._vision_state),
             "link_active": linked,
             "det_count": len(detections),
             "fps": self._last_fps,
