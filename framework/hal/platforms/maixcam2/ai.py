@@ -173,8 +173,8 @@ class MaixCam2AI:
         Returns a list of Detection dataclasses.  Returns an empty list
         when no model is loaded or inference fails.
         """
-        conf_th = kwargs.pop("conf_th", 0.48)
-        iou_th = kwargs.pop("iou_th", 0.5)
+        conf_th = kwargs.pop("conf_th", 0.20)
+        iou_th = kwargs.pop("iou_th", 0.4)
 
         _is_raw = kwargs.pop("_raw", False)
 
