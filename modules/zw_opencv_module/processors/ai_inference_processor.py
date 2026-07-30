@@ -107,6 +107,8 @@ class AIInferenceProcessor(Processor):
             result_data={
                 "detections": detections,
                 "segments": segment_dicts,
+                "infer_fps": getattr(self._ai, "infer_fps", 0.0),
+                "infer_avg_ms": getattr(self._ai, "infer_avg_ms", 0.0),
             },
             success=True,
         )

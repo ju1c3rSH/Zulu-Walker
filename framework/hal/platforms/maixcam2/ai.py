@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import logging
+import time
 from typing import Optional, Union
 
 import numpy as np
@@ -27,6 +28,12 @@ class MaixCam2AI:
         self._model: Optional[Union[maix.nn.YOLO11, maix.nn.Classifier, maix.nn.HandLandmarks, maix.nn.NN]] = None
         self._model_type: str = ""
         self._model_path: str = ""
+
+        self._infer_count: int = 0
+        self._infer_total_us: int = 0
+        self._infer_window_start: float = time.monotonic()
+        self._infer_fps: float = 0.0
+        self._infer_avg_ms: float = 0.0
 
     # ------------------------------------------------------------------ #
     #  Registry API
@@ -156,6 +163,14 @@ class MaixCam2AI:
     def model_path(self) -> str:
         return self._model_path
 
+    @property
+    def infer_fps(self) -> float:
+        return self._infer_fps
+
+    @property
+    def infer_avg_ms(self) -> float:
+        return self._infer_avg_ms
+
     # ------------------------------------------------------------------ #
     #  Inference
     # ------------------------------------------------------------------ #
@@ -201,10 +216,23 @@ class MaixCam2AI:
             return []
 
         try:
+            t0 = time.perf_counter_ns()
             objects = self._model.detect(img, conf_th=conf_th, iou_th=iou_th, **kwargs)
+            t_ns = time.perf_counter_ns() - t0
         except Exception as e:
             logger.error("Model detect() failed: %s", e)
             return []
+
+        t_us = t_ns // 1000
+        self._infer_count += 1
+        self._infer_total_us += t_us
+        elapsed = time.monotonic() - self._infer_window_start
+        if elapsed >= 1.0:
+            self._infer_fps = self._infer_count / elapsed
+            self._infer_avg_ms = (self._infer_total_us / self._infer_count) / 1000.0
+            self._infer_count = 0
+            self._infer_total_us = 0
+            self._infer_window_start = time.monotonic()
 
         # Post-filter: some models don't fully honor conf_th internally
         objects = [o for o in objects if o.score >= conf_th]
