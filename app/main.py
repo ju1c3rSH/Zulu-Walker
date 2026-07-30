@@ -263,18 +263,23 @@ def _init_wifi(cfg: dict):
         return None
 
 
-def _send_record_cmd(cmd: str, test_id: int) -> None:
+def _send_record_cmd(cmd: str, test_id: int, target_ip: str = None) -> None:
     try:
         import socket
         import json
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             msg = json.dumps({"cmd": cmd, "test_id": test_id})
             encoded = msg.encode()
-            for _ in range(3):
-                s.sendto(encoded, ("255.255.255.255", 5000))
-                time.sleep(0.05)
+            if target_ip:
+                for _ in range(3):
+                    s.sendto(encoded, (target_ip, 5000))
+                    time.sleep(0.05)
+            else:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                for _ in range(3):
+                    s.sendto(encoded, ("255.255.255.255", 5000))
+                    time.sleep(0.05)
         finally:
             s.close()
     except Exception:
@@ -285,7 +290,9 @@ def _setup_record_signaling(coordinator, cfg) -> None:
     streaming = cfg.get("streaming", {})
     mode = streaming.get("wifi_mode", "off")
     if mode in ("ap", "sta"):
-        coordinator.set_record_cmd_sender(_send_record_cmd)
+        coordinator.set_record_cmd_sender(
+            lambda cmd, tid, target_ip=None: _send_record_cmd(cmd, tid, target_ip)
+        )
 
 
 def _start_beacon() -> None:
