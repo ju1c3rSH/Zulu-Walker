@@ -99,6 +99,13 @@ class Ti2026Coordinator:
         self._rail_calib: Optional[RailCalibration] = None
         self._origin_from_ball: bool = False
 
+        # ball velocity tracking (for ball_val)
+        self._vel_last_cm_x100: Optional[int] = None
+        self._vel_last_time: Optional[float] = None
+        self._vel_cached: int = 0
+        self._VEL_STALL_TIMEOUT_S: float = 0.5   # decay velocity to 0 after stall
+        self._VEL_MAX_DT_S: float = 1.0           # max dt before reset
+
     def set_pendulum_calibration(self, pixels_per_cm: float, frame_width: int = 640, frame_height: int = 640) -> None:
         self._pixels_per_cm = pixels_per_cm
         self._frame_width = frame_width
@@ -413,8 +420,8 @@ class Ti2026Coordinator:
                 half = max(self._frame_width, self._frame_height) / 2.0
                 pe_x = int((dist_px / half) * 5000.0)
                 ball_cm = dist_px / self._pixels_per_cm
-                return f"pe_x={pe_x} ball_cm={ball_cm:.1f} found=1"
-            return "pe_x=0 ball_cm=0 found=0"
+                return f"pe_x={pe_x} ball_cm={ball_cm:.1f} found=1 v={self._vel_cached}"
+            return "pe_x=0 ball_cm=0 found=0 v=0"
 
         return ""
 
@@ -484,6 +491,49 @@ class Ti2026Coordinator:
             )
         return payload
 
+    def _compute_ball_velocity(
+        self, ball_found: bool, ball_cm_scaled: int
+    ) -> int:
+        """Compute cached ball velocity (0.01 cm/s) for ball_val field.
+
+        Only recalculates when position changes, avoiding repeated computation
+        from the coordinator's oversampling (~500Hz vs ~60fps vision rate).
+        Decays velocity to 0 when the ball position stalls for >0.5s.
+        """
+        now = time.monotonic()
+
+        if not ball_found:
+            self._vel_last_cm_x100 = None
+            self._vel_last_time = None
+            self._vel_cached = 0
+            return 0
+
+        if self._vel_last_cm_x100 is None:
+            self._vel_last_cm_x100 = ball_cm_scaled
+            self._vel_last_time = now
+            self._vel_cached = 0
+            return 0
+
+        if ball_cm_scaled == self._vel_last_cm_x100:
+            if now - self._vel_last_time > self._VEL_STALL_TIMEOUT_S:
+                self._vel_last_time = now
+                self._vel_cached = 0
+            return self._vel_cached
+
+        dt = now - self._vel_last_time
+        if dt <= 0.0 or dt > self._VEL_MAX_DT_S:
+            self._vel_last_cm_x100 = ball_cm_scaled
+            self._vel_last_time = now
+            self._vel_cached = 0
+            return 0
+
+        vel = (ball_cm_scaled - self._vel_last_cm_x100) / dt  # 0.01 cm/s
+        self._vel_last_cm_x100 = ball_cm_scaled
+        self._vel_last_time = now
+        raw = int(round(vel))
+        self._vel_cached = max(-32768, min(32767, raw))
+        return self._vel_cached
+
     def _build_pendulum_position_payload(self) -> bytes:
         data = self._latest_ai
         detections = data.get("detections", [])
@@ -505,9 +555,13 @@ class Ti2026Coordinator:
             pe_x = 0
             ball_cm_scaled = 0
             flags = 0x00
+
+        ball_val = self._compute_ball_velocity(ball is not None, ball_cm_scaled)
+
         return (pe_x.to_bytes(2, 'little', signed=True) +
                 ball_cm_scaled.to_bytes(2, 'little', signed=True) +
-                bytes([flags, 0x00]))
+                bytes([flags, 0x00]) +
+                ball_val.to_bytes(2, 'little', signed=True))
 
     # ===== memory logging =====
 
