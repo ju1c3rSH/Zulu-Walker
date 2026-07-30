@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import numpy as np
 
@@ -19,7 +19,7 @@ _CAP_PROP_EXPOSURE = 15
 class MaixCam2Camera:
     def __init__(
         self,
-        source,
+        source: Optional[Union[str, int]],
         width: int = 640,
         height: int = 480,
         fps: Optional[float] = None,
@@ -54,6 +54,13 @@ class MaixCam2Camera:
                 open=True,
             )
             self._opened = True
+        except Exception as e:
+            logger.warning("Camera init failed: %s", e)
+            self._opened = False
+            return
+        # exposure/gain set outside the Camera() try block so a failure here
+        # does not leave a partially-initialized camera handle dangling
+        try:
             if exposure_us is not None:
                 self._cam.exposure(int(exposure_us))
                 self._last_exposure = int(exposure_us)
@@ -61,8 +68,7 @@ class MaixCam2Camera:
                 self._cam.gain(int(gain))
                 self._last_gain = int(gain)
         except Exception as e:
-            logger.warning("Camera init failed: %s", e)
-            self._opened = False
+            logger.warning("Camera post-init (exposure/gain) failed: %s", e)
 
     @property
     def camera_id(self) -> str:
@@ -134,7 +140,9 @@ class MaixCam2Camera:
             if img is None:
                 return None
             self._last_raw = img
-            return maix.image.image2cv(img, ensure_bgr=False, copy=True)[:, :, ::-1]
+            result = maix.image.image2cv(img, ensure_bgr=False, copy=True)[:, :, ::-1]
+            self._last_frame = result
+            return result
         except Exception as e:
             logger.warning("Camera read failed: %s", e)
             return None
@@ -157,7 +165,7 @@ class MaixCam2Camera:
     def raw_camera(self):
         return self._cam
 
-    def set_gain(self, val) -> bool:
+    def set_gain(self, val: int) -> bool:
         if self._cam is None:
             return False
         try:
@@ -167,7 +175,7 @@ class MaixCam2Camera:
         except Exception:
             return False
 
-    def set_exposure(self, val) -> bool:
+    def set_exposure(self, val: int) -> bool:
         if self._cam is None:
             return False
         try:
@@ -177,7 +185,7 @@ class MaixCam2Camera:
         except Exception:
             return False
 
-    def set(self, prop_id: int, value) -> bool:
+    def set(self, prop_id: int, value: int) -> bool:
         if self._cam is None:
             return False
         try:
