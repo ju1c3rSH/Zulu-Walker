@@ -69,7 +69,13 @@ _AB_ALPHA = 0.7                  # position smoothing gain (0=full smooth, 1=raw
 _AB_BETA = 0.3                   # velocity tracking gain
 _AB_V_MIN_LOCK = 25.0            # lock threshold (~1 cm/s @ 25.6 px/cm)
 _AB_LOCK_FRAMES = 3              # consecutive slow frames to enter LOCKED
-_AB_UNLOCK_JUMP_PX = 25.0        # position residual to exit LOCKED (~1 cm)
+_AB_UNLOCK_JUMP_PX = 25.0        # single-frame position jump to exit LOCKED (~1 cm)
+                                 #   Handles sudden acceleration (pendulum tilt -> immediate large displacement)
+_AB_UNLOCK_BIAS_PX = 10.0        # cumulative residual to exit LOCKED (~0.4 cm)
+                                 #   Handles slow creep / direction reversal: individual frames stay
+                                 #   below JUMP threshold, but accumulated displacement triggers unlock.
+                                 #   Set >3σ measurement noise (~9 px) to prevent false unlock from jitter.
+                                 #   At 2 cm/s ball speed: unlocks in ~12 frames (~0.3s)
 
 
 class Ti2026Coordinator:
@@ -124,6 +130,7 @@ class Ti2026Coordinator:
         self._ab_ready: bool = False
         self._ab_locked: bool = False
         self._ab_lock_count: int = 0
+        self._ab_bias_sum: float = 0.0
 
         # ball detection spatial gating + hysteresis
         self._ball_armed: bool = False
@@ -547,6 +554,7 @@ class Ti2026Coordinator:
         self._ab_ready = False
         self._ab_locked = False
         self._ab_lock_count = 0
+        self._ab_bias_sum = 0.0
         self._ab_x = 0.0
         self._ab_vx = 0.0
         self._ab_ts_ns = 0
@@ -577,9 +585,17 @@ class Ti2026Coordinator:
             residual = zx - x_pred
 
             if self._ab_locked:
-                if abs(residual) > _AB_UNLOCK_JUMP_PX:
+                self._ab_bias_sum += residual
+                if abs(residual) > _AB_UNLOCK_JUMP_PX or abs(self._ab_bias_sum) > _AB_UNLOCK_BIAS_PX:
                     self._ab_locked = False
                     self._ab_lock_count = 0
+                    self._ab_bias_sum = 0.0
+                elif residual * self._ab_bias_sum < 0:
+                    self._ab_bias_sum = float(residual)
+                    self._ab_x = zx
+                    self._ab_vx = 0.0
+                    self._ab_ts_ns = t_ns
+                    return zx, 0.0, True
                 else:
                     self._ab_x = zx
                     self._ab_vx = 0.0
@@ -596,6 +612,7 @@ class Ti2026Coordinator:
                 if self._ab_lock_count >= _AB_LOCK_FRAMES:
                     self._ab_locked = True
                     self._ab_vx = 0.0
+                    self._ab_bias_sum = 0.0
             else:
                 self._ab_lock_count = 0
 
