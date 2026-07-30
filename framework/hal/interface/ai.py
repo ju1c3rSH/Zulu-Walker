@@ -6,10 +6,11 @@ from typing import Callable, Optional, Protocol, TypedDict, Unpack, runtime_chec
 import numpy as np
 
 # Detection filtering constants — tune these on-site
-MIN_AREA = 200
-MAX_AREA = 3000
+# camera 1280x352: steelball ~6500px -> set 20000 as headroom
+MIN_AREA = 100
+MAX_AREA = 20000
 MAX_RATIO = 2.0
-MARGIN = 10
+MARGIN = 4
 
 
 class DetectKwargs(TypedDict, total=False):

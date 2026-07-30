@@ -47,7 +47,6 @@ from modules.zw_opencv_module.detectors.pendulum_calibrator import RailCalibrati
 from app.vision_state import VisionState
 
 
-_CMD_TIMEOUT = 5.0
 
 _DATA_TYPE_MODEL = {
     DATA_TARGET_POSITION:   "yolo11n",
@@ -216,32 +215,25 @@ class Ti2026Coordinator:
         if self._wdt_count % 200 == 0:
             log_print(f"[WDT] coord feed #{self._wdt_count}")
 
-        now = time.monotonic()
         with self._cmd_lock:
             streaming = self._streaming_type
-            if streaming != 0:
-                if now - self._last_cmd_time > _CMD_TIMEOUT:
-                    self._streaming_type = 0
-                    self._master_linked = False
-                    streaming = 0
-                    self.change_state(VisionState.IDLE)
-                else:
-                    payload = self._build_stream_payload(streaming)
-                    if payload:
-                        current_seq = self._stream_seq
-                        frame = build_data_stream_frame(
-                            current_seq, streaming, payload)
-                        self._send(frame)
-                        self._stream_seq = (current_seq + 1) & 0xFF
+            if streaming != 0 and self._vision_state != VisionState.CALIB:
+                payload = self._build_stream_payload(streaming)
+                if payload:
+                    current_seq = self._stream_seq
+                    frame = build_data_stream_frame(
+                        current_seq, streaming, payload)
+                    self._send(frame)
+                    self._stream_seq = (current_seq + 1) & 0xFF
 
-                        self._stream_log_count += 1
-                        type_changed = (streaming != self._last_streamed_type)
-                        if type_changed or self._stream_log_count >= 30:
-                            self._stream_log_count = 0
-                            self._last_streamed_type = streaming
-                            type_name = DATA_TYPE_NAMES.get(streaming, f"0x{streaming:02X}")
-                            desc = self._stream_payload_desc(streaming)
-                            log_print(f"[UART TX] DATA_STREAM seq={current_seq} type={type_name} {desc}")
+                    self._stream_log_count += 1
+                    type_changed = (streaming != self._last_streamed_type)
+                    if type_changed or self._stream_log_count >= 30:
+                        self._stream_log_count = 0
+                        self._last_streamed_type = streaming
+                        type_name = DATA_TYPE_NAMES.get(streaming, f"0x{streaming:02X}")
+                        desc = self._stream_payload_desc(streaming)
+                        log_print(f"[UART TX] DATA_STREAM seq={current_seq} type={type_name} {desc}")
 
         self._mem_log_counter += 1
         if self._mem_log_counter >= 300:
@@ -306,12 +298,19 @@ class Ti2026Coordinator:
         if payload_size is None:
             payload_size = 0
         log_print(f"[UART TX] CMD_ACK type={dt_name} freq=60fps size={payload_size}B")
+
+        if self._vision_state == VisionState.CALIB:
+            self._send(build_cmd_ack_frame(data_type, 60, payload_size))
+            return
+
         frame = build_cmd_ack_frame(data_type, 60, payload_size)
         self._send(frame)
 
         self.change_state(VisionState.STREAMING)
 
     def _on_cmd_stop(self, event: CmdStopEvent) -> None:
+        if self._vision_state == VisionState.CALIB:
+            return
         now = time.monotonic()
         with self._cmd_lock:
             self._last_cmd_time = now
