@@ -65,31 +65,6 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读参考)
 
 提取脚本：`docs/competition/extract_docs.py`，可复用解析同类文档。
 
-## 软件 AEC（自动曝光控制）
-
-为消除高速钢球拖影，MaixCAM2 摄像头使用**固定短曝光 + PI 增益控制**策略：
-
-| 配置 | 位置 |
-|------|------|
-| 曝光时间 / 初始增益 / AEC 参数 | `project_config.yaml` → `cameras[0].exposure_us / .gain / .aec` |
-| 数据流 | YAML → `Machine.create()` → `CameraHub.open()` → `create_camera()` → `MaixCam2Camera()` |
-| AEC 逻辑 | `VisionManager._adjust_exposure()` — 每 N 帧执行一次 PI 控制器 |
-| 亮度来源 | 管道已缓存的 BGR 帧 (`cam.last_frame`)，无额外 camera I/O |
-
-### AEC 工作原理
-
-```
-固定: exposure_us (如 3000µs) — 消除拖影
-调整: gain 在 [gain_min, gain_max] 区间浮动
-目标: ROI 区域亮度稳定在 target_mean (0-255)
-算法: ROI 灰度均值 → EMA 平滑 → PI 控制器 → 钳位 gain
-周期: 每 adjust_interval_frames 帧执行一次 (~0.5s @ 60fps)
-```
-
-### 可调参数
-
-`project_config.yaml` 中 `cameras[0].aec` 段所有参数均可手动调整。关掉 AEC（`enabled: false`）则退化为固定 gain。
-
 ## 已过时/需注意的信息
 
 - TODO 中多项已标记 ✅ 修复: `cargo_confirmed` 死锁、`build_visual_servo_data_frame` float 问题、OpenCL 分散调用、未使用 VisualFlags
