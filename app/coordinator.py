@@ -88,6 +88,9 @@ class Ti2026Coordinator:
         self._last_fps_time: float = 0.0
         self._mem_log_counter: int = 0
 
+        # PC heartbeat detector
+        self._pc_heartbeat: Optional['PcHeartbeatDetector'] = None
+
         # Vision result cache
         self._latest_line: dict = {}
         self._latest_ai: dict = {}
@@ -151,6 +154,9 @@ class Ti2026Coordinator:
     def set_ai(self, ai) -> None:
         self._ai = ai
 
+    def set_pc_heartbeat(self, detector: 'PcHeartbeatDetector') -> None:
+        self._pc_heartbeat = detector
+
     def _send(self, frame: bytes) -> bool:
         if self._uart_sender:
             try:
@@ -179,6 +185,9 @@ class Ti2026Coordinator:
             self._vision_state = new_state
 
     def _start_recording(self) -> None:
+        if self._pc_heartbeat is not None and not self._pc_heartbeat.is_connected:
+            log_print("[Recording] PC not connected, skip recording start")
+            return
         self._test_id += 1
         self._recording_test_id = self._test_id
         if self._vision_manager:
