@@ -145,20 +145,18 @@ def _build_callbacks(manager, machine, coordinator):
                                     if calib_rect is not None:
                                         cbx, cby, cbw, _ = calib_rect
                                         if _in_btn(_touch_x, _touch_y, cbx, cby, size=cbw):
-                                                if coordinator.vision_state == VisionState.IDLE:
-                                                    coordinator.change_state(VisionState.CALIB)
-                                                    ok = coordinator.calibrate_origin_from_ball()
-                                                    if ok:
-                                                        log_print("[CALIB] Phase2 done: origin set from ball position")
-                                                        bbox = coordinator.get_last_ball_bbox()
-                                                        if bbox:
-                                                            vm.trigger_calib_flash(bbox)
-                                                        vm.set_calib_button_visible(False)
-                                                        _persist_calibration(coordinator.get_rail_calibration())
-                                                    else:
-                                                        log_print("[CALIB] Phase2 FAILED: no ball detected")
-                                                    if coordinator.vision_state == VisionState.CALIB:
-                                                        coordinator.change_state(VisionState.IDLE)
+                                                coordinator.change_state(VisionState.CALIB)
+                                                ok = coordinator.calibrate_origin_from_ball()
+                                                if ok:
+                                                    log_print("[CALIB] Phase2 done: origin set from ball position")
+                                                    bbox = coordinator.get_last_ball_bbox()
+                                                    if bbox:
+                                                        vm.trigger_calib_flash(bbox)
+                                                    vm.set_calib_button_visible(False)
+                                                    _persist_calibration(coordinator.get_rail_calibration())
+                                                else:
+                                                    log_print("[CALIB] Phase2 FAILED: no ball detected")
+                                                coordinator.change_state(VisionState.IDLE)
                     _touch_down = False
             except Exception:
                 pass
@@ -352,21 +350,30 @@ _CALIB_PARAM_KEYS = frozenset({
 
 
 def _run_phase1_calibration(camera, calib_params=None):
-    """Phase 1: grab one frame, run contour-based calibration.
-    Returns RailCalibration or None on failure."""
+    """Phase 1: grab frames until calibration succeeds or max retries.
+    Returns RailCalibration or None on failure.
+    Camera may need a few frames for auto-exposure to settle."""
+    import time
     from modules.zw_opencv_module.detectors.pendulum_calibrator import PendulumCalibrator
-    try:
-        frame = camera.read()
-        if frame is None:
-            return None
-        kwargs = {}
-        if calib_params:
-            kwargs = {k: calib_params[k] for k in _CALIB_PARAM_KEYS if k in calib_params}
-        calib = PendulumCalibrator(frame_w=frame.shape[1], frame_h=frame.shape[0], **kwargs)
-        result = calib.calibrate(frame)
-        return result if result.calibrated else None
-    except Exception:
-        return None
+
+    kwargs = {}
+    if calib_params:
+        kwargs = {k: calib_params[k] for k in _CALIB_PARAM_KEYS if k in calib_params}
+
+    for attempt in range(5):
+        try:
+            frame = camera.read()
+            if frame is None:
+                time.sleep(0.05)
+                continue
+            calib = PendulumCalibrator(frame_w=frame.shape[1], frame_h=frame.shape[0], **kwargs)
+            result = calib.calibrate(frame)
+            if result.calibrated:
+                return result
+        except Exception:
+            pass
+        time.sleep(0.05)
+    return None
 
 
 def _persist_calibration(calib):
@@ -422,6 +429,10 @@ def main():
     _setup_record_signaling(coordinator, _cfg)
 
     machine = Machine.create("project_config.yaml")
+
+    uart_cfg = _cfg.get("uart_defaults", {})
+    uart_connected = machine.uart.is_connected if machine.uart else False
+    log_print(f"[UART] port={uart_cfg.get('port')} baud={uart_cfg.get('baudrate')} connected={uart_connected}")
 
     try:
         from maix import display
