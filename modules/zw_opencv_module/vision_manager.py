@@ -300,6 +300,8 @@ class VisionManager:
             return
         try:
             h, w = frame.shape[:2]
+            # ROI: [y0_frac, y1_frac, x0_frac, x1_frac] as fractions of height/width
+            # e.g. [0.4, 0.7, 0.0, 1.0] = middle 30% height, full width
             roi = self._aec_cfg.get("roi", [0.4, 0.7, 0.0, 1.0])
             if len(roi) != 4:
                 logger.warning("AEC: roi must have 4 elements, got %d", len(roi))
