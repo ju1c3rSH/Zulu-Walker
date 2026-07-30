@@ -356,9 +356,9 @@ class VisionManager:
             if new_gain != last_gain:
                 setter = getattr(cam, "set_gain", None)
                 if setter is not None:
-                    setter(new_gain)
-                    logger.debug("AEC: gain %s->%s  mean=%.1f  ema=%.1f  err=%.1f  delta=%.1f",
-                                 last_gain, new_gain, mean_val, self._aec_ema, err, delta)
+                    ok = setter(new_gain)
+                    logger.debug("AEC: gain %s->%s  mean=%.1f  ema=%.1f  err=%.1f  delta=%.1f  ok=%s",
+                                 last_gain, new_gain, mean_val, self._aec_ema, err, delta, ok)
         except Exception:
             logger.warning("AEC adjust_exposure failed", exc_info=True)
 
