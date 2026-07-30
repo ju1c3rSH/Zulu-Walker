@@ -360,7 +360,7 @@ def _run_phase1_calibration(camera, calib_params=None):
     if calib_params:
         kwargs = {k: calib_params[k] for k in _CALIB_PARAM_KEYS if k in calib_params}
 
-    for attempt in range(5):
+    for attempt in range(15):
         try:
             frame = camera.read()
             if frame is None:
