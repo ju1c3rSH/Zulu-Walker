@@ -1,7 +1,7 @@
 id: zulu_walker
 name: zulu_walker
 name[zh]: 祖鲁行者
-version: 1.3.2
+version: 1.4.1
 icon: app.png
 author: Electric Competition 2026
 desc: YOLO11n steel ball detection + line following robot based on MaixCAM2
@@ -31,6 +31,8 @@ files:
   - app\line_follow_sm.py
   - app\main.py
   - app\mission_state_machine.py
+  - app\pc_heartbeat.py
+  - app\vision_state.py
   - assets\calibrate.png
   - assets\restart.png
   - framework\hal\interface\__init__.py
@@ -138,6 +140,9 @@ files:
   - modules\zw_opencv_module\detectors\line_detector\debug\runner.py
   - modules\zw_opencv_module\detectors\line_detector\__init__.py
   - modules\zw_opencv_module\detectors\pendulum_calibrator\debug\__init__.py
+  - >-
+    modules\zw_opencv_module\detectors\pendulum_calibrator\debug\calib_debug.yaml
+  - modules\zw_opencv_module\detectors\pendulum_calibrator\debug\debug_device.py
   - modules\zw_opencv_module\detectors\pendulum_calibrator\debug\runner.py
   - modules\zw_opencv_module\detectors\pendulum_calibrator\__init__.py
   - modules\zw_opencv_module\detectors\ring_detector\debug\__init__.py
