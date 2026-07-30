@@ -403,7 +403,7 @@ Payload 长度：**0 字节**（整帧 = 6 字节）
 | 2 | 2 | `pe_x` | int16 LE | 横向误差（±32767） |
 | 4 | 2 | `pe_y` | int16 LE | 纵向误差 |
 | 6 | 1 | `flags` | uint8 | 视觉标志位 |
-| 7 | 1 | `state` | uint8 | 视觉状态机状态 |
+| 7 | 1 | `state` | uint8 | VisionState：0=IDLE, 1=CALIB, 2=STREAMING, 3=ERROR |
 
 整帧 payload = **8 字节**。CMD_ACK.payload_size = 8。
 
@@ -414,7 +414,7 @@ typedef struct __attribute__((packed)) {
     int16_t  pe_x;             // LE
     int16_t  pe_y;             // LE
     uint8_t  flags;
-    uint8_t  state;
+    uint8_t  state;          // VisionState: 0=IDLE, 1=CALIB, 2=STREAMING, 3=ERROR
 } data_line_position_t;
 ```
 
@@ -469,7 +469,7 @@ typedef struct __attribute__((packed)) {
 
 | 偏移 | 长度 | 字段 | 类型 | 说明 |
 |------|------|------|------|------|
-| 2 | 1 | `visual_state` | uint8 | 视觉状态机状态：0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL |
+| 2 | 1 | `visual_state` | uint8 | VisionState：0=IDLE, 1=CALIB, 2=STREAMING, 3=ERROR |
 | 3 | 1 | `visual_flags` | uint8 | 视觉标志位 bitfield |
 | 4 | 2 | `count` | uint16 LE | 目标计数 |
 
@@ -479,7 +479,7 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
     uint8_t  seq;
     uint8_t  data_type;      // 0x04
-    uint8_t  visual_state;   // 0-4
+    uint8_t  visual_state;   // VisionState: 0=IDLE, 1=CALIB, 2=STREAMING, 3=ERROR
     uint8_t  visual_flags;
     uint16_t count;          // LE
 } data_detection_status_t;
@@ -846,7 +846,7 @@ def _build_line_position_payload(self) -> Optional[bytes]:
     pe_y = data.get("percent_error_y", 0)
     target_found = data.get("target_found", False)
     flags = 1 if target_found else 0
-    state = self.state_machine.current_state_id
+    state = int(self._vision_state)
     return (pe_x.to_bytes(2, 'little', signed=True) +
             pe_y.to_bytes(2, 'little', signed=True) +
             bytes([flags, state]))
@@ -877,7 +877,7 @@ def _build_detection_status_payload(self) -> Optional[bytes]:
     data = self._latest_ai
     detections = data.get("detections", [])
     count = len(detections)
-    visual_state = 0  # TODO: 从 VisualStateMachine 获取
+    visual_state = int(self._vision_state)
     visual_flags = 0
     return (bytes([visual_state, visual_flags]) +
             count.to_bytes(2, 'little'))

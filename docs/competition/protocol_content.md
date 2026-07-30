@@ -23,7 +23,7 @@
 | Type | 名称 | 方向 | Payload | 说明 |
 |:---|:---|:---|:---|:---|
 | **0x10** | `TYPE_CMD_FROM_MCU` | MCU → OP | `cmd_id(1B) + args` | MCU 请求视觉服务 |
-| **0x11** | `TYPE_STATUS_FROM_VISION` | OP → MCU | `mission_state(1B) + visual_state(1B) + flags(1B) + cargo_count(1B)` | 视觉上报综合状态 |
+| **0x11** | `TYPE_STATUS_FROM_VISION` | OP → MCU | `mission_state(1B) + visual_state(1B) + flags(1B) + cargo_count(1B)` | [DEPRECATED] 视觉上报综合状态 |
 | **0x12** | `TYPE_QR_RESULT` | OP → MCU | `len(1B) + ascii[len]` | 二维码任务码 |
 | **0x13** | `TYPE_COLOR_RESULT` | OP → MCU | `color_id(1B) + confidence(1B)` | 当前物料颜色识别结果 |
 | **0x14** | `TYPE_ACTION_DONE` | MCU → OP | `action_id(1B) + result(1B)` | MCU 动作完成 |
@@ -182,7 +182,7 @@ OP 每帧发送 VISUAL_SERVO_DATA（无论是否检测到目标）：
     └─ OP 内部: 处理器直接输出 int[-5000, 5000]，不经转换直接编码发送
   error_y: int16 LE（同上）
   flags: 1B（同 VisualFlags 位定义，包含 TARGET_FOUND / READY_TO_PICK / READY_TO_PLACE 等）
-  state: 1B（当前 visual_state: 0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL）
+  state: 1B（当前 visual_state: 0=IDLE, 1=CALIB, 2=STREAMING, 3=ERROR）
 
 MCU 根据每帧 flags 直接决策：
   flags & READY_TO_PICK  → 执行抓取
