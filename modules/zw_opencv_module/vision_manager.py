@@ -76,6 +76,7 @@ class VisionManager:
         self._time_counter: int = 0
 
         self._aec_enabled: bool = False
+        self._aec_cam_id: str = ""
         self._aec_cfg: Dict[str, Any] = {}
         self._aec_counter: int = 0
         self._aec_err_i: float = 0.0
@@ -176,9 +177,10 @@ class VisionManager:
             cfg = getattr(cam, "aec_config", None)
             if cfg and cfg.get("enabled"):
                 self._aec_enabled = True
+                self._aec_cam_id = cid
                 self._aec_cfg = cfg
-                logger.info("AEC enabled: target_mean=%s, interval=%s frames",
-                            cfg.get("target_mean"), cfg.get("adjust_interval_frames"))
+                logger.info("AEC enabled on '%s': target_mean=%s, interval=%s frames",
+                            cid, cfg.get("target_mean"), cfg.get("adjust_interval_frames"))
                 break
 
         self._running = True
@@ -211,7 +213,7 @@ class VisionManager:
                     except Exception as e:
                         pass
 
-                if self._aec_enabled and any_fresh:
+                if self._aec_enabled:
                     self._aec_counter += 1
                     interval = self._aec_cfg.get("adjust_interval_frames", 30)
                     if self._aec_counter >= interval:
@@ -288,22 +290,31 @@ class VisionManager:
     def _adjust_exposure(self) -> None:
         if not self._aec_enabled:
             return
-        cam = self._hub.get("main")
+        cam = self._hub.get(self._aec_cam_id)
         if cam is None:
+            logger.debug("AEC skipped: camera '%s' not found", self._aec_cam_id)
             return
+        # last_frame is a cached BGR ndarray from read_raw(); 3-channel required
         frame = getattr(cam, "last_frame", None)
         if frame is None:
+            logger.debug("AEC skipped: no frame from camera '%s'", self._aec_cam_id)
             return
         try:
             h, w = frame.shape[:2]
             roi = self._aec_cfg.get("roi", [0.4, 0.7, 0.0, 1.0])
-            ry0 = int(h * roi[0])
-            ry1 = int(h * roi[1])
-            rx0 = int(w * roi[2])
-            rx1 = int(w * roi[3])
+            if len(roi) != 4:
+                logger.warning("AEC: roi must have 4 elements, got %d", len(roi))
+                return
+            ry0 = max(0, min(h - 1, int(h * roi[0])))
+            ry1 = max(0, min(h, int(h * roi[1])))
+            rx0 = max(0, min(w - 1, int(w * roi[2])))
+            rx1 = max(0, min(w, int(w * roi[3])))
             if ry1 <= ry0 or rx1 <= rx0:
+                logger.debug("AEC skipped: empty ROI slice [%d:%d, %d:%d]",
+                             ry0, ry1, rx0, rx1)
                 return
             patch = frame[ry0:ry1, rx0:rx1]
+            # frame is BGR (see read_raw); COLOR_BGR2GRAY is correct
             gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
             mean_val = float(np.mean(gray))
 
@@ -319,26 +330,35 @@ class VisionManager:
             if abs(err) <= deadband:
                 return
 
-            max_i = self._aec_cfg.get("max_i", 100)
-            self._aec_err_i += err
-            self._aec_err_i = max(-max_i, min(max_i, self._aec_err_i))
-
             kp = self._aec_cfg.get("kp", 0.5)
             ki = self._aec_cfg.get("ki", 0.05)
-            delta = kp * err + ki * self._aec_err_i
 
-            last_gain = cam.last_gain
+            # clamp candidate gain first to decide if integrator should run
+            last_gain = getattr(cam, "last_gain", None)
             if last_gain is None:
+                logger.debug("AEC skipped: last_gain unknown on '%s'", self._aec_cam_id)
                 return
-            new_gain = int(last_gain + delta)
             gain_min = self._aec_cfg.get("gain_min", 50)
             gain_max = self._aec_cfg.get("gain_max", 600)
+            delta = kp * err
+            new_gain = int(last_gain + delta)
             new_gain = max(gain_min, min(gain_max, new_gain))
 
+            # conditional integration: only accumulate when actuator is not saturated
+            if gain_min < new_gain < gain_max:
+                max_i = self._aec_cfg.get("max_i", 100)
+                self._aec_err_i += err
+                self._aec_err_i = max(-max_i, min(max_i, self._aec_err_i))
+                delta = kp * err + ki * self._aec_err_i
+                new_gain = int(last_gain + delta)
+                new_gain = max(gain_min, min(gain_max, new_gain))
+
             if new_gain != last_gain:
-                cam.set_gain(new_gain)
-                logger.debug("AEC: gain %s->%s  mean=%.1f  ema=%.1f  err=%.1f  delta=%.1f",
-                             last_gain, new_gain, mean_val, self._aec_ema, err, delta)
+                setter = getattr(cam, "set_gain", None)
+                if setter is not None:
+                    setter(new_gain)
+                    logger.debug("AEC: gain %s->%s  mean=%.1f  ema=%.1f  err=%.1f  delta=%.1f",
+                                 last_gain, new_gain, mean_val, self._aec_ema, err, delta)
         except Exception:
             logger.warning("AEC adjust_exposure failed", exc_info=True)
 
