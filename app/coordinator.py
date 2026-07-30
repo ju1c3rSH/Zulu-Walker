@@ -55,6 +55,15 @@ _DATA_TYPE_MODEL = {
     DATA_SEGMENTATION_MASK: "plate_seg",
 }
 
+# Ball spatial gating constants
+# MAX_DISPLACEMENT_PX = (MAX_BALL_SPEED / MIN_FPS) * pixels_per_cm * SAFETY_FACTOR
+#                    = (30 / 40) * 25.6 * 2.0 ≈ 38.4 → 40 px @ default calibration
+_MAX_BALL_SPEED_CM_S = 30.0       # max physical ball speed (cm/s)
+_BALL_MIN_FPS = 40.0              # worst-case pipeline framerate
+_VEL_SAFETY_FACTOR = 2.0          # pixel displacement safety factor
+_BALL_ARM_FRAMES = 2              # consecutive valid detections to start sending
+_BALL_DROP_FRAMES = 3             # consecutive invalid detections to stop sending
+
 
 class Ti2026Coordinator:
 
@@ -105,6 +114,13 @@ class Ti2026Coordinator:
         self._vel_cached: int = 0
         self._VEL_STALL_TIMEOUT_S: float = 0.5   # decay velocity to 0 after stall
         self._VEL_MAX_DT_S: float = 1.0           # max dt before reset
+
+        # ball detection spatial gating + hysteresis
+        self._ball_armed: bool = False
+        self._ball_hit_count: int = 0
+        self._ball_miss_count: int = 0
+        self._ball_last_cx: Optional[float] = None
+        self._ball_last_cy: Optional[float] = None
 
     def set_pendulum_calibration(self, pixels_per_cm: float, frame_width: int = 640, frame_height: int = 640) -> None:
         self._pixels_per_cm = pixels_per_cm
@@ -412,15 +428,12 @@ class Ti2026Coordinator:
             return f"count={count} {items}"
 
         if data_type == DATA_PENDULUM_POSITION:
-            ball = max((d for d in detections if d.class_id == 0), key=lambda d: d.score, default=None)
-            if ball is not None:
-                cx = ball.x + ball.w / 2
-                cy = ball.y + ball.h / 2
+            if self._ball_armed and self._ball_last_cx is not None:
                 calib = self._rail_calib
                 if calib is not None and calib.calibrated:
-                    dist_px = calib.project(cx, cy)
+                    dist_px = calib.project(self._ball_last_cx, self._ball_last_cy)
                 else:
-                    dist_px = cx - self._frame_width / 2.0
+                    dist_px = self._ball_last_cx - self._frame_width / 2.0
                 half = max(self._frame_width, self._frame_height) / 2.0
                 pe_x = int((dist_px / half) * 5000.0)
                 ball_cm = dist_px / self._pixels_per_cm
@@ -495,6 +508,25 @@ class Ti2026Coordinator:
             )
         return payload
 
+    @property
+    def _max_displacement_px(self) -> float:
+        """Euclidean spatial gating threshold (pixels).
+
+        MAX_DISPLACEMENT_PX = (MAX_BALL_SPEED / MIN_FPS) * pixels_per_cm * SAFETY_FACTOR
+        """
+        return (_MAX_BALL_SPEED_CM_S / _BALL_MIN_FPS) * self._pixels_per_cm * _VEL_SAFETY_FACTOR
+
+    # ===== ball velocity =====
+
+    def _on_ball_invalid(self) -> None:
+        self._ball_hit_count = 0
+        self._ball_miss_count += 1
+        if self._ball_miss_count >= _BALL_DROP_FRAMES:
+            self._ball_armed = False
+            self._ball_last_cx = None
+            self._ball_last_cy = None
+            self._compute_ball_velocity(False, 0)
+
     def _compute_ball_velocity(
         self, ball_found: bool, ball_cm_scaled: int
     ) -> int:
@@ -538,33 +570,53 @@ class Ti2026Coordinator:
         self._vel_cached = max(-32768, min(32767, raw))
         return self._vel_cached
 
-    def _build_pendulum_position_payload(self) -> bytes:
+    def _build_pendulum_position_payload(self) -> Optional[bytes]:
         data = self._latest_ai
         detections = data.get("detections", [])
         ball = max((d for d in detections if d.class_id == 0), key=lambda d: d.score, default=None)
-        if ball is not None:
-            cx = ball.x + ball.w / 2
-            cy = ball.y + ball.h / 2
-            calib = self._rail_calib
-            if calib is not None and calib.calibrated:
-                dist_px = calib.project(cx, cy)
-            else:
-                dist_px = cx - self._frame_width / 2.0
-            half = max(self._frame_width, self._frame_height) / 2.0
-            pe_x = int(((dist_px) / half) * 5000.0)
-            ball_cm = dist_px / self._pixels_per_cm
-            ball_cm_scaled = int(ball_cm * 100)
-            flags = 0x01
-        else:
-            pe_x = 0
-            ball_cm_scaled = 0
-            flags = 0x00
 
-        ball_val = self._compute_ball_velocity(ball is not None, ball_cm_scaled)
+        if ball is None:
+            self._on_ball_invalid()
+            return None
+
+        cx = ball.x + ball.w / 2
+        cy = ball.y + ball.h / 2
+
+        if self._ball_armed and self._ball_last_cx is not None and self._ball_last_cy is not None:
+            max_disp_sq = self._max_displacement_px ** 2
+            dx = cx - self._ball_last_cx
+            dy = cy - self._ball_last_cy
+            if dx * dx + dy * dy > max_disp_sq:
+                self._on_ball_invalid()
+                return None
+
+        self._ball_hit_count = min(self._ball_hit_count + 1, _BALL_ARM_FRAMES)
+        self._ball_miss_count = 0
+
+        if self._ball_hit_count >= _BALL_ARM_FRAMES:
+            self._ball_armed = True
+
+        if not self._ball_armed:
+            return None
+
+        self._ball_last_cx = cx
+        self._ball_last_cy = cy
+
+        calib = self._rail_calib
+        if calib is not None and calib.calibrated:
+            dist_px = calib.project(cx, cy)
+        else:
+            dist_px = cx - self._frame_width / 2.0
+        half = max(self._frame_width, self._frame_height) / 2.0
+        pe_x = int(((dist_px) / half) * 5000.0)
+        ball_cm = dist_px / self._pixels_per_cm
+        ball_cm_scaled = int(ball_cm * 100)
+
+        ball_val = self._compute_ball_velocity(True, ball_cm_scaled)
 
         return (pe_x.to_bytes(2, 'little', signed=True) +
                 ball_cm_scaled.to_bytes(2, 'little', signed=True) +
-                bytes([flags, 0x00]) +
+                bytes([0x01, 0x00]) +
                 ball_val.to_bytes(2, 'little', signed=True))
 
     # ===== memory logging =====
