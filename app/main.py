@@ -5,6 +5,7 @@ import threading
 import time
 from utils.log_util import log_print
 from typing import Optional
+from app.vision_state import VisionState
 
 _DISPLAY_EVERY_N = 2
 _ICON_SIZE = 48
@@ -144,15 +145,20 @@ def _build_callbacks(manager, machine, coordinator):
                                     if calib_rect is not None:
                                         cbx, cby, cbw, _ = calib_rect
                                         if _in_btn(_touch_x, _touch_y, cbx, cby, size=cbw):
-                                            if coordinator.calibrate_origin_from_ball():
-                                                log_print("[CALIB] Phase2 done: origin set from ball position")
-                                                bbox = coordinator.get_last_ball_bbox()
-                                                if bbox:
-                                                    vm.trigger_calib_flash(bbox)
-                                                vm.set_calib_button_visible(False)
-                                                _persist_calibration(coordinator.get_rail_calibration())
-                                            else:
-                                                log_print("[CALIB] Phase2 FAILED: no ball detected")
+                                                if coordinator.vision_state == VisionState.IDLE:
+                                                    coordinator.change_state(VisionState.CALIB)
+                                                    ok = coordinator.calibrate_origin_from_ball()
+                                                    if ok:
+                                                        log_print("[CALIB] Phase2 done: origin set from ball position")
+                                                        bbox = coordinator.get_last_ball_bbox()
+                                                        if bbox:
+                                                            vm.trigger_calib_flash(bbox)
+                                                        vm.set_calib_button_visible(False)
+                                                        _persist_calibration(coordinator.get_rail_calibration())
+                                                    else:
+                                                        log_print("[CALIB] Phase2 FAILED: no ball detected")
+                                                    if coordinator.vision_state == VisionState.CALIB:
+                                                        coordinator.change_state(VisionState.IDLE)
                     _touch_down = False
             except Exception:
                 pass
