@@ -6,8 +6,8 @@ display_enabled: true
 cameras:
   - camera_id: "main"
     source: null
-    width: 640
-    height: 640
+    width: 1280
+    height: 352
     fps: 60
     camera_stream_queue_size: 3
 
@@ -18,7 +18,7 @@ uart_defaults:
 ai:
   models:
     - nick_name: "yolo11n"
-      model: "/root/models/steelball_640_v4.mud"
+      model: "/root/models/steelball_1280x352.mud"
       model_type: "auto"
   active: "yolo11n"
 
