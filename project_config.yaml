@@ -10,6 +10,20 @@ cameras:
     height: 352
     fps: 60
     camera_stream_queue_size: 3
+    exposure_us: 3000
+    gain: 200
+    aec:
+      enabled: true
+      adjust_interval_frames: 30
+      target_mean: 80
+      gain_min: 50
+      gain_max: 600
+      kp: 0.5
+      ki: 0.05
+      max_i: 100
+      deadband: 8
+      roi: [0.4, 0.7, 0.0, 1.0]
+      ema_alpha: 0.1
 
 uart_defaults:
   port: "/dev/ttyS4"
