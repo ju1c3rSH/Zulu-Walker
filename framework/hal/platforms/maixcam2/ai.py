@@ -34,6 +34,7 @@ class MaixCam2AI:
         self._infer_window_start: float = time.monotonic()
         self._infer_fps: float = 0.0
         self._infer_avg_ms: float = 0.0
+        self._infer_timestamp_ns: int = 0
 
     # ------------------------------------------------------------------ #
     #  Registry API
@@ -171,6 +172,10 @@ class MaixCam2AI:
     def infer_avg_ms(self) -> float:
         return self._infer_avg_ms
 
+    @property
+    def infer_timestamp_ns(self) -> int:
+        return self._infer_timestamp_ns
+
     # ------------------------------------------------------------------ #
     #  Inference
     # ------------------------------------------------------------------ #
@@ -224,6 +229,7 @@ class MaixCam2AI:
             return []
 
         t_us = t_ns // 1000
+        self._infer_timestamp_ns = time.perf_counter_ns()
         self._infer_count += 1
         self._infer_total_us += t_us
         elapsed = time.monotonic() - self._infer_window_start
