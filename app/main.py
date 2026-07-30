@@ -478,35 +478,50 @@ def main():
 
     # --- Pendulum rail calibration ---
     rail_calib = _load_persisted_calibration(_cfg)
-    if rail_calib is not None:
+    phase1_result = None
+    try:
+        cam = CameraHub.instance().get("main")
+        if cam is not None:
+            calib_params = _cfg.get("pendulum", {}).get("calib_params", None)
+            phase1_result = _run_phase1_calibration(cam, calib_params)
+        else:
+            log_print("[CALIB] No camera available, skip Phase1")
+    except Exception as e:
+        log_print(f"[CALIB] Phase1 error: {e}")
+
+    if phase1_result is not None:
+        if rail_calib is not None:
+            from modules.zw_opencv_module.detectors.pendulum_calibrator import RailCalibration
+            rail_calib = RailCalibration(
+                origin_x=rail_calib.origin_x,
+                origin_y=rail_calib.origin_y,
+                angle_rad=phase1_result.angle_rad,
+                calibrated=True,
+            )
+            log_print(f"[CALIB] Phase1 angle={rail_calib.angle_rad:.4f} "
+                      f"origin=(kept: {rail_calib.origin_x:.0f},{rail_calib.origin_y:.0f})")
+        else:
+            rail_calib = phase1_result
+            log_print(f"[CALIB] Phase1 done: angle={rail_calib.angle_rad:.4f} "
+                      f"origin=({rail_calib.origin_x:.0f},{rail_calib.origin_y:.0f})")
         coordinator.set_rail_calibration(rail_calib)
-        log_print(f"[CALIB] Loaded persisted: angle={rail_calib.angle_rad:.4f} "
+    elif rail_calib is not None:
+        coordinator.set_rail_calibration(rail_calib)
+        log_print(f"[CALIB] Phase1 FAILED, using persisted: angle={rail_calib.angle_rad:.4f} "
                   f"origin=({rail_calib.origin_x:.0f},{rail_calib.origin_y:.0f})")
     else:
-        try:
-            cam = CameraHub.instance().get("main")
-            if cam is not None:
-                calib_params = _cfg.get("pendulum", {}).get("calib_params", None)
-                calib = _run_phase1_calibration(cam, calib_params)
-                if calib is not None:
-                    coordinator.set_rail_calibration(calib)
-                    log_print(f"[CALIB] Phase1 done: angle={calib.angle_rad:.4f} "
-                              f"origin=({calib.origin_x:.0f},{calib.origin_y:.0f})")
-                    calib_icon = _load_calib_icon()
-                    if vm is not None and calib_icon is not None:
-                        vm.set_calib_button(calib_icon, _ICON_SIZE, _ICON_MARGIN)
-                        vm.set_calib_button_visible(True)
-                        log_print("[CALIB] Calibrate button visible (bottom-right)")
-                    elif calib_icon is None:
-                        log_print("[CALIB] Button NOT shown: icon load failed")
-                    else:
-                        log_print("[CALIB] Button NOT shown: VisionManager is None")
-                else:
-                    log_print("[CALIB] Phase1 FAILED, fallback to horizontal axis")
-            else:
-                log_print("[CALIB] No camera available, skip calibration")
-        except Exception as e:
-            log_print(f"[CALIB] Phase1 error: {e}")
+        log_print("[CALIB] Phase1 FAILED, no calibration available")
+
+    if rail_calib is not None:
+        calib_icon = _load_calib_icon()
+        if vm is not None and calib_icon is not None:
+            vm.set_calib_button(calib_icon, _ICON_SIZE, _ICON_MARGIN)
+            vm.set_calib_button_visible(True)
+            log_print("[CALIB] Calibrate button visible (bottom-right)")
+        elif calib_icon is None:
+            log_print("[CALIB] Button NOT shown: icon load failed")
+        else:
+            log_print("[CALIB] Button NOT shown: VisionManager is None")
 
     main_callback, start_display_thread = _build_callbacks(manager, machine, coordinator)
 
