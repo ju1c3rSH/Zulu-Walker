@@ -14,16 +14,16 @@ cameras:
     gain: 200
     aec:
       enabled: true
-      adjust_interval_frames: 30
-      target_mean: 80
-      gain_min: 50
-      gain_max: 600
-      kp: 0.5
-      ki: 0.05
-      max_i: 100
-      deadband: 8
-      roi: [0.4, 0.7, 0.0, 1.0]
-      ema_alpha: 0.1
+      adjust_interval_frames: 30   # 每N帧调整一次 (~0.5s @ 60fps)
+      target_mean: 80              # ROI目标亮度 0-255, 越低越暗
+      gain_min: 50                 # 增益下限, 避免过暗
+      gain_max: 600                # 增益上限, 避免噪点过多
+      kp: 0.5                      # PI比例系数
+      ki: 0.05                     # PI积分系数
+      max_i: 100                   # 积分器抗饱和钳位 [灰度级×帧]
+      deadband: 8                  # 死区, |err|<=此值时跳过
+      roi: [0.4, 0.7, 0.0, 1.0]   # [y0_frac, y1_frac, x0_frac, x1_frac]
+      ema_alpha: 0.1               # EMA平滑系数, 越小越平滑
 
 uart_defaults:
   port: "/dev/ttyS4"
