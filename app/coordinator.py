@@ -155,6 +155,16 @@ class Ti2026Coordinator:
 
     def set_pc_heartbeat(self, detector: 'PcHeartbeatDetector') -> None:
         self._pc_heartbeat = detector
+        if detector is not None:
+            detector.set_on_connected(self._on_pc_connected)
+
+    def _on_pc_connected(self) -> None:
+        if not self._running:
+            return
+        if self._vision_state != VisionState.STREAMING or self._recording_test_id == 0:
+            return
+        log_print("[Recording] PC reconnected, retry notify")
+        threading.Thread(target=self._try_notify_pc, daemon=True).start()
 
     def _send(self, frame: bytes) -> bool:
         if self._uart_sender:
@@ -184,20 +194,22 @@ class Ti2026Coordinator:
             self._vision_state = new_state
 
     def _start_recording(self) -> None:
-        if self._pc_heartbeat is not None and not self._pc_heartbeat.is_connected:
-            log_print("[Recording] PC not connected, skip recording start")
-            return
         self._test_id += 1
         self._recording_test_id = self._test_id
         if self._vision_manager:
             self._vision_manager.set_test_id(self._test_id)
+        self._try_notify_pc()
+
+    def _try_notify_pc(self) -> None:
         if self._record_cmd_sender:
-            self._record_cmd_sender("start", self._test_id)
+            target_ip = self._pc_heartbeat.pc_ip if self._pc_heartbeat else None
+            self._record_cmd_sender("start", self._test_id, target_ip)
 
     def _stop_recording(self) -> None:
         if self._recording_test_id != 0:
             if self._record_cmd_sender:
-                self._record_cmd_sender("stop", self._recording_test_id)
+                target_ip = self._pc_heartbeat.pc_ip if self._pc_heartbeat else None
+                self._record_cmd_sender("stop", self._recording_test_id, target_ip)
             self._recording_test_id = 0
 
     def loop(self) -> None:
