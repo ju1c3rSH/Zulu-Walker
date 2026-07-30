@@ -4,8 +4,8 @@ import sys
 import threading
 import time
 from utils.log_util import log_print
-from typing import Optional
 from app.vision_state import VisionState
+from app.pc_heartbeat import PcHeartbeatDetector
 
 _DISPLAY_EVERY_N = 2
 _ICON_SIZE = 48
@@ -411,6 +411,13 @@ def main():
     bus = EventBus()
     coordinator = Ti2026Coordinator(bus)
     coordinator.set_wdt_feed(wdt_feed)
+
+    pc_heartbeat = PcHeartbeatDetector()
+    try:
+        pc_heartbeat.start()
+        coordinator.set_pc_heartbeat(pc_heartbeat)
+    except RuntimeError as e:
+        log_print(f"[Heartbeat] init FAIL: {e}")
 
     _setup_record_signaling(coordinator, _cfg)
 
