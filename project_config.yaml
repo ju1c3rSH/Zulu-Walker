@@ -37,7 +37,7 @@ ai:
   active: "yolo11n"
 
 pendulum:
-  pixels_per_cm: 25.6
+  pixels_per_cm: 50.0
   length_cm: 25.0
   # rail_calibration:          # Auto-generated after Phase 2 origin calibration
   #   origin_x: 320.0
