@@ -7,10 +7,11 @@ import time
 import traceback
 from collections import deque
 from threading import Thread
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+import cv2
 import numpy as np
 import yaml
 
@@ -73,6 +74,12 @@ class VisionManager:
         self._time_str_cached: str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
         self._time_str_width_cached: int = 0
         self._time_counter: int = 0
+
+        self._aec_enabled: bool = False
+        self._aec_cfg: Dict[str, Any] = {}
+        self._aec_counter: int = 0
+        self._aec_err_i: float = 0.0
+        self._aec_ema: Optional[float] = None
 
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
@@ -162,6 +169,18 @@ class VisionManager:
             )
             self._pipelines[pipeline_id] = pipe
 
+        for cid in self._hub.list_ids():
+            cam = self._hub.get(cid)
+            if cam is None:
+                continue
+            cfg = getattr(cam, "aec_config", None)
+            if cfg and cfg.get("enabled"):
+                self._aec_enabled = True
+                self._aec_cfg = cfg
+                logger.info("AEC enabled: target_mean=%s, interval=%s frames",
+                            cfg.get("target_mean"), cfg.get("adjust_interval_frames"))
+                break
+
         self._running = True
         self._process_thread = Thread(target=self._process_loop, daemon=True)
         self._process_thread.start()
@@ -191,6 +210,13 @@ class VisionManager:
                         cb(all_results)
                     except Exception as e:
                         pass
+
+                if self._aec_enabled and any_fresh:
+                    self._aec_counter += 1
+                    interval = self._aec_cfg.get("adjust_interval_frames", 30)
+                    if self._aec_counter >= interval:
+                        self._aec_counter = 0
+                        self._adjust_exposure()
 
                 profiler.stop("total")
                 time.sleep(0)
@@ -258,6 +284,63 @@ class VisionManager:
             if self._capture_sink is not None and self._capture_seq % self._CAPTURE_EVERY_N == 0:
                 self._capture_sink(raw_img)
             return
+
+    def _adjust_exposure(self) -> None:
+        if not self._aec_enabled:
+            return
+        cam = self._hub.get("main")
+        if cam is None:
+            return
+        frame = getattr(cam, "last_frame", None)
+        if frame is None:
+            return
+        try:
+            h, w = frame.shape[:2]
+            roi = self._aec_cfg.get("roi", [0.4, 0.7, 0.0, 1.0])
+            ry0 = int(h * roi[0])
+            ry1 = int(h * roi[1])
+            rx0 = int(w * roi[2])
+            rx1 = int(w * roi[3])
+            if ry1 <= ry0 or rx1 <= rx0:
+                return
+            patch = frame[ry0:ry1, rx0:rx1]
+            gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+            mean_val = float(np.mean(gray))
+
+            alpha = self._aec_cfg.get("ema_alpha", 0.1)
+            if self._aec_ema is None:
+                self._aec_ema = mean_val
+            else:
+                self._aec_ema = (1.0 - alpha) * self._aec_ema + alpha * mean_val
+
+            target = self._aec_cfg.get("target_mean", 80)
+            deadband = self._aec_cfg.get("deadband", 8)
+            err = target - self._aec_ema
+            if abs(err) <= deadband:
+                return
+
+            max_i = self._aec_cfg.get("max_i", 100)
+            self._aec_err_i += err
+            self._aec_err_i = max(-max_i, min(max_i, self._aec_err_i))
+
+            kp = self._aec_cfg.get("kp", 0.5)
+            ki = self._aec_cfg.get("ki", 0.05)
+            delta = kp * err + ki * self._aec_err_i
+
+            last_gain = cam.last_gain
+            if last_gain is None:
+                return
+            new_gain = int(last_gain + delta)
+            gain_min = self._aec_cfg.get("gain_min", 50)
+            gain_max = self._aec_cfg.get("gain_max", 600)
+            new_gain = max(gain_min, min(gain_max, new_gain))
+
+            if new_gain != last_gain:
+                cam.set_gain(new_gain)
+                logger.debug("AEC: gain %s->%s  mean=%.1f  ema=%.1f  err=%.1f  delta=%.1f",
+                             last_gain, new_gain, mean_val, self._aec_ema, err, delta)
+        except Exception:
+            logger.warning("AEC adjust_exposure failed", exc_info=True)
 
     def _draw_overlays(self, img, pipeline_id: str, fps: float, detections) -> None:
         try:

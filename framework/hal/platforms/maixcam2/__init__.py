@@ -11,6 +11,9 @@ def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> Maix
     focal_length_mm = kwargs.pop("focal_length_mm", None)
     sensor_width_mm = kwargs.pop("sensor_width_mm", None)
     sensor_height_mm = kwargs.pop("sensor_height_mm", None)
+    exposure_us = kwargs.pop("exposure_us", None)
+    gain = kwargs.pop("gain", None)
+    aec = kwargs.pop("aec", None)
     return MaixCam2Camera(
         source=source,
         width=width,
@@ -21,6 +24,9 @@ def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> Maix
         focal_length_mm=focal_length_mm,
         sensor_width_mm=sensor_width_mm,
         sensor_height_mm=sensor_height_mm,
+        exposure_us=exposure_us,
+        gain=gain,
+        aec=aec,
     )
 
 
