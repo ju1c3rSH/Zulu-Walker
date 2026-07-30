@@ -1,0 +1,18 @@
+camera:
+  width: 1280
+  height: 352
+  fps: 60
+
+calib:
+  binary_threshold: 127
+  min_contour_area_ratio: 0.04
+  min_aspect_ratio: 1.0
+  canny_low: 50
+  canny_high: 150
+  hough_threshold: 50
+  hough_min_line_len: 150
+  edge_angle_max_deg: 15
+
+debug:
+  save_frame: true
+  save_binary: true
