@@ -275,15 +275,16 @@ class VisionManager:
             if ai_result is not None and ai_result.success:
                 detections = ai_result.result_data.get("detections", [])
 
-            self._draw_overlays(raw_img, pid, fps, detections)
+            disp = raw_img.copy()
+            self._draw_overlays(disp, pid, fps, detections)
             if self._calib_button_visible:
-                self._draw_calib_button(raw_img)
-            self._draw_calib_flash(raw_img)
-            self._draw_exit_icon(raw_img)
-            self._display_frame = raw_img
+                self._draw_calib_button(disp)
+            self._draw_calib_flash(disp)
+            self._draw_exit_icon(disp)
+            self._display_frame = disp
             self._capture_seq += 1
             if self._capture_sink is not None and self._capture_seq % self._CAPTURE_EVERY_N == 0:
-                self._capture_sink(raw_img)
+                self._capture_sink(disp)
             return
 
     def _adjust_exposure(self) -> None:
