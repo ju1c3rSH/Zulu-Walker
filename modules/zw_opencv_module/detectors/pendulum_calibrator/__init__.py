@@ -55,7 +55,7 @@ class PendulumCalibrator:
     def __init__(self, frame_w: int = 640, frame_h: int = 640,
                  binary_threshold: int = 127,
                  min_contour_area_ratio: float = 0.04,
-                 min_aspect_ratio: float = 2.0,
+                 min_aspect_ratio: float = 1.0,
                  canny_low: int = 50, canny_high: int = 150,
                  hough_threshold: int = 50,
                  hough_min_line_len: int = 150,
@@ -207,6 +207,9 @@ class PendulumCalibrator:
         self._diag['min_aspect_limit'] = self._min_aspect_ratio
         self._diag['contour_aspect_ok'] = ratio >= self._min_aspect_ratio
 
+        # min_aspect_ratio=1.0 is a deliberate neutral floor:
+        # at 1280x352 the rail may appear near-square due to perspective;
+        # min_contour_area_ratio + center-bounds are sufficient filters here.
         if ratio < self._min_aspect_ratio:
             self._diag['fail_reason'] = 'aspect_ratio'
             return None

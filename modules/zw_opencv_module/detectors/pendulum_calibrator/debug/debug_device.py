@@ -256,8 +256,8 @@ def main():
     cam_cfg = config.get('camera', {})
     try:
         cam = maix.camera.Camera(
-            width=cam_cfg.get('width', 640),
-            height=cam_cfg.get('height', 640),
+            width=cam_cfg.get('width', 1280),
+            height=cam_cfg.get('height', 352),
             fps=cam_cfg.get('fps', 60),
         )
     except Exception as e:
@@ -340,7 +340,7 @@ def main():
                 frame_h=frame_bgr.shape[0],
                 binary_threshold=cal_cfg.get('binary_threshold', 127),
                 min_contour_area_ratio=cal_cfg.get('min_contour_area_ratio', 0.04),
-                min_aspect_ratio=cal_cfg.get('min_aspect_ratio', 2.0),
+                min_aspect_ratio=cal_cfg.get('min_aspect_ratio', 1.0),
                 canny_low=cal_cfg.get('canny_low', 50),
                 canny_high=cal_cfg.get('canny_high', 150),
                 hough_threshold=cal_cfg.get('hough_threshold', 50),
