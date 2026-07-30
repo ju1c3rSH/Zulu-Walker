@@ -228,6 +228,10 @@ class Ti2026Coordinator:
             if now - self._last_fps_time >= 1.0:
                 self._last_fps = self._vision_manager.get_pipeline_fps("cam_main")
                 self._last_fps_time = now
+                infer_fps = self._latest_ai.get("infer_fps", 0.0)
+                infer_ms = self._latest_ai.get("infer_avg_ms", 0.0)
+                if infer_fps > 0:
+                    log_print(f"[AI] YOLO infer: {infer_fps:.1f} fps, {infer_ms:.2f} ms")
 
         self._wdt_feed()
         self._wdt_count += 1
