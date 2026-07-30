@@ -64,6 +64,13 @@ _VEL_SAFETY_FACTOR = 2.0          # pixel displacement safety factor
 _BALL_ARM_FRAMES = 2              # consecutive valid detections to start sending
 _BALL_DROP_FRAMES = 3             # consecutive invalid detections to stop sending
 
+# α-β filter parameters (steady-state Kalman for 1D constant-velocity model)
+_AB_ALPHA = 0.7                  # position smoothing gain (0=full smooth, 1=raw measurement)
+_AB_BETA = 0.3                   # velocity tracking gain
+_AB_V_MIN_LOCK = 25.0            # lock threshold (~1 cm/s @ 25.6 px/cm)
+_AB_LOCK_FRAMES = 3              # consecutive slow frames to enter LOCKED
+_AB_UNLOCK_JUMP_PX = 25.0        # position residual to exit LOCKED (~1 cm)
+
 
 class Ti2026Coordinator:
 
@@ -102,18 +109,21 @@ class Ti2026Coordinator:
         # Vision result cache
         self._latest_line: dict = {}
         self._latest_ai: dict = {}
+        self._ai_seq: int = 0
+        self._ai_new: bool = False
         self._pixels_per_cm: float = 25.6
         self._frame_width: int = 640
         self._frame_height: int = 640
         self._rail_calib: Optional[RailCalibration] = None
         self._origin_from_ball: bool = False
 
-        # ball velocity tracking (for ball_val)
-        self._vel_last_cm_x100: Optional[int] = None
-        self._vel_last_time: Optional[float] = None
-        self._vel_cached: int = 0
-        self._VEL_STALL_TIMEOUT_S: float = 0.5   # decay velocity to 0 after stall
-        self._VEL_MAX_DT_S: float = 1.0           # max dt before reset
+        # α-β filter state (X axis only for pendulum 1D groove)
+        self._ab_x: float = 0.0
+        self._ab_vx: float = 0.0
+        self._ab_ts_ns: int = 0
+        self._ab_ready: bool = False
+        self._ab_locked: bool = False
+        self._ab_lock_count: int = 0
 
         # ball detection spatial gating + hysteresis
         self._ball_armed: bool = False
@@ -304,6 +314,8 @@ class Ti2026Coordinator:
                     self._latest_line = data
                 elif task_name == "ai_inference":
                     self._latest_ai = data
+                    self._ai_seq += 1
+                    self._ai_new = True
 
     # ===== Master events =====
 
@@ -437,7 +449,9 @@ class Ti2026Coordinator:
                 half = max(self._frame_width, self._frame_height) / 2.0
                 pe_x = int((dist_px / half) * 5000.0)
                 ball_cm = dist_px / self._pixels_per_cm
-                return f"pe_x={pe_x} ball_cm={ball_cm:.1f} found=1 v={self._vel_cached}"
+                v_px = self._ab_vx if self._ab_ready else 0.0
+                ball_v = int(round(v_px / self._pixels_per_cm * 100))
+                return f"pe_x={pe_x} ball_cm={ball_cm:.1f} found=1 v={ball_v}"
             return "pe_x=0 ball_cm=0 found=0 v=0"
 
         return ""
@@ -516,7 +530,7 @@ class Ti2026Coordinator:
         """
         return (_MAX_BALL_SPEED_CM_S / _BALL_MIN_FPS) * self._pixels_per_cm * _VEL_SAFETY_FACTOR
 
-    # ===== ball velocity =====
+    # ===== ball detection helpers =====
 
     def _on_ball_invalid(self) -> None:
         self._ball_hit_count = 0
@@ -525,94 +539,140 @@ class Ti2026Coordinator:
             self._ball_armed = False
             self._ball_last_cx = None
             self._ball_last_cy = None
-            self._compute_ball_velocity(False, 0)
+            self._ab_ball_filter_reset()
 
-    def _compute_ball_velocity(
-        self, ball_found: bool, ball_cm_scaled: int
-    ) -> int:
-        """Compute cached ball velocity (0.01 cm/s) for ball_val field.
+    # ===== α-β filter (X-axis only, pendulum 1D groove) =====
 
-        Only recalculates when position changes, avoiding repeated computation
-        from the coordinator's oversampling (~500Hz vs ~60fps vision rate).
-        Decays velocity to 0 when the ball position stalls for >0.5s.
+    def _ab_ball_filter_reset(self) -> None:
+        self._ab_ready = False
+        self._ab_locked = False
+        self._ab_lock_count = 0
+        self._ab_x = 0.0
+        self._ab_vx = 0.0
+        self._ab_ts_ns = 0
+
+    def _ab_ball_filter_apply(
+        self, zx: float, is_new_frame: bool, t_ns: int
+    ) -> tuple[float, float, bool]:
+        """Apply α-β filter to 1D position measurement.
+
+        Returns (x_filtered, vx_filtered, is_locked).
+        is_new_frame=True triggers UPDATE step, else PREDICT (extrapolate only,
+        does not mutate internal state).
         """
-        now = time.monotonic()
+        if not self._ab_ready:
+            if is_new_frame:
+                self._ab_x = zx
+                self._ab_vx = 0.0
+                self._ab_ts_ns = t_ns
+                self._ab_ready = True
+            return zx, 0.0, False
 
-        if not ball_found:
-            self._vel_last_cm_x100 = None
-            self._vel_last_time = None
-            self._vel_cached = 0
-            return 0
+        if is_new_frame:
+            dt_s = (t_ns - self._ab_ts_ns) / 1_000_000_000.0
+            if dt_s <= 0.0:
+                dt_s = 0.025
 
-        if self._vel_last_cm_x100 is None:
-            self._vel_last_cm_x100 = ball_cm_scaled
-            self._vel_last_time = now
-            self._vel_cached = 0
-            return 0
+            x_pred = self._ab_x + self._ab_vx * dt_s
+            residual = zx - x_pred
 
-        if ball_cm_scaled == self._vel_last_cm_x100:
-            if now - self._vel_last_time > self._VEL_STALL_TIMEOUT_S:
-                self._vel_last_time = now
-                self._vel_cached = 0
-            return self._vel_cached
+            if self._ab_locked:
+                if abs(residual) > _AB_UNLOCK_JUMP_PX:
+                    self._ab_locked = False
+                    self._ab_lock_count = 0
+                else:
+                    self._ab_x = zx
+                    self._ab_vx = 0.0
+                    self._ab_ts_ns = t_ns
+                    return zx, 0.0, True
 
-        dt = now - self._vel_last_time
-        if dt <= 0.0 or dt > self._VEL_MAX_DT_S:
-            self._vel_last_cm_x100 = ball_cm_scaled
-            self._vel_last_time = now
-            self._vel_cached = 0
-            return 0
+            self._ab_x = x_pred + _AB_ALPHA * residual
+            self._ab_vx = self._ab_vx + (_AB_BETA / dt_s) * residual
+            self._ab_ts_ns = t_ns
 
-        vel = (ball_cm_scaled - self._vel_last_cm_x100) / dt  # 0.01 cm/s
-        self._vel_last_cm_x100 = ball_cm_scaled
-        self._vel_last_time = now
-        raw = int(round(vel))
-        self._vel_cached = max(-32768, min(32767, raw))
-        return self._vel_cached
+            speed = abs(self._ab_vx)
+            if speed < _AB_V_MIN_LOCK:
+                self._ab_lock_count += 1
+                if self._ab_lock_count >= _AB_LOCK_FRAMES:
+                    self._ab_locked = True
+                    self._ab_vx = 0.0
+            else:
+                self._ab_lock_count = 0
+
+            return self._ab_x, self._ab_vx, self._ab_locked
+        else:
+            if self._ab_locked:
+                return self._ab_x, 0.0, True
+
+            dt_s = (t_ns - self._ab_ts_ns) / 1_000_000_000.0
+            if dt_s <= 0.0:
+                return self._ab_x, self._ab_vx, self._ab_locked
+
+            x_pred = self._ab_x + self._ab_vx * dt_s
+            return x_pred, self._ab_vx, self._ab_locked
 
     def _build_pendulum_position_payload(self) -> Optional[bytes]:
         data = self._latest_ai
         detections = data.get("detections", [])
         ball = max((d for d in detections if d.class_id == 0), key=lambda d: d.score, default=None)
 
+        is_new_frame = self._ai_new
+        self._ai_new = False
+        t_ns = time.perf_counter_ns()
+
         if ball is None:
             self._on_ball_invalid()
-            return None
-
-        cx = ball.x + ball.w / 2
-        cy = ball.y + ball.h / 2
-
-        if self._ball_armed and self._ball_last_cx is not None and self._ball_last_cy is not None:
-            max_disp_sq = self._max_displacement_px ** 2
-            dx = cx - self._ball_last_cx
-            dy = cy - self._ball_last_cy
-            if dx * dx + dy * dy > max_disp_sq:
-                self._on_ball_invalid()
+            if not self._ball_armed:
                 return None
+            cx_f, vx, _ = self._ab_ball_filter_apply(0.0, False, t_ns)
+            cy_f = self._ball_last_cy if self._ball_last_cy is not None else 0.0
+        else:
+            cx = ball.x + ball.w / 2
+            cy = ball.y + ball.h / 2
 
-        self._ball_hit_count = min(self._ball_hit_count + 1, _BALL_ARM_FRAMES)
-        self._ball_miss_count = 0
+            if is_new_frame:
+                if self._ball_armed and self._ball_last_cx is not None and self._ball_last_cy is not None:
+                    max_disp_sq = self._max_displacement_px ** 2
+                    dx = cx - self._ball_last_cx
+                    dy = cy - self._ball_last_cy
+                    if dx * dx + dy * dy > max_disp_sq:
+                        self._on_ball_invalid()
+                        return None
 
-        if self._ball_hit_count >= _BALL_ARM_FRAMES:
-            self._ball_armed = True
+                self._ball_hit_count = min(self._ball_hit_count + 1, _BALL_ARM_FRAMES)
+                self._ball_miss_count = 0
 
-        if not self._ball_armed:
-            return None
+                if self._ball_hit_count >= _BALL_ARM_FRAMES:
+                    self._ball_armed = True
 
-        self._ball_last_cx = cx
-        self._ball_last_cy = cy
+                if not self._ball_armed:
+                    return None
+
+                self._ball_last_cx = cx
+                self._ball_last_cy = cy
+
+                infer_ts = getattr(self._ai, "infer_timestamp_ns", 0)
+                update_ts = infer_ts if infer_ts > 0 else t_ns
+                cx_f, vx, _ = self._ab_ball_filter_apply(cx, True, update_ts)
+                cy_f = cy
+            else:
+                if not self._ball_armed:
+                    return None
+                cx_f, vx, _ = self._ab_ball_filter_apply(0.0, False, t_ns)
+                cy_f = self._ball_last_cy if self._ball_last_cy is not None else 0.0
 
         calib = self._rail_calib
         if calib is not None and calib.calibrated:
-            dist_px = calib.project(cx, cy)
+            dist_px = calib.project(cx_f, cy_f)
         else:
-            dist_px = cx - self._frame_width / 2.0
+            dist_px = cx_f - self._frame_width / 2.0
         half = max(self._frame_width, self._frame_height) / 2.0
         pe_x = int(((dist_px) / half) * 5000.0)
         ball_cm = dist_px / self._pixels_per_cm
         ball_cm_scaled = int(ball_cm * 100)
 
-        ball_val = self._compute_ball_velocity(True, ball_cm_scaled)
+        ball_val = int(round(vx / self._pixels_per_cm * 100))
+        ball_val = max(-32768, min(32767, ball_val))
 
         return (pe_x.to_bytes(2, 'little', signed=True) +
                 ball_cm_scaled.to_bytes(2, 'little', signed=True) +
