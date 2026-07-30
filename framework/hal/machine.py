@@ -80,6 +80,9 @@ class Machine:
                 focal_length_mm=cam_cfg.get("focal_length_mm"),
                 sensor_width_mm=cam_cfg.get("sensor_width_mm"),
                 sensor_height_mm=cam_cfg.get("sensor_height_mm"),
+                exposure_us=cam_cfg.get("exposure_us"),
+                gain=cam_cfg.get("gain"),
+                aec=cam_cfg.get("aec"),
             )
 
         display = platform_mod.create_display()

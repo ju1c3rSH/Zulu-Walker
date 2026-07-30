@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -28,6 +28,9 @@ class MaixCam2Camera:
         focal_length_mm: Optional[float] = None,
         sensor_width_mm: Optional[float] = None,
         sensor_height_mm: Optional[float] = None,
+        exposure_us: Optional[int] = None,
+        gain: Optional[int] = None,
+        aec: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._camera_id = camera_id
         self._focal_length_mm = focal_length_mm
@@ -37,6 +40,9 @@ class MaixCam2Camera:
         self._cam: Optional[maix.camera.Camera] = None
         self._last_raw: Optional[maix.image.Image] = None
         self._last_frame: Optional[np.ndarray] = None
+        self._last_exposure: Optional[int] = None
+        self._last_gain: Optional[int] = None
+        self._aec_cfg: Optional[Dict[str, Any]] = aec if aec else None
         try:
             self._cam = maix.camera.Camera(
                 width=width,
@@ -48,6 +54,12 @@ class MaixCam2Camera:
                 open=True,
             )
             self._opened = True
+            if exposure_us is not None:
+                self._cam.exposure(int(exposure_us))
+                self._last_exposure = int(exposure_us)
+            if gain is not None:
+                self._cam.gain(int(gain))
+                self._last_gain = int(gain)
         except Exception as e:
             logger.warning("Camera init failed: %s", e)
             self._opened = False
@@ -97,6 +109,23 @@ class MaixCam2Camera:
         """The most recent raw maix Image frame (RGB888)."""
         return self._last_raw
 
+    @property
+    def last_frame(self) -> Optional[np.ndarray]:
+        """The most recent BGR ndarray frame (cached by read_raw)."""
+        return self._last_frame
+
+    @property
+    def last_gain(self) -> Optional[int]:
+        return self._last_gain
+
+    @property
+    def last_exposure(self) -> Optional[int]:
+        return self._last_exposure
+
+    @property
+    def aec_config(self) -> Optional[Dict[str, Any]]:
+        return self._aec_cfg
+
     def read(self) -> Optional[np.ndarray]:
         if self._cam is None:
             return None
@@ -128,6 +157,26 @@ class MaixCam2Camera:
     def raw_camera(self):
         return self._cam
 
+    def set_gain(self, val) -> bool:
+        if self._cam is None:
+            return False
+        try:
+            self._cam.gain(int(val))
+            self._last_gain = int(val)
+            return True
+        except Exception:
+            return False
+
+    def set_exposure(self, val) -> bool:
+        if self._cam is None:
+            return False
+        try:
+            self._cam.exposure(int(val))
+            self._last_exposure = int(val)
+            return True
+        except Exception:
+            return False
+
     def set(self, prop_id: int, value) -> bool:
         if self._cam is None:
             return False
@@ -141,11 +190,9 @@ class MaixCam2Camera:
             elif prop_id == _CAP_PROP_FPS:
                 return False
             elif prop_id == _CAP_PROP_EXPOSURE:
-                self._cam.exposure(int(value))
-                return True
+                return self.set_exposure(value)
             elif prop_id == _CAP_PROP_GAIN:
-                self._cam.gain(int(value))
-                return True
+                return self.set_gain(value)
             else:
                 return False
         except Exception:
