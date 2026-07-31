@@ -89,6 +89,7 @@ def _build_callbacks(manager, machine, coordinator):
 
     _touch_down = False
     _touch_x = _touch_y = 0
+    _last_flash_toggle = 0.0
 
     def _in_btn(x, y, bx, by, size=None):
         if size is None:
@@ -97,7 +98,7 @@ def _build_callbacks(manager, machine, coordinator):
 
     def main_callback():
         """Touch handling only — fast (~0ms), no JPEG encoding, no GIL hog."""
-        nonlocal _touch_down, _touch_x, _touch_y
+        nonlocal _touch_down, _touch_x, _touch_y, _last_flash_toggle
 
         if _touch is not None:
             try:
@@ -157,6 +158,20 @@ def _build_callbacks(manager, machine, coordinator):
                                                 else:
                                                     log_print("[CALIB] Phase2 FAILED: no ball detected")
                                                 coordinator.change_state(VisionState.IDLE)
+                                    # Check fill light button
+                                    fl_rect = vm.get_fill_light_button_rect()
+                                    if fl_rect is not None:
+                                        fx, fy, fw, _ = fl_rect
+                                        if _in_btn(_touch_x, _touch_y, fx, fy, size=fw):
+                                            now = time.monotonic()
+                                            if now - _last_flash_toggle >= 0.3:
+                                                _last_flash_toggle = now
+                                                new_state = vm.toggle_fill_light()
+                                                if new_state is not None:
+                                                    _persist_fill_light_state(new_state)
+                                                    log_print(f"[LED] fill light -> {'ON' if new_state else 'OFF'}")
+                                                else:
+                                                    log_print("[LED] fill light toggle FAILED (GPIO)")
                     _touch_down = False
             except Exception:
                 pass
@@ -383,22 +398,108 @@ def _run_phase1_calibration(camera, calib_params=None):
     return None
 
 
+_CONFIG_WRITE_LOCK = threading.Lock()
+
+
 def _persist_calibration(calib):
     """Write RailCalibration to project_config.yaml, preserving existing content."""
     import yaml
+    with _CONFIG_WRITE_LOCK:
+        try:
+            with open("project_config.yaml", "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+        except Exception:
+            cfg = {}
+        if "pendulum" not in cfg:
+            cfg["pendulum"] = {}
+        cfg["pendulum"]["rail_calibration"] = calib.to_dict()
+        try:
+            with open("project_config.yaml", "w", encoding="utf-8") as f:
+                yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        except Exception:
+            pass
+
+
+def _load_icon(path, size: int = 48):
+    """Load an icon, resized to `size`x`size`. Absolute or project-root-relative path."""
+    if not path:
+        return None
     try:
-        with open("project_config.yaml", "r") as f:
-            cfg = yaml.safe_load(f) or {}
-    except Exception:
-        cfg = {}
-    if "pendulum" not in cfg:
-        cfg["pendulum"] = {}
-    cfg["pendulum"]["rail_calibration"] = calib.to_dict()
+        from maix import image as _mi
+        if not os.path.isabs(path):
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            path = os.path.join(base, path)
+        icon = _mi.load(path)
+        if icon is None:
+            log_print(f"[ICON] load FAILED, path={path}")
+            return None
+        return icon.resize(size, size)
+    except Exception as e:
+        log_print(f"[ICON] load exception: {e}")
+        return None
+
+
+_FILL_LIGHT_STATE_PATH = os.path.join("logs", "fill_light.state")
+_fill_light_persist_q = None
+_fill_light_persist_thread = None
+
+
+def _load_fill_light_state():
+    """Read persisted fill-light state. Returns bool, or None if no state file."""
     try:
-        with open("project_config.yaml", "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        with open(_FILL_LIGHT_STATE_PATH, "r", encoding="utf-8") as f:
+            v = f.read().strip()
+        return v == "1"
     except Exception:
-        pass
+        return None
+
+
+def _write_fill_light_state(on: bool) -> None:
+    """Write fill_light state to logs/fill_light.state (atomic, tiny).
+    Runs in the background writer thread; must not block the main loop."""
+    import tempfile
+    if _load_fill_light_state() == bool(on):
+        return
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir="logs", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("1" if on else "0")
+        os.replace(tmp_path, _FILL_LIGHT_STATE_PATH)
+    except Exception as e:
+        log_print(f"[LED] fill_light state persist FAILED: {e}")
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+
+def _ensure_fill_light_persist():
+    """Start the single background state-writer thread on first use."""
+    global _fill_light_persist_q, _fill_light_persist_thread
+    if _fill_light_persist_q is None:
+        import queue
+        _fill_light_persist_q = queue.Queue()
+
+        def _writer_loop():
+            while True:
+                on = _fill_light_persist_q.get()
+                try:
+                    while True:
+                        on = _fill_light_persist_q.get_nowait()
+                except Exception:
+                    pass
+                _write_fill_light_state(on)
+
+        _fill_light_persist_thread = threading.Thread(target=_writer_loop, daemon=True)
+        _fill_light_persist_thread.start()
+
+
+def _persist_fill_light_state(on: bool) -> None:
+    """Queue a fill_light state persist; non-blocking, coalesced."""
+    _ensure_fill_light_persist()
+    _fill_light_persist_q.put(bool(on))
 
 
 def main():
@@ -419,14 +520,33 @@ def main():
 
     _start_beacon()
 
+    fill_light_cfg = _cfg.get("fill_light") or {}
+    if not isinstance(fill_light_cfg, dict):
+        fill_light_cfg = {}
+    fill_start_on = bool(fill_light_cfg.get("start_on", True))
+    _persisted_state = _load_fill_light_state()
+    if _persisted_state is not None:
+        fill_start_on = _persisted_state
+    fill_icon_on = fill_light_cfg.get("icon_on")
+    fill_icon_off = fill_light_cfg.get("icon_off")
     try:
-        from framework.hal.platforms.maixcam2 import enable_fill_light
-        if enable_fill_light():
-            log_print("[LED] fill light ON")
-        else:
-            log_print("[LED] fill light init FAILED (skipped)")
+        from framework.hal.platforms.maixcam2 import set_fill_light as _set_fill_light
+        _HAS_FILL_LIGHT = True
     except Exception as e:
-        log_print(f"[LED] fill light init exception: {e}")
+        _set_fill_light = None
+        _HAS_FILL_LIGHT = False
+        log_print(f"[LED] fill light platform import failed: {e}")
+
+    # actual hardware state; falls back to OFF if GPIO init fails so the
+    # displayed icon always matches the real light
+    _fill_light_actual = fill_start_on
+    if _HAS_FILL_LIGHT:
+        try:
+            _fill_light_actual = bool(_set_fill_light(fill_start_on))
+            log_print(f"[LED] fill light {'ON' if _fill_light_actual else 'OFF'} (start_on={fill_start_on})")
+        except Exception as e:
+            _fill_light_actual = False
+            log_print(f"[LED] fill light init exception: {e}")
 
     from framework.event_bus import EventBus
     from app.coordinator import Ti2026Coordinator
@@ -477,6 +597,17 @@ def main():
     exit_icon = _load_exit_icon()
     if exit_icon is not None and vm is not None:
         vm.set_exit_icon(exit_icon, _ICON_SIZE, _ICON_MARGIN)
+
+    if vm is not None and _HAS_FILL_LIGHT and fill_icon_on and fill_icon_off:
+        fl_icon_on = _load_icon(fill_icon_on, _ICON_SIZE)
+        fl_icon_off = _load_icon(fill_icon_off, _ICON_SIZE)
+        if fl_icon_on is not None and fl_icon_off is not None:
+            vm.set_fill_light_button(fl_icon_on, fl_icon_off, size=_ICON_SIZE)
+            vm.set_fill_light_controller(_set_fill_light)
+            vm.set_fill_light_state(_fill_light_actual)
+            log_print("[LED] fill light button enabled")
+        else:
+            log_print("[LED] fill light button NOT shown: icon load failed")
 
     pixels_per_cm = _cfg.get("pendulum", {}).get("pixels_per_cm", 25.6)
     cam_cfg = _cfg.get("cameras", [{}])[0]

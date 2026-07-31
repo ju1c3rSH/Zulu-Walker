@@ -3,6 +3,11 @@ platform: maixcam2
 debug_console_enabled: false
 display_enabled: true
 
+fill_light:
+  start_on: true                      # 启动默认补光灯状态; 运行中点击手电筒按钮切换后持久化到 logs/fill_light.state (启动时该文件优先)
+  icon_on: "assets/flashlight_on.png"   # 48x48
+  icon_off: "assets/flashlight_off.png" # 48x48
+
 cameras:
   - camera_id: "main"
     source: null
