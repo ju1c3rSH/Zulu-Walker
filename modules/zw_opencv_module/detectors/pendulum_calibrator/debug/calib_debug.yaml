@@ -6,13 +6,16 @@ camera:
 calib:
   binary_threshold: 127
   min_contour_area_ratio: 0.04
+  max_contour_area_ratio: 0.55
   min_aspect_ratio: 1.0
   canny_low: 50
   canny_high: 150
   hough_threshold: 50
   hough_min_line_len: 150
   edge_angle_max_deg: 15
+  column_threshold: 180
 
 debug:
   save_frame: true
   save_binary: true
+  save_column_binary: true

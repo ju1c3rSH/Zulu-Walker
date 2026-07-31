@@ -112,6 +112,30 @@ def _print_diagnostics(diag: dict, frame_no: int):
 
     fr = diag.get('fail_reason')
 
+    # Column-centroid diagnostics always print (success or fallback), so a
+    # failed primary stage is debuggable instead of being silently hidden.
+    cpts = diag.get('column_points')
+    ct = diag.get('column_threshold')
+    cmed = diag.get('column_median_h')
+    cfail = diag.get('column_fail_reason')
+    if cpts is not None or ct is not None or cfail is not None:
+        cpts_s = f" pts={cpts}" if cpts is not None else ""
+        ct_s = f" th={ct}" if ct is not None else ""
+        cmed_s = f" med_h={cmed}" if cmed is not None else ""
+        cfail_s = f" col_fail={cfail}" if cfail is not None else ""
+        print(f"[CALIB] column-centroid:{ct_s}{cpts_s}{cmed_s}{cfail_s}")
+
+    if cfail in ('column_insufficient', 'column_median_height', 'column_off_band',
+                 'column_fit_error', 'column_threshold_error'):
+        print(f"[CALIB] \u2717 column FAIL: {cfail}")
+        return
+
+    if fr == 'max_area':
+        ca = diag.get('contour_area', '?')
+        ma = diag.get('max_area_limit', '?')
+        print(f"[CALIB] \u2717 FAIL: max_area (area={ca} > max={ma}, frame-filling blob)")
+        return
+
     if fr == 'no_contours':
         print(f"[CALIB] \u2717 FAIL: no contours found")
         return
@@ -178,6 +202,8 @@ def _print_diagnostics(diag: dict, frame_no: int):
     if diag.get('calibrated'):
         osrc = diag.get('origin_source', '?')
         print(f"[CALIB] origin: {osrc}")
+        method = diag.get('method', '?')
+        print(f"[CALIB] method: {method}")
         angle = diag.get('angle_rad', 0.0)
         origin = diag.get('origin', (0.0, 0.0))
         d = diag.get('dir', (0.0, 0.0))
@@ -340,12 +366,14 @@ def main():
                 frame_h=frame_bgr.shape[0],
                 binary_threshold=cal_cfg.get('binary_threshold', 127),
                 min_contour_area_ratio=cal_cfg.get('min_contour_area_ratio', 0.04),
+                max_contour_area_ratio=cal_cfg.get('max_contour_area_ratio', 0.55),
                 min_aspect_ratio=cal_cfg.get('min_aspect_ratio', 1.0),
                 canny_low=cal_cfg.get('canny_low', 50),
                 canny_high=cal_cfg.get('canny_high', 150),
                 hough_threshold=cal_cfg.get('hough_threshold', 50),
                 hough_min_line_len=cal_cfg.get('hough_min_line_len', 150),
                 edge_angle_max_deg=cal_cfg.get('edge_angle_max_deg', 15),
+                column_threshold=cal_cfg.get('column_threshold', 180),
             )
 
             try:
@@ -378,6 +406,13 @@ def main():
                     cv2.imwrite("/root/calib_debug_binary.png", calibrator.get_debug_frame())
                 except Exception as e:
                     print(f"[CALIB] ! save binary error: {e}")
+            if dbg_cfg.get('save_column_binary', True):
+                try:
+                    col_bin = calibrator.last_column_binary
+                    if col_bin is not None:
+                        cv2.imwrite("/root/calib_debug_column.png", col_bin)
+                except Exception as e:
+                    print(f"[CALIB] ! save column binary error: {e}")
     finally:
         try:
             cam.close()
