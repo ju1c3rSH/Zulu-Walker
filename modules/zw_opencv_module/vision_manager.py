@@ -28,8 +28,12 @@ _module_dir = os.path.dirname(__file__)
 
 
 class VisionManager:
-    _DISPLAY_TEXT_SCALE = 3.0
-    _DISPLAY_TEXT_THICKNESS = 2
+    _LIST_TEXT_SCALE = 1.6
+    _LIST_TEXT_THICKNESS = 2
+    _LIST_MAX_LINES = 8
+    _BOX_THICKNESS = 1
+    _CORNER_NUM_SCALE = 1.2
+    _CORNER_NUM_THICKNESS = 1
 
     def __init__(self, camera_hub: CameraHub, config_path: str = None, ai: Optional[AIInference] = None) -> None:
         self._hub = camera_hub
@@ -427,6 +431,7 @@ class VisionManager:
 
         self._draw_header(img, pipeline_id, fps)
         self._draw_detections(img, detections, maix.image)
+        self._draw_detection_list(img, detections, maix.image)
 
     def _draw_header(self, img, pipeline_id: str, fps: float) -> None:
         try:
@@ -472,42 +477,72 @@ class VisionManager:
             except Exception:
                 pass
 
-    def _draw_detections(self, img, detections, maix_image) -> None:
+    def _draw_detection_list(self, img, detections, maix_image) -> None:
+        if not detections:
+            return
         labels = self._ai.labels if hasattr(self._ai, "labels") and self._ai.labels else []
 
-        for det in detections:
+        lines = []
+        line_h = 0
+        for i, det in enumerate(detections, start=1):
+            label_text = (
+                labels[det.class_id]
+                if 0 <= det.class_id < len(labels)
+                else str(det.class_id)
+            )
+            if i > self._LIST_MAX_LINES:
+                text = f"+{len(detections) - self._LIST_MAX_LINES} more"
+                lines.append(text)
+                break
+            else:
+                text = f"{i}: {label_text} {det.score:.2f}"
+                lines.append(text)
+            try:
+                size = maix_image.string_size(
+                    text, scale=self._LIST_TEXT_SCALE, thickness=self._LIST_TEXT_THICKNESS)
+                line_h = max(line_h, size[1])
+            except Exception:
+                line_h = max(line_h, 20)
+
+        line_spacing = line_h + 4
+        list_x = 6
+        list_y = 34
+        for idx, text in enumerate(lines):
+            try:
+                img.draw_string(list_x, list_y + idx * line_spacing, text,
+                                color=maix_image.COLOR_BLUE,
+                                scale=self._LIST_TEXT_SCALE,
+                                thickness=self._LIST_TEXT_THICKNESS)
+            except Exception:
+                pass
+
+    def _draw_detections(self, img, detections, maix_image) -> None:
+        for i, det in enumerate(detections, start=1):
             x1, y1 = det.x, det.y
             x2 = x1 + det.w
             y2 = y1 + det.h
 
-            label_text = (
-                labels[det.class_id]
-                if det.class_id < len(labels)
-                else str(det.class_id)
-            )
-            text = f"{label_text}:{det.score:.2f}"
-
             try:
-                size = maix_image.string_size(text, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
-                tw, th = size[0], size[1]
-            except Exception:
-                tw, th = 80, 24 * 3
-
-            bar_h = th + 6
-            label_y = y1 - bar_h
-            if label_y < 34:
-                label_y = y1 if y1 >= 34 else 34
-
-            try:
-                img.draw_rect(x1, label_y, tw + 8, bar_h, color=maix_image.COLOR_BLACK, thickness=-1)
+                img.draw_rect(x1, y1, det.w, det.h,
+                              color=maix_image.COLOR_GREEN, thickness=self._BOX_THICKNESS)
             except Exception:
                 pass
+
+            num_text = str(i)
             try:
-                img.draw_rect(x1, y1, det.w, det.h, color=maix_image.COLOR_GREEN, thickness=3)
+                num_size = maix_image.string_size(
+                    num_text, scale=self._CORNER_NUM_SCALE, thickness=self._CORNER_NUM_THICKNESS)
+                num_w, num_h = num_size[0], num_size[1]
             except Exception:
-                pass
+                num_w, num_h = 10, 10
+            pad = 2
+            nx = x2 - num_w - pad
+            ny = y2 - num_h - pad
+            nx = max(x1, nx)
+            ny = max(y1, ny)
             try:
-                img.draw_string(x1 + 4, label_y + 2, text, color=maix_image.COLOR_WHITE, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
+                img.draw_string(nx, ny, num_text, color=maix_image.COLOR_BLUE,
+                                scale=self._CORNER_NUM_SCALE, thickness=self._CORNER_NUM_THICKNESS)
             except Exception:
                 pass
 
