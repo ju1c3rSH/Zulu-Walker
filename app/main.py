@@ -70,7 +70,7 @@ def _load_exit_icon():
         return None
 
 
-def _build_callbacks(manager, machine, coordinator):
+def _build_callbacks(manager, machine, coordinator, wdt_feed=None):
     """Returns (main_callback, start_display_thread).
 
     main_callback: touch/input handling (~0ms), runs in main loop.
@@ -140,6 +140,11 @@ def _build_callbacks(manager, machine, coordinator):
                                     bx = _ICON_MARGIN
                                     if _in_btn(_touch_x, _touch_y, bx, by):
                                         import os
+                                        if wdt_feed is not None:
+                                            try:
+                                                wdt_feed.disable()
+                                            except Exception:
+                                                pass
                                         os._exit(0)
                                     # Check calibrate button
                                     calib_rect = vm.get_calib_button_rect()
@@ -225,10 +230,33 @@ def _make_wdt_feed():
                 _fail_count[0] += 1
                 if _fail_count[0] % 50 == 1:
                     log_print(f"[WDT] feed FAIL x{_fail_count[0]}: {e}")
+
+        def _disable():
+            for name in ("disable", "stop", "close"):
+                fn = getattr(_w, name, None)
+                if callable(fn):
+                    try:
+                        fn()
+                        return
+                    except Exception:
+                        continue
+
+        # Feed immediately: the WDT countdown starts at construction and the
+        # first feed from the boot sequence may not arrive for several seconds
+        # (WiFi AP start + model load). Feeding right away closes that gap.
+        try:
+            _w.feed()
+            _last[0] = time.monotonic()
+        except Exception as e:
+            log_print(f"[WDT] initial feed FAIL: {e}")
+
+        _feed.disable = _disable
         return _feed
     except Exception as e:
         log_print(f"[WDT] init FAIL: {e}")
-        return lambda: None
+        _noop = lambda: None
+        _noop.disable = lambda: None
+        return _noop
 
 
 def _init_streamer(vm) -> None:
@@ -515,8 +543,11 @@ def main():
     DebugConsole.set_global_enabled(_cfg.get("debug_console_enabled", True))
 
     wdt_feed = _make_wdt_feed()
+    wdt_feed()  # pre-WiFi feed: WDT countdown starts at construction
 
     _init_wifi(_cfg)
+
+    wdt_feed()  # post-WiFi feed: AP/STA start can take >1s
 
     _start_beacon()
 
@@ -565,6 +596,28 @@ def main():
     _setup_record_signaling(coordinator, _cfg)
 
     machine = Machine.create("project_config.yaml")
+    wdt_feed()  # post-model-load feed: AI model load from flash can take seconds
+
+    # --- Pendulum rail calibration (Phase-1) ---
+    # Runs here, BEFORE the vision module starts, so the camera is read by a
+    # single thread at startup (no concurrent read()/read_raw() window).
+    rail_calib = _load_persisted_calibration(_cfg)
+    phase1_result = None
+    try:
+        cam = CameraHub.instance().get("main")
+        if cam is not None:
+            # Let the camera settle after open (initial exposure/gain are
+            # fixed until software-AEC runs in the vision thread); feed the
+            # WDT during the wait so a slow boot never trips it.
+            for _ in range(3):
+                time.sleep(0.5)
+                wdt_feed()
+            calib_params = _cfg.get("pendulum", {}).get("calib_params", None)
+            phase1_result = _run_phase1_calibration(cam, calib_params)
+        else:
+            log_print("[CALIB] No camera available, skip Phase1")
+    except Exception as e:
+        log_print(f"[CALIB] Phase1 error: {e}")
 
     uart_cfg = _cfg.get("uart_defaults", {})
     uart_connected = machine.uart.is_connected if machine.uart else False
@@ -585,6 +638,9 @@ def main():
     vm = get_vision_manager()
     if vm:
         coordinator.connect_vision(vm)
+        draw_rail = _cfg.get("pendulum", {}).get("draw_rail", False)
+        vm.set_rail_draw(draw_rail, lambda: coordinator.get_rail_calibration())
+        log_print(f"[RAIL] draw_rail={'ON' if draw_rail else 'OFF'}")
 
     uart = get_interface()
     if uart:
@@ -617,18 +673,6 @@ def main():
     coordinator.set_pendulum_calibration(pixels_per_cm, cam_w, cam_h)
 
     # --- Pendulum rail calibration ---
-    rail_calib = _load_persisted_calibration(_cfg)
-    phase1_result = None
-    try:
-        cam = CameraHub.instance().get("main")
-        if cam is not None:
-            calib_params = _cfg.get("pendulum", {}).get("calib_params", None)
-            phase1_result = _run_phase1_calibration(cam, calib_params)
-        else:
-            log_print("[CALIB] No camera available, skip Phase1")
-    except Exception as e:
-        log_print(f"[CALIB] Phase1 error: {e}")
-
     if phase1_result is not None:
         if rail_calib is not None:
             from modules.zw_opencv_module.detectors.pendulum_calibrator import RailCalibration
@@ -663,7 +707,7 @@ def main():
         else:
             log_print("[CALIB] Button NOT shown: VisionManager is None")
 
-    main_callback, start_display_thread = _build_callbacks(manager, machine, coordinator)
+    main_callback, start_display_thread = _build_callbacks(manager, machine, coordinator, wdt_feed=wdt_feed)
 
     coordinator.start()
     start_display_thread()
