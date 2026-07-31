@@ -45,6 +45,12 @@ pendulum:
   pixels_per_cm: 50.0
   length_cm: 25.0
   draw_rail: true                  # 测试用: 显示帧上绘制标定轨道轴线 + 原点 + 钢球投影点 (比赛置 false)
+  # calib_params:                  # 可选，按需解除注释
+  #   binary_threshold: 127
+  #   min_contour_area_ratio: 0.04
+  #   max_contour_area_ratio: 0.55   # contour 回退: 拒绝整帧色块(面积>帧55%), 防 angle 恒0
+  #   min_aspect_ratio: 1.0
+  #   column_threshold: 180        # 列中心线法: 首个阈值, 失败自动降级 150->120; 高度门限按帧中位数自适应
   # rail_calibration:          # Auto-generated after Phase 2 origin calibration
   #   origin_x: 320.0
   #   origin_y: 320.0
