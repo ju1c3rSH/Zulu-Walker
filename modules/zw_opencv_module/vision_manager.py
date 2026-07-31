@@ -53,8 +53,10 @@ class VisionManager:
         self._wdt_count = 0
 
         self._capture_sink: callable = None
-        self._capture_seq: int = 0
-        self._CAPTURE_EVERY_N: int = 4
+        self._capture_last: float = 0.0
+        # Fixed-cadence JPEG push (independent of vision-loop jitter) so the
+        # PC records evenly-timed frames. 0.1s -> 10fps.
+        self._CAPTURE_INTERVAL_S: float = 0.1
 
         self._exit_icon = None
         self._exit_icon_size: int = 0
@@ -330,9 +332,16 @@ class VisionManager:
             self._draw_fill_light_button(disp)
             self._draw_exit_icon(disp)
             self._display_frame = disp
-            self._capture_seq += 1
-            if self._capture_sink is not None and self._capture_seq % self._CAPTURE_EVERY_N == 0:
-                self._capture_sink(disp)
+            if self._capture_sink is not None:
+                now = time.monotonic()
+                if now - self._capture_last >= self._CAPTURE_INTERVAL_S:
+                    # Additive cadence keeps the average rate exactly
+                    # _CAPTURE_INTERVAL_S; the clamp prevents a burst of
+                    # catch-up pushes after a long vision-loop stall.
+                    self._capture_last += self._CAPTURE_INTERVAL_S
+                    if self._capture_last < now - 2.0 * self._CAPTURE_INTERVAL_S:
+                        self._capture_last = now
+                    self._capture_sink(disp)
             return
 
     def _adjust_exposure(self) -> None:
@@ -439,7 +448,7 @@ class VisionManager:
             pass
         self._time_counter += 1
         if self._time_counter % 60 == 0:
-            self._time_str_cached = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+            self._time_str_cached = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         if not self._time_str_width_cached:
             self._time_str_width_cached = maix.image.string_size(
                 self._time_str_cached, scale=1.2, thickness=1)[0]
@@ -456,7 +465,7 @@ class VisionManager:
                     self._test_str_cached = test_str
                     self._test_str_width_cached = maix.image.string_size(
                         test_str, scale=1.2, thickness=1)[0]
-                log_print(self._test_str_cached)
+                #log_print(self._test_str_cached)
                 img.draw_string(w - self._test_str_width_cached - 8, 2,
                                 self._test_str_cached,
                                 color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
