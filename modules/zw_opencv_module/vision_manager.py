@@ -67,6 +67,12 @@ class VisionManager:
         self._calib_flash_until: float = 0.0
         self._calib_flash_rect = None  # (x, y, w, h)
 
+        self._fill_light_on: bool = False
+        self._fill_light_icon_on = None
+        self._fill_light_icon_off = None
+        self._fill_light_size: int = 48
+        self._fill_light_controller = None  # callable(bool) -> bool
+
         self._test_id: int = 0
         self._hdr_prefix: str = ""
         self._test_str_cached: str = ""
@@ -103,6 +109,47 @@ class VisionManager:
 
     def set_calib_button_visible(self, v: bool) -> None:
         self._calib_button_visible = v
+
+    def set_fill_light_button(self, icon_on, icon_off, size: int = 48) -> None:
+        self._fill_light_icon_on = icon_on
+        self._fill_light_icon_off = icon_off
+        self._fill_light_size = size
+
+    def set_fill_light_controller(self, controller) -> None:
+        self._fill_light_controller = controller
+
+    def set_fill_light_state(self, on: bool) -> None:
+        self._fill_light_on = bool(on)
+
+    def get_fill_light_state(self) -> bool:
+        return self._fill_light_on
+
+    def get_fill_light_button_rect(self) -> Optional[tuple]:
+        if self._display_frame is None:
+            return None
+        if self._fill_light_icon_on is None or self._fill_light_icon_off is None:
+            return None
+        frame = self._display_frame
+        w = frame.width()
+        h = frame.height()
+        size = self._fill_light_size
+        bx = (w - size) // 2
+        by = h - size - 8
+        return (bx, by, size, size)
+
+    def toggle_fill_light(self) -> Optional[bool]:
+        """Toggle the fill light. Returns the new state on success, None on failure."""
+        target = not self._fill_light_on
+        if self._fill_light_controller is None:
+            return None
+        try:
+            ok = self._fill_light_controller(target)
+        except Exception:
+            return None
+        if not ok:
+            return None
+        self._fill_light_on = target
+        return self._fill_light_on
 
     def get_calib_button_rect(self) -> Optional[tuple]:
         if self._display_frame is None or not self._calib_button_visible:
@@ -280,6 +327,7 @@ class VisionManager:
             if self._calib_button_visible:
                 self._draw_calib_button(disp)
             self._draw_calib_flash(disp)
+            self._draw_fill_light_button(disp)
             self._draw_exit_icon(disp)
             self._display_frame = disp
             self._capture_seq += 1
@@ -519,6 +567,24 @@ class VisionManager:
         except Exception:
             from utils.log_util import log_print
             log_print("[CALIB] Button draw exception")
+
+    def _draw_fill_light_button(self, img) -> None:
+        if self._fill_light_icon_on is None or self._fill_light_icon_off is None:
+            return
+        try:
+            import maix.image as _mi
+            h = img.height()
+            w = img.width()
+            size = self._fill_light_size
+            bx = (w - size) // 2
+            by = h - size - 8
+            img.draw_rect(bx - 2, by - 2, size + 4,
+                          size + 4, color=_mi.COLOR_BLACK, thickness=-1)
+            icon = self._fill_light_icon_on if self._fill_light_on else self._fill_light_icon_off
+            img.draw_image(bx, by, icon)
+        except Exception:
+            from utils.log_util import log_print
+            log_print("[FILL_LIGHT] Button draw exception")
 
     def _draw_calib_flash(self, img) -> None:
         if time.monotonic() >= self._calib_flash_until:
