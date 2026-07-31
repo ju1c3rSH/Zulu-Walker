@@ -171,8 +171,8 @@ Python GIL 序列化了三个线程的 JPEF 编码。`display.show()` 和 `JpegS
 | 组件 | 常量 | 值 | 原因 |
 |------|------|:---:|------|
 | 显示 LCD + IDE | `_DISPLAY_EVERY_N` | 2 | VPU JPEG 编码持 GIL ~10ms |
-| 推流 HTTP MJPEG | `_CAPTURE_EVERY_N` | 4 | VPU JPEG 编码持 GIL ~8ms |
-| 推流队列 | `_QUEUE_MAX` | 1 | 仅缓存最新帧 |
+| 推流 HTTP MJPEG | `_CAPTURE_INTERVAL_S` | 0.1 | 固定节奏 10fps, 保证录制帧间隔均匀 |
+| 推流队列 | `_QUEUE_MAX` | 2 | 平滑瞬时卡顿, 丢最旧 |
 
 ---
 
