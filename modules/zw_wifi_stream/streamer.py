@@ -6,7 +6,7 @@ import threading
 from collections import deque
 from typing import Optional
 
-_QUEUE_MAX = 1
+_QUEUE_MAX = 2
 _EMPTY_SLEEP = 0.015
 
 
