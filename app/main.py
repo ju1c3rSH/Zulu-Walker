@@ -419,6 +419,15 @@ def main():
 
     _start_beacon()
 
+    try:
+        from framework.hal.platforms.maixcam2 import enable_fill_light
+        if enable_fill_light():
+            log_print("[LED] fill light ON")
+        else:
+            log_print("[LED] fill light init FAILED (skipped)")
+    except Exception as e:
+        log_print(f"[LED] fill light init exception: {e}")
+
     from framework.event_bus import EventBus
     from app.coordinator import Ti2026Coordinator
     from framework.hal.camera_hub import CameraHub
