@@ -395,7 +395,7 @@ def _load_persisted_calibration(cfg: dict):
 _CALIB_PARAM_KEYS = frozenset({
     'binary_threshold', 'min_contour_area_ratio', 'min_aspect_ratio',
     'canny_low', 'canny_high', 'hough_threshold', 'hough_min_line_len',
-    'edge_angle_max_deg',
+    'edge_angle_max_deg', 'column_threshold', 'max_contour_area_ratio',
 })
 
 
@@ -419,6 +419,14 @@ def _run_phase1_calibration(camera, calib_params=None):
             calib = PendulumCalibrator(frame_w=frame.shape[1], frame_h=frame.shape[0], **kwargs)
             result = calib.calibrate(frame)
             if result.calibrated:
+                try:
+                    diag = calib.get_last_diagnostics()
+                    log_print("[CALIB] Phase1 method=%s pts=%s angle=%.4f" % (
+                        diag.get('method', '?'),
+                        diag.get('column_points', '-'),
+                        result.angle_rad))
+                except Exception:
+                    pass
                 return result
         except Exception:
             pass
