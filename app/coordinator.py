@@ -493,7 +493,7 @@ class Ti2026Coordinator:
     def _build_target_count_payload(self) -> bytes:
         data = self._latest_ai
         detections = data.get("detections", [])
-        return bytes([len(detections)])
+        return bytes([min(len(detections), 255)])
 
     def _build_detection_status_payload(self) -> bytes:
         data = self._latest_ai
@@ -684,9 +684,9 @@ class Ti2026Coordinator:
         else:
             dist_px = cx_f - self._frame_width / 2.0
         half = max(self._frame_width, self._frame_height) / 2.0
-        pe_x = int(((dist_px) / half) * 5000.0)
+        pe_x = max(-32768, min(32767, int(((dist_px) / half) * 5000.0)))
         ball_cm = dist_px / self._pixels_per_cm
-        ball_cm_scaled = int(ball_cm * 100)
+        ball_cm_scaled = max(-32768, min(32767, int(ball_cm * 100)))
 
         ball_val = int(round(vx / self._pixels_per_cm * 100))
         ball_val = max(-32768, min(32767, ball_val))
