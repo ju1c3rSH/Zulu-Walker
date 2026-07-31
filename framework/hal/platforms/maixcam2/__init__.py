@@ -42,6 +42,19 @@ def create_ai() -> MaixCam2AI:
     return MaixCam2AI()
 
 
+def enable_fill_light() -> bool:
+    """Turn on the onboard fill light (B25, active high)."""
+    try:
+        from maix import gpio, pinmap, err
+
+        err.check_raise(pinmap.set_pin_function("B25", "GPIOB25"), "set pin failed")
+        led = gpio.GPIO("GPIOB25", gpio.Mode.OUT)
+        led.value(1)
+        return True
+    except Exception:
+        return False
+
+
 __all__ = [
     "MaixCam2AI",
     "MaixCam2Camera",
@@ -51,4 +64,5 @@ __all__ = [
     "create_camera",
     "create_display",
     "create_uart",
+    "enable_fill_light",
 ]
