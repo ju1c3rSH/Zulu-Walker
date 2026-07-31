@@ -83,7 +83,13 @@ class ModuleManager:
                         logger.exception("Module '%s' loop() failed", name)
 
                 if coordinator:
-                    coordinator.loop()
+                    try:
+                        coordinator.loop()
+                    except Exception:
+                        now = time.monotonic()
+                        if now - getattr(self, "_coord_err_last", 0.0) >= 1.0:
+                            self._coord_err_last = now
+                            logger.exception("coordinator.loop() failed")
                     if tick_callback:
                         try:
                             tick_callback(coordinator)

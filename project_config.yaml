@@ -44,6 +44,7 @@ ai:
 pendulum:
   pixels_per_cm: 50.0
   length_cm: 25.0
+  draw_rail: true                  # 测试用: 显示帧上绘制标定轨道轴线 + 原点 + 钢球投影点 (比赛置 false)
   # rail_calibration:          # Auto-generated after Phase 2 origin calibration
   #   origin_x: 320.0
   #   origin_y: 320.0

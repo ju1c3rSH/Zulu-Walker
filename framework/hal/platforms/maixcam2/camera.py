@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, Optional, Union
 
 import numpy as np
@@ -14,6 +15,14 @@ _CAP_PROP_FRAME_HEIGHT = 4
 _CAP_PROP_FPS = 5
 _CAP_PROP_GAIN = 14
 _CAP_PROP_EXPOSURE = 15
+
+# Reconnect policy: after this many consecutive read exceptions, attempt to
+# re-open the camera, then back off this many seconds before retrying.
+_CAM_MAX_CONSECUTIVE_FAIL = 30
+_CAM_RECONNECT_BACKOFF_S = 5.0
+# If the camera returns no new frame for this long (stall, not exception),
+# treat it as a fault and attempt a reconnect.
+_CAM_STALL_TIMEOUT_S = 3.0
 
 
 class MaixCam2Camera:
@@ -43,14 +52,35 @@ class MaixCam2Camera:
         self._last_exposure: Optional[int] = None
         self._last_gain: Optional[int] = None
         self._aec_cfg: Optional[Dict[str, Any]] = aec if aec else None
+
+        # Reconnect state
+        self._width = width
+        self._height = height
+        self._fps = fps
+        self._source = source
+        self._buff_num = buff_num
+        self._init_exposure_us = exposure_us
+        self._init_gain = gain
+        self._consecutive_fail = 0
+        self._reconnect_until: float = 0.0
+        self._reconnecting = False
+        self._last_frame_time: float = time.monotonic()
+
+        self._open_camera()
+        # exposure/gain set outside the Camera() try block so a failure here
+        # does not leave a partially-initialized camera handle dangling
+        if self._cam is not None:
+            self._apply_init_params()
+
+    def _open_camera(self) -> None:
         try:
             self._cam = maix.camera.Camera(
-                width=width,
-                height=height,
+                width=self._width,
+                height=self._height,
                 format=maix.image.Format.FMT_RGB888,
-                device=str(source) if source is not None else None,
-                fps=fps,
-                buff_num=buff_num,
+                device=str(self._source) if self._source is not None else None,
+                fps=self._fps,
+                buff_num=self._buff_num,
                 open=True,
             )
             self._opened = True
@@ -58,17 +88,51 @@ class MaixCam2Camera:
             logger.warning("Camera init failed: %s", e)
             self._opened = False
             return
-        # exposure/gain set outside the Camera() try block so a failure here
-        # does not leave a partially-initialized camera handle dangling
+
+    def _apply_init_params(self) -> None:
         try:
-            if exposure_us is not None:
-                self._cam.exposure(int(exposure_us))
-                self._last_exposure = int(exposure_us)
-            if gain is not None:
-                self._cam.gain(int(gain))
-                self._last_gain = int(gain)
+            if self._init_exposure_us is not None:
+                self._cam.exposure(int(self._init_exposure_us))
+                self._last_exposure = int(self._init_exposure_us)
+            if self._init_gain is not None:
+                self._cam.gain(int(self._init_gain))
+                self._last_gain = int(self._init_gain)
         except Exception as e:
             logger.warning("Camera post-init (exposure/gain) failed: %s", e)
+
+    def _note_failure(self) -> None:
+        self._consecutive_fail += 1
+        if self._consecutive_fail >= _CAM_MAX_CONSECUTIVE_FAIL:
+            self._reconnecting = True
+            self._maybe_reconnect()
+
+    def _note_success(self) -> None:
+        self._consecutive_fail = 0
+        self._reconnecting = False
+        self._last_frame_time = time.monotonic()
+
+    def _maybe_reconnect(self) -> None:
+        """Attempt to re-open the camera (single-threaded: vision thread only)."""
+        now = time.monotonic()
+        if now < self._reconnect_until:
+            return
+        self._reconnect_until = now + _CAM_RECONNECT_BACKOFF_S
+        self._reconnecting = True
+        logger.warning(
+            "Camera %s: re-opening (fails=%d)",
+            self._camera_id, self._consecutive_fail,
+        )
+        self.release()
+        self._open_camera()
+        if self._cam is not None:
+            self._apply_init_params()
+            self._consecutive_fail = 0
+            self._reconnecting = False
+            self._last_frame_time = time.monotonic()
+            logger.info("Camera %s re-opened", self._camera_id)
+        else:
+            logger.warning("Camera %s re-open failed, will retry in %ds",
+                           self._camera_id, _CAM_RECONNECT_BACKOFF_S)
 
     @property
     def camera_id(self) -> str:
@@ -132,23 +196,36 @@ class MaixCam2Camera:
     def aec_config(self) -> Optional[Dict[str, Any]]:
         return self._aec_cfg
 
+    @property
+    def is_reconnecting(self) -> bool:
+        return self._reconnecting
+
+    @property
+    def consecutive_failures(self) -> int:
+        return self._consecutive_fail
+
     def read(self) -> Optional[np.ndarray]:
         if self._cam is None:
+            self._maybe_reconnect()
             return None
         try:
             img = self._cam.read(block=False)
             if img is None:
+                self._check_stall()
                 return None
             self._last_raw = img
             result = maix.image.image2cv(img, ensure_bgr=False, copy=True)[:, :, ::-1]
             self._last_frame = result
+            self._note_success()
             return result
         except Exception as e:
             logger.warning("Camera read failed: %s", e)
+            self._note_failure()
             return None
 
     def read_raw(self):
         if self._cam is None:
+            self._maybe_reconnect()
             return None
         try:
             raw = self._cam.read(block=False)
@@ -156,10 +233,19 @@ class MaixCam2Camera:
                 self._last_raw = raw
                 np_img = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
                 self._last_frame = np_img[:, :, ::-1]
+                self._note_success()
+            else:
+                self._check_stall()
             return self._last_frame
         except Exception as e:
             logger.warning("Camera read_raw failed: %s", e)
+            self._note_failure()
             return None
+
+    def _check_stall(self) -> None:
+        """Trigger reconnect if the sensor silently stopped delivering frames."""
+        if time.monotonic() - self._last_frame_time > _CAM_STALL_TIMEOUT_S:
+            self._maybe_reconnect()
 
     @property
     def raw_camera(self):

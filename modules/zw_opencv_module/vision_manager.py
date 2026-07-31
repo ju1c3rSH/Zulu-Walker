@@ -79,6 +79,9 @@ class VisionManager:
         self._fill_light_size: int = 48
         self._fill_light_controller = None  # callable(bool) -> bool
 
+        self._rail_draw_enabled: bool = False
+        self._rail_provider = None  # callable() -> RailCalibration or None
+
         self._test_id: int = 0
         self._hdr_prefix: str = ""
         self._test_str_cached: str = ""
@@ -102,6 +105,15 @@ class VisionManager:
 
     def set_capture_sink(self, sink: callable) -> None:
         self._capture_sink = sink
+
+    def set_rail_draw(self, enabled: bool, provider=None) -> None:
+        """Enable/disable test-time rail overlay drawing.
+
+        *provider* is a callable returning a ``RailCalibration`` (or None),
+        evaluated lazily each frame so Phase-2 origin updates are reflected.
+        """
+        self._rail_draw_enabled = bool(enabled)
+        self._rail_provider = provider
 
     def set_exit_icon(self, icon, icon_size: int = 48, margin: int = 12) -> None:
         self._exit_icon = icon
@@ -316,8 +328,7 @@ class VisionManager:
         return self._display_frame
 
     def _update_display_frame(self) -> None:
-        if not self._ai or not self._ai.loaded:
-            return
+        ai_ok = self._ai is not None and self._ai.loaded
         for pid, pipe in list(self._pipelines.items()):
             raw_img = getattr(pipe.camera, "last_raw", None)
             if raw_img is None:
@@ -329,7 +340,14 @@ class VisionManager:
                 detections = ai_result.result_data.get("detections", [])
 
             disp = raw_img.copy()
-            self._draw_overlays(disp, pid, fps, detections)
+            if self._rail_draw_enabled:
+                self._draw_rail(disp, detections)
+            if ai_ok:
+                self._draw_overlays(disp, pid, fps, detections)
+            else:
+                self._draw_ai_fault_banner(disp)
+            if getattr(pipe.camera, "is_reconnecting", False):
+                self._draw_camera_fault_banner(disp)
             if self._calib_button_visible:
                 self._draw_calib_button(disp)
             self._draw_calib_flash(disp)
@@ -347,6 +365,80 @@ class VisionManager:
                         self._capture_last = now
                     self._capture_sink(disp)
             return
+
+    def _draw_rail(self, img, detections) -> None:
+        """Test overlay: draw the calibrated rail axis, origin, and ball projection."""
+        if not self._rail_draw_enabled:
+            return
+        provider = self._rail_provider
+        if provider is None:
+            return
+        try:
+            import maix.image
+        except ImportError:
+            return
+        try:
+            calib = provider()
+            if calib is None or not getattr(calib, "calibrated", False):
+                return
+            w = img.width()
+            h = img.height()
+            ox = float(calib.origin_x)
+            oy = float(calib.origin_y)
+            dx = float(calib.dir_cos)
+            dy = float(calib.dir_sin)
+            L = int((w * w + h * h) ** 0.5)
+            x0 = int(ox - dx * L)
+            y0 = int(oy - dy * L)
+            x1 = int(ox + dx * L)
+            y1 = int(oy + dy * L)
+            img.draw_line(x0, y0, x1, y1,
+                          color=maix.image.COLOR_GREEN, thickness=2)
+            img.draw_circle(int(ox), int(oy), 5,
+                            color=maix.image.COLOR_RED, thickness=2)
+            if detections:
+                ball = max((d for d in detections if d.class_id == 0),
+                           key=lambda d: d.score, default=None)
+                if ball is not None:
+                    cx = ball.x + ball.w / 2
+                    cy = ball.y + ball.h / 2
+                    dist = calib.project(cx, cy)
+                    px = int(ox + dist * dx)
+                    py = int(oy + dist * dy)
+                    if 0 <= px < w and 0 <= py < h:
+                        img.draw_circle(px, py, 4,
+                                        color=maix.image.COLOR_YELLOW, thickness=-1)
+        except Exception:
+            pass
+
+    def _draw_camera_fault_banner(self, img) -> None:
+        try:
+            import maix.image
+        except ImportError:
+            return
+        w = img.width()
+        bar_h = 32
+        y = 40
+        try:
+            img.draw_rect(0, y, w, bar_h, color=maix.image.COLOR_YELLOW, thickness=-1)
+            img.draw_string(6, y + 2, "CAMERA FAULT - RECONNECTING",
+                            color=maix.image.COLOR_BLACK, scale=1.0, thickness=1)
+        except Exception:
+            pass
+
+    def _draw_ai_fault_banner(self, img) -> None:
+        try:
+            import maix.image
+        except ImportError:
+            return
+        w = img.width()
+        bar_h = 32
+        try:
+            img.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_RED, thickness=-1)
+            img.draw_string(6, 2, "AI FAULT - MODEL NOT LOADED",
+                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+        except Exception:
+            pass
 
     def _adjust_exposure(self) -> None:
         if not self._aec_enabled:
