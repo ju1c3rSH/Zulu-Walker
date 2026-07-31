@@ -403,11 +403,12 @@ class VisionManager:
             pass
         if self._test_id > 0:
             try:
-                test_str = f"第{self._test_id}次测试"
+                test_str = f"Record Round: {self._test_id}"
                 if test_str != self._test_str_cached:
                     self._test_str_cached = test_str
                     self._test_str_width_cached = maix.image.string_size(
                         test_str, scale=1.2, thickness=1)[0]
+                log_print(self._test_str_cached)
                 img.draw_string(w - self._test_str_width_cached - 8, 2,
                                 self._test_str_cached,
                                 color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
