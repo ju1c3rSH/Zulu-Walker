@@ -1,7 +1,7 @@
 id: zulu_walker
 name: zulu_walker
 name[zh]: 祖鲁行者
-version: 1.8.1
+version: 1.9.0
 icon: app.png
 author: Electric Competition 2026
 desc: YOLO11n steel ball detection + line following robot based on MaixCAM2
@@ -34,6 +34,8 @@ files:
   - app\pc_heartbeat.py
   - app\vision_state.py
   - assets\calibrate.png
+  - assets\flashlight_off.png
+  - assets\flashlight_on.png
   - assets\restart.png
   - framework\hal\interface\__init__.py
   - framework\hal\interface\ai.py
