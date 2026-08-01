@@ -72,8 +72,8 @@ class VisionManager:
         self._capture_sink: callable = None
         self._capture_last: float = 0.0
         # Fixed-cadence JPEG push (independent of vision-loop jitter) so the
-        # PC records evenly-timed frames. 0.1s -> 10fps.
-        self._CAPTURE_INTERVAL_S: float = 0.1
+        # PC records evenly-timed frames. 0.05s -> 20fps.
+        self._CAPTURE_INTERVAL_S: float = 0.05
 
         self._exit_icon = None
         self._exit_icon_size: int = 0
@@ -322,7 +322,7 @@ class VisionManager:
 
                 self._update_display_frame()
 
-                if self._event_bus:
+                if any_fresh and self._event_bus:
                     self._pending_results.append(all_results)
 
                 for cb in self._result_callbacks:
