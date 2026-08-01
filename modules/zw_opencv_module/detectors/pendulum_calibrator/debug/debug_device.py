@@ -213,7 +213,8 @@ def _print_diagnostics(diag: dict, frame_no: int):
     print(f"[CALIB] \u2717 FAIL: no detection")
 
 
-def _make_overlay(frame_bgr: np.ndarray, calibrator: PendulumCalibrator, result) -> np.ndarray:
+def _make_overlay(frame_bgr: np.ndarray, calibrator: PendulumCalibrator, result,
+                  scale_cfg: dict = None) -> np.ndarray:
     overlay = frame_bgr.copy()
     h, w = overlay.shape[:2]
 
@@ -229,6 +230,13 @@ def _make_overlay(frame_bgr: np.ndarray, calibrator: PendulumCalibrator, result)
         cx, cy = rect[0]
         cv2.circle(overlay, (int(cx), int(cy)), 5, (255, 0, 0), -1)
 
+    # Bottom-edge column samples (red dots, subsampled every 4th column).
+    col_pts = calibrator.last_column_points
+    if col_pts:
+        for i, (px, py) in enumerate(col_pts):
+            if i % 4 == 0:
+                cv2.circle(overlay, (int(px), int(py)), 2, (0, 0, 255), -1)
+
     if result.calibrated:
         length = max(h, w)
         cx = int(result.origin_x)
@@ -237,13 +245,48 @@ def _make_overlay(frame_bgr: np.ndarray, calibrator: PendulumCalibrator, result)
         ey = int(cy + length * result.dir_sin)
         sx = int(cx - length * result.dir_cos)
         sy = int(cy - length * result.dir_sin)
-        cv2.line(overlay, (sx, sy), (ex, ey), (0, 255, 255), 2)
+        cv2.line(overlay, (sx, sy), (ex, ey), (0, 255, 0), 2)
+
+        if scale_cfg and scale_cfg.get('draw_cm_scale'):
+            _draw_cm_ruler_cv(overlay, result,
+                              scale_cfg.get('pixels_per_cm', 50.0),
+                              scale_cfg.get('cm_interval', 1.0),
+                              scale_cfg.get('tick_len', 40))
 
     status = "\u2713 SUCCESS" if result.calibrated else "\u2717 FAIL"
     color = (0, 255, 0) if result.calibrated else (0, 0, 255)
     cv2.putText(overlay, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
     return overlay
+
+
+def _draw_cm_ruler_cv(overlay: np.ndarray, result, pixels_per_cm: float,
+                      cm_interval: float, tick_len: int):
+    """Simulated cm ruler along the rail axis (cv2 drawing)."""
+    h, w = overlay.shape[:2]
+    step = pixels_per_cm * cm_interval
+    if step <= 0:
+        return
+    ox = float(result.origin_x)
+    oy = float(result.origin_y)
+    dx = float(result.dir_cos)
+    dy = float(result.dir_sin)
+    half = tick_len // 2
+    px0 = int(-dy * half)
+    py0 = int(dx * half)
+    n_max = min(int((w + h) / max(step, 1.0)) + 1, 60)
+    for k in range(1, n_max + 1):
+        for sign in (1, -1):
+            t = sign * k * step
+            cx = int(ox + t * dx)
+            cy = int(oy + t * dy)
+            if not (0 <= cx < w and 0 <= cy < h):
+                continue
+            cv2.line(overlay, (cx - px0, cy - py0), (cx + px0, cy + py0),
+                     (255, 255, 255), 2)
+            cv2.putText(overlay, str(int(round(sign * k * cm_interval))),
+                        (cx + 2, cy - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (255, 255, 255), 1)
 
 
 def _show_lcd(disp: maix.display.Display, overlay: np.ndarray, debug_frame: np.ndarray):
@@ -264,6 +307,7 @@ def _show_lcd(disp: maix.display.Display, overlay: np.ndarray, debug_frame: np.n
 def _print_help():
     print("[CALIB] commands:")
     print("[CALIB]   Enter             capture & calibrate with current params")
+    print("[CALIB]   c                 toggle cm-scale overlay (draw_cm_scale)")
     print("[CALIB]   key=value         set parameter (e.g. calib.min_aspect_ratio=3.0)")
     print("[CALIB]   ?                 show current config")
     print("[CALIB]   save              write config to calib_debug.yaml")
@@ -323,6 +367,11 @@ def main():
                 pass
             elif line == 'q':
                 break
+            elif line == 'c':
+                cur = config.get('debug', {}).get('draw_cm_scale', False)
+                config.setdefault('debug', {})['draw_cm_scale'] = not cur
+                print(f"[CALIB] draw_cm_scale -> {not cur}")
+                continue
             elif line == '?':
                 _print_config(config)
                 continue
@@ -386,7 +435,11 @@ def main():
 
             _print_diagnostics(diag, frame_no)
 
-            overlay = _make_overlay(frame_bgr, calibrator, result)
+            dbg_cfg = config.get('debug', {})
+            scale_cfg = dict(dbg_cfg.get('cm_scale', {}))
+            scale_cfg['draw_cm_scale'] = bool(dbg_cfg.get('draw_cm_scale', False))
+
+            overlay = _make_overlay(frame_bgr, calibrator, result, scale_cfg)
 
             if disp is not None:
                 try:
@@ -395,7 +448,6 @@ def main():
                 except Exception as e:
                     print(f"[CALIB] ! display error: {e}")
 
-            dbg_cfg = config.get('debug', {})
             if dbg_cfg.get('save_frame', True):
                 try:
                     cv2.imwrite("/root/calib_debug_frame.png", overlay)
