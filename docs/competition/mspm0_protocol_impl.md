@@ -12,9 +12,9 @@
 
 | 实例 | Syscfg 别名 | 引脚 | 波特率 | 用途 |
 |------|-------------|------|--------|------|
-| UART0 | UART_0 | PB1 RX | 115200 | HWT101 陀螺仪 |
-| UART1 | UART_1 | PB4 TX, PB5 RX | 115200 | TOF 测距 |
-| UART3 | UART_3 | PB2 TX, PB3 RX | 115200 | Emm_V5 步进电机 |
+| UART0 | UART_0 | PB1 RX | 921600 | HWT101 陀螺仪 |
+| UART1 | UART_1 | PB4 TX, PB5 RX | 921600 | TOF 测距 |
+| UART3 | UART_3 | PB2 TX, PB3 RX | 921600 | Emm_V5 步进电机 |
 | UART7 | UART_2 | PA23 TX, PA24 RX | 1M | VOFA+ 调试输出 |
 
 ### 可用实例
@@ -32,14 +32,14 @@ MSPM0G3519 有 7 个 UART 实例（UART2 不存在），以下 3 个空闲：
 | 参数 | 值 |
 |------|-----|
 | 实例 | UART4 |
-| 波特率 | 115200 |
+| 波特率 | 921600 |
 | 数据位 | 8 |
 | 校验 | 无 |
 | 停止位 | 1 |
 | RX FIFO 阈值 | **4~8 字节**（v3.0 建议） |
 | 引脚 | 需确认原理图选择空闲 GPIO |
 
-> ⚠ **v3.0 建议**：115200 波特率下每字节 86.8µs（8N1），推荐 RX FIFO 阈值
+> ⚠ **v3.0 建议**：921600 波特率下每字节 86.8µs（8N1），推荐 RX FIFO 阈值
 > 4~8 字节以减少中断次数。详见 [`master_slave_protocol.md`](./master_slave_protocol.md) §8.5。
 
 ---
@@ -305,7 +305,7 @@ op_uart_send(0x18, &stop_reason, 1);           // TYPE_EMERGENCY_STOP
 
 ```
 Step 1 — 基础设施
-  ├ keil/empty.syscfg: 新增 UART4，配置 115200 8N1，选空闲引脚
+  ├ keil/empty.syscfg: 新增 UART4，配置 921600 8N1，选空闲引脚
   └ 编译验证: 自动生成 ti_msp_dl_config.c/h
 
 Step 2 — 新建 OP_UART 模块
