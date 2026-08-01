@@ -643,12 +643,18 @@ def main():
     from modules.zw_opencv_module import get_vision_manager
     from modules.zw_uart_module import get_interface
 
+    # Single source of truth for pixels_per_cm (used by both the measurement
+    # path in coordinator and the cm-ruler overlay in vision_manager).
+    pixels_per_cm = _cfg.get("pendulum", {}).get("pixels_per_cm", 50.0)
+
     vm = get_vision_manager()
     if vm:
         coordinator.connect_vision(vm)
         draw_rail = _cfg.get("pendulum", {}).get("draw_rail", False)
-        vm.set_rail_draw(draw_rail, lambda: coordinator.get_rail_calibration())
-        log_print(f"[RAIL] draw_rail={'ON' if draw_rail else 'OFF'}")
+        rail_cm_int = _cfg.get("pendulum", {}).get("cm_interval", 1.0)
+        vm.set_rail_draw(draw_rail, lambda: coordinator.get_rail_calibration(),
+                         pixels_per_cm=pixels_per_cm, cm_interval=rail_cm_int)
+        log_print(f"[RAIL] draw_rail={'ON' if draw_rail else 'OFF'} ppc={pixels_per_cm} cm_interval={rail_cm_int}")
 
     uart = get_interface()
     if uart:
@@ -673,7 +679,6 @@ def main():
         else:
             log_print("[LED] fill light button NOT shown: icon load failed")
 
-    pixels_per_cm = _cfg.get("pendulum", {}).get("pixels_per_cm", 25.6)
     cam_cfg = _cfg.get("cameras", [{}])[0]
     cam_w = cam_cfg.get("width", 640)
     cam_h = cam_cfg.get("height", 640)
