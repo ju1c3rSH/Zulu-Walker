@@ -79,6 +79,7 @@ class PendulumCalibrator:
         self._debug_contour = None
         self._debug_rect = None
         self._debug_column_binary = None
+        self._debug_column_points = None
         self._empty_debug = None
         self._diag = {}
 
@@ -98,6 +99,10 @@ class PendulumCalibrator:
     def last_column_binary(self):
         return self._debug_column_binary
 
+    @property
+    def last_column_points(self):
+        return self._debug_column_points
+
     def get_last_diagnostics(self) -> dict:
         return dict(self._diag)
 
@@ -107,6 +112,7 @@ class PendulumCalibrator:
         self._debug_contour = None
         self._debug_rect = None
         self._debug_column_binary = None
+        self._debug_column_points = None
 
         try:
             gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
@@ -195,6 +201,7 @@ class PendulumCalibrator:
 
         xs = None
         ys = None
+        med = None
         used_threshold = None
         binary = None
         for threshold in ladder:
@@ -204,7 +211,7 @@ class PendulumCalibrator:
                 self._diag['column_fail_reason'] = 'column_threshold_error'
                 return None
 
-            xs, ys = self._sample_column_centroids(binary, fw, fh)
+            xs, ys, med = self._sample_column_centroids(binary, fw, fh)
             n_pts = len(xs) if xs is not None else 0
             if n_pts >= fw * 0.5:
                 used_threshold = threshold
@@ -230,12 +237,20 @@ class PendulumCalibrator:
         n_pts = len(xs)
         self._diag['column_points'] = n_pts
 
+        # Bottom-edge samples, exposed for debug overlay drawing.
+        self._debug_column_points = list(zip(xs, ys))
+
         pts = np.array([(x, y) for x, y in zip(xs, ys)], dtype=np.float32)
         try:
-            vx, vy, cx, cy = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01)
+            # DIST_HUBER resists a few outlier columns (specular, ruler-notch
+            # shadow) pulling the least-squares line.
+            vx, vy, cx, cy = cv2.fitLine(pts, cv2.DIST_HUBER, 0, 0.01, 0.01)
         except Exception:
             self._diag['column_fail_reason'] = 'column_fit_error'
             self._diag['fail_reason'] = 'column_insufficient'
+            # Fit failed: don't let the debug overlay draw dots over a
+            # contour-fallback result.
+            self._debug_column_points = None
             return None
 
         vx = float(vx[0])
@@ -250,19 +265,36 @@ class PendulumCalibrator:
             vy = -vy
         angle_rad = math.atan2(vy, vx)
 
+        # The fitted line lies on the rail BOTTOM edge; the rail axis (and the
+        # origin that sits on it) is med/2 above the bottom edge, along the
+        # perpendicular (vy, -vx) which points "up" toward the pipe centre in
+        # image coordinates (smaller y). For a near-horizontal rail (vy~0,
+        # vx~1) this yields (cx, cy - med/2).
+        off_x = vy * (med / 2.0)
+        off_y = -vx * (med / 2.0)
+        origin_x = cx + off_x
+        origin_y = cy + off_y
+
         self._diag['rect_center'] = (round(cx, 1), round(cy, 1))
         self._diag['angle_rad'] = angle_rad
+        self._diag['edge_used'] = 'bottom'
 
-        return (cx, cy, angle_rad)
+        return (origin_x, origin_y, angle_rad)
 
     def _sample_column_centroids(self, binary: np.ndarray, fw: int, fh: int):
-        """Per-column midpoint samples with an adaptive median span window.
+        """Per-column BOTTOM-edge samples with an adaptive median span window.
 
         Collects the topmost/bottommost white pixel per column, then accepts
         columns whose white span sits within ``[0.6, 1.6] x median`` of the
         per-frame median span.  Guardrails: the median span must be at least
         5% of the frame height (rejects a frame-filling background blob), and
         the fitted centroid must lie in the central band.
+
+        Returns ``(xs, ys, med)`` where ``ys`` are the *bottom* white pixel
+        per column.  The bottom edge is used for the axis fit because the top
+        edge carries the 0.1 cm ruler ticks on the groove lip, whose dark
+        notches corrupt ``top``; the bottom edge is a clean, straight line.
+        ``top`` is still used to compute the span for median filtering.
         """
         spans = []
         tops = []
@@ -281,7 +313,7 @@ class PendulumCalibrator:
             spans.append(bottom - top + 1)
 
         if len(spans) < fw * 0.5:
-            return None, None
+            return None, None, None
 
         med = float(statistics.median(spans))
         self._diag['column_median_h'] = round(med, 1)
@@ -290,29 +322,30 @@ class PendulumCalibrator:
         # minority of the frame height (curved pipe bright arc << fh).
         if med < fh * 0.05 or med > fh * 0.9:
             self._diag['column_fail_reason'] = 'column_median_height'
-            return None, None
+            return None, None, None
 
         lo = med * 0.6
         hi = med * 1.6
         xs = []
         ys = []
-        for x, top, bottom, span in zip(xs_all, tops, bottoms, spans):
+        for x, bottom, span in zip(xs_all, bottoms, spans):
             if lo <= span <= hi:
                 xs.append(x)
-                ys.append((top + bottom) / 2.0)
+                ys.append(float(bottom))
 
         if len(xs) < fw * 0.5:
             self._diag['column_fail_reason'] = 'column_insufficient'
-            return None, None
+            return None, None, None
 
         mean_y = float(np.mean(ys))
-        # The rail is expected near the vertical centre of the frame; a fit
-        # pulled far off-band indicates the bright region is not the rail.
-        if not (fh * 0.2 <= mean_y <= fh * 0.8):
+        # The bottom edge of the rail is expected in the lower-central band of
+        # the frame; a fit pulled far off-band indicates the bright region is
+        # not the rail.
+        if not (fh * 0.2 <= mean_y <= fh * 0.9):
             self._diag['column_fail_reason'] = 'column_off_band'
-            return None, None
+            return None, None, None
 
-        return xs, ys
+        return xs, ys, med
 
     def _detect_rail_contour(self, gray: np.ndarray):
         try:
