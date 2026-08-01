@@ -52,6 +52,10 @@ class VisionManager:
         self._any_fresh = False
         self._pending_results: deque = deque(maxlen=5)
         self._display_frame = None
+        # Frame-freshness gate: display is rebuilt only when a NEW sensor frame
+        # arrived (frame_serial changed), skipping the 1.29MB raw_img.copy()
+        # + full redraw on stale iterations.
+        self._last_display_serial: int = -1
 
         self._wdt_feed = lambda: None
         self._wdt_count = 0
@@ -368,6 +372,23 @@ class VisionManager:
             if ai_result is not None and ai_result.success:
                 detections = ai_result.result_data.get("detections", [])
 
+            serial = getattr(pipe.camera, "frame_serial", None)
+            if serial is not None and self._display_frame is not None \
+                    and serial == self._last_display_serial:
+                # No new sensor frame this iteration: skip the 1.29MB copy and
+                # the full redraw.  The display thread already skips the
+                # unchanged object by identity.  Still honour the capture
+                # cadence using the previous display frame.
+                if self._capture_sink is not None:
+                    now = time.monotonic()
+                    if now - self._capture_last >= self._CAPTURE_INTERVAL_S:
+                        self._capture_last += self._CAPTURE_INTERVAL_S
+                        if self._capture_last < now - 2.0 * self._CAPTURE_INTERVAL_S:
+                            self._capture_last = now
+                        self._capture_sink(self._display_frame)
+                return
+
+            self._last_display_serial = serial if serial is not None else -1
             disp = raw_img.copy()
             if self._rail_draw_enabled:
                 self._draw_rail(disp, detections)
@@ -482,13 +503,35 @@ class VisionManager:
                     except Exception:
                         pass
 
+    def _make_rgb_text_sprite(self, text: str, maix_image,
+                              scale=1, thickness=1) -> Optional[Any]:
+        """Rasterise *text* onto an opaque black-background RGB888 sprite.
+
+        Used for the header fragments: the header bar is itself black, so an
+        opaque black sprite with white glyphs blits seamlessly onto it.  This
+        avoids the RGBA8888 alpha path (draw_string on an RGBA canvas is
+        unreliable on this platform) while keeping the same single-slot cache
+        behaviour.
+        """
+        try:
+            size = maix_image.string_size(text, scale=scale, thickness=thickness)
+            lw = size[0] + 4
+            lh = size[1] + 2
+            sprite = maix_image.Image(lw, lh, maix_image.Format.FMT_RGB888,
+                                      bg=maix_image.COLOR_BLACK)
+            sprite.draw_string(1, 1, text,
+                               color=maix_image.COLOR_WHITE, scale=scale, thickness=thickness)
+            return sprite
+        except Exception:
+            return None
+
     def _make_rgba_text_sprite(self, text: str, maix_image,
                                scale=1, thickness=1) -> Optional[Any]:
         """Rasterise *text* onto a transparent RGBA8888 sprite, or None.
 
         Transparent background (alpha=0) with opaque white glyphs (alpha=0xFF),
-        per the MaixPy draw-transparent-image pattern.  Used by both the cm
-        ruler labels and the header fragments; callers cache the result.
+        per the MaixPy draw-transparent-image pattern.  Used by the cm ruler
+        labels; callers cache the result.
         """
         try:
             size = maix_image.string_size(text, scale=scale, thickness=thickness)
@@ -687,7 +730,7 @@ class VisionManager:
                 fps_text = f"{self._hdr_prefix}{fps:.1f}"
                 if fps_text != self._hdr_fps_text:
                     self._hdr_fps_text = fps_text
-                    self._hdr_fps_sprite = self._make_rgba_text_sprite(
+                    self._hdr_fps_sprite = self._make_rgb_text_sprite(
                         fps_text, maix.image, scale=1.2, thickness=1)
                 if self._hdr_fps_sprite is not None:
                     try:
@@ -700,7 +743,7 @@ class VisionManager:
                 # Time fragment (single-slot cache).
                 if self._time_str_cached != self._hdr_time_text:
                     self._hdr_time_text = self._time_str_cached
-                    self._hdr_time_sprite = self._make_rgba_text_sprite(
+                    self._hdr_time_sprite = self._make_rgb_text_sprite(
                         self._time_str_cached, maix.image, scale=1.2, thickness=1)
                 if self._hdr_time_sprite is not None:
                     try:
@@ -714,7 +757,7 @@ class VisionManager:
                     test_str = f"Record Round: {self._test_id}"
                     if test_str != self._hdr_test_text:
                         self._hdr_test_text = test_str
-                        self._hdr_test_sprite = self._make_rgba_text_sprite(
+                        self._hdr_test_sprite = self._make_rgb_text_sprite(
                             test_str, maix.image, scale=1.2, thickness=1)
                     if self._hdr_test_sprite is not None:
                         try:
