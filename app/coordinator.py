@@ -117,7 +117,7 @@ class Ti2026Coordinator:
         self._latest_ai: dict = {}
         self._ai_seq: int = 0
         self._ai_new: bool = False
-        self._pixels_per_cm: float = 25.6
+        self._pixels_per_cm: float = 50.0
         self._frame_width: int = 640
         self._frame_height: int = 640
         self._rail_calib: Optional[RailCalibration] = None
