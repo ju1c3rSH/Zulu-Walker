@@ -92,6 +92,18 @@ class VisionManager:
         self._time_str_width_cached: int = 0
         self._time_counter: int = 0
 
+        # Header bitmap cache: the whole 32px bar (black bg + FPS + time +
+        # test id) is pre-rasterised once per second and blitted each frame,
+        # avoiding per-frame draw_string font rasterisation.
+        self._header_bmp = None
+        self._header_dirty = True
+        self._hdr_fps_last: Optional[float] = None
+        self._hdr_width: int = 0
+
+        # cm-ruler label sprites: each numeric label pre-rendered once into a
+        # transparent RGBA8888 sprite and blitted each frame.
+        self._cm_label_sprites: Dict[str, Any] = {}
+
         self._aec_enabled: bool = False
         self._aec_cam_id: str = ""
         self._aec_cfg: Dict[str, Any] = {}
@@ -430,7 +442,8 @@ class VisionManager:
         """Draw vertical (axis-perpendicular) cm ticks with labels.
 
         Ticks span roughly half the rail thickness on either side of the axis.
-        Coordinates outside the frame are skipped.
+        Coordinates outside the frame are skipped.  Labels are pre-rendered
+        once into transparent RGBA8888 sprites and blitted each frame.
         """
         import maix.image
         step = self._rail_ppc * self._rail_cm_interval
@@ -452,8 +465,45 @@ class VisionManager:
                               cx + int(px0), cy + int(py0),
                               color=maix.image.COLOR_WHITE, thickness=2)
                 label = str(int(round(sign * k * self._rail_cm_interval)))
-                img.draw_string(cx + 2, cy - 4, label,
-                                color=maix.image.COLOR_WHITE)
+                sprite = self._get_cm_label_sprite(label, maix.image)
+                if sprite is not None:
+                    try:
+                        # Text sits at sprite-local (1,1); blit so the glyph
+                        # lands at the same spot as the old draw_string.
+                        img.draw_image(cx + 1, cy - 5, sprite)
+                    except Exception:
+                        pass
+
+    def _get_cm_label_sprite(self, label: str, maix_image) -> Optional[Any]:
+        """Return a cached transparent RGBA8888 sprite for a cm label, or None.
+
+        On first use the label is rasterised onto a transparent background
+        (per the MaixPy draw-transparent-image pattern), then cached; later
+        frames only blit.  Any failure returns None so the caller can degrade
+        gracefully (label simply not drawn).
+        """
+        cached = self._cm_label_sprites.get(label)
+        if cached is not None:
+            return cached
+        try:
+            size = maix_image.string_size(label, scale=1, thickness=1)
+            lw = size[0] + 4
+            lh = size[1] + 2
+            sprite = maix_image.Image(lw, lh, maix_image.Format.FMT_RGBA8888)
+            sprite.draw_string(1, 1, label,
+                               color=maix_image.COLOR_WHITE, scale=1, thickness=1)
+            # Make the background transparent (alpha=0); keep text pixels.
+            for y in range(lh):
+                for x in range(lw):
+                    pix = sprite.get_pixel(x, y)
+                    val = pix[0] & 0x00ffffff
+                    if val != 0:
+                        val = val | 0xff000000
+                    sprite.set_pixel(x, y, [val])
+            self._cm_label_sprites[label] = sprite
+            return sprite
+        except Exception:
+            return None
 
     def _draw_camera_fault_banner(self, img) -> None:
         try:
@@ -576,40 +626,72 @@ class VisionManager:
             return
         w = img.width()
         bar_h = 32
-        try:
-            img.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
-        except Exception:
-            pass
         if not self._hdr_prefix:
             self._hdr_prefix = f"{pipeline_id}  FPS:"
-        try:
-            img.draw_string(6, 2, f"{self._hdr_prefix}{fps:.1f}",
-                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
-        except Exception:
-            pass
+
+        # Update cached strings on a 1 Hz cadence (same as before). The time
+        # change must also mark the header dirty, otherwise the clock could go
+        # stale/frozen if fps happens to be stable.
         self._time_counter += 1
         if self._time_counter % 60 == 0:
             self._time_str_cached = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        if not self._time_str_width_cached:
-            self._time_str_width_cached = maix.image.string_size(
-                self._time_str_cached, scale=1.2, thickness=1)[0]
-        try:
-            img.draw_string((w - self._time_str_width_cached) // 2, 2,
-                            self._time_str_cached,
-                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
-        except Exception:
-            pass
+            self._header_dirty = True
+
+        # Rebuild the header bitmap only when its content changed.
+        if self._header_bmp is None or w != self._hdr_width:
+            self._header_dirty = True
+        if fps != self._hdr_fps_last:
+            self._hdr_fps_last = fps
+            self._header_dirty = True
         if self._test_id > 0:
+            test_str = f"Record Round: {self._test_id}"
+            if test_str != self._test_str_cached:
+                self._test_str_cached = test_str
+                self._header_dirty = True
+
+        if self._header_dirty:
             try:
-                test_str = f"Record Round: {self._test_id}"
-                if test_str != self._test_str_cached:
-                    self._test_str_cached = test_str
-                    self._test_str_width_cached = maix.image.string_size(
-                        test_str, scale=1.2, thickness=1)[0]
-                #log_print(self._test_str_cached)
-                img.draw_string(w - self._test_str_width_cached - 8, 2,
-                                self._test_str_cached,
-                                color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+                bmp = maix.image.Image(w, bar_h, maix.image.Format.FMT_RGB888,
+                                       bg=maix.image.COLOR_BLACK)
+                try:
+                    bmp.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
+                except Exception:
+                    pass
+                try:
+                    bmp.draw_string(6, 2, f"{self._hdr_prefix}{fps:.1f}",
+                                    color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+                except Exception:
+                    pass
+                try:
+                    if not self._time_str_width_cached:
+                        self._time_str_width_cached = maix.image.string_size(
+                            self._time_str_cached, scale=1.2, thickness=1)[0]
+                    bmp.draw_string((w - self._time_str_width_cached) // 2, 2,
+                                    self._time_str_cached,
+                                    color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+                except Exception:
+                    pass
+                if self._test_id > 0:
+                    try:
+                        if not self._test_str_width_cached:
+                            self._test_str_width_cached = maix.image.string_size(
+                                self._test_str_cached, scale=1.2, thickness=1)[0]
+                        bmp.draw_string(w - self._test_str_width_cached - 8, 2,
+                                        self._test_str_cached,
+                                        color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+                    except Exception:
+                        pass
+                self._header_bmp = bmp
+                self._hdr_width = w
+                self._header_dirty = False
+            except Exception:
+                self._header_bmp = None
+                self._header_dirty = True
+                return
+
+        if self._header_bmp is not None:
+            try:
+                img.draw_image(0, 0, self._header_bmp)
             except Exception:
                 pass
 
