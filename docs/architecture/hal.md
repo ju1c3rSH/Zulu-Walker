@@ -34,7 +34,7 @@ cameras:
     fps: 120
 uart_defaults:
   port: "/dev/ttyS4"
-  baudrate: 115200
+  baudrate: 921600
 ai:
   models:
     - nick_name: yolo11n
@@ -142,7 +142,7 @@ Create a new directory under `framework/hal/platforms/<name>/` with:
 # __init__.py — factory functions
 def create_camera(source, width=640, height=480, **kwargs) -> Camera: ...
 def create_display() -> Display: ...
-def create_uart(port, baudrate=115200) -> Uart: ...
+def create_uart(port, baudrate=921600) -> Uart: ...
 def create_ai() -> AIInference: ...   # optional
 ```
 

@@ -54,7 +54,7 @@ I²C 类比:
 
 | 参数 | 值 |
 |------|-----|
-| 波特率 | **115200** |
+| 波特率 | **921600** |
 | 数据位 | 8 |
 | 校验 | 无 |
 | 停止位 | 1 |
@@ -1030,7 +1030,7 @@ void main_loop(void) {
             op_uart_send(0x20, req, 3);          // CMD_REQUEST
             current_data_type = 0x01;
             comm_state = WAITING_ACK;
-            cmd_timeout = get_tick_ms() + 10;     // 10ms（@115200 约 1ms 即可收完 ACK）
+            cmd_timeout = get_tick_ms() + 10;     // 10ms（@921600 约 1ms 即可收完 ACK）
         }
         break;
         
@@ -1149,7 +1149,7 @@ static void on_data_stream(const uint8_t *payload, uint8_t len) {
 ### 8.5 UART 配置注意事项（MSPM0G3519）
 
 **RX FIFO 阈值：** 建议设置为 **4 或 8 字节**（而非阈值=1）。
-- 115200 波特率下每字节需 86.8µs（8N1），推荐 4~8 字节以减少中断次数。
+- 921600 波特率下每字节需 86.8µs（8N1），推荐 4~8 字节以减少中断次数。
 - 在 FIFO 中断服务函数中使用循环读取，一次性排空 FIFO 中所有字节。
 
 **IRQ 优先级：** 建议 `NVIC_SetPriority(UART4_INT_IRQn, 1)`。
