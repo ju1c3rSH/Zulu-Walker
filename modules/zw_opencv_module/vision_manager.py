@@ -56,6 +56,15 @@ class VisionManager:
         # arrived (frame_serial changed), skipping the 1.29MB raw_img.copy()
         # + full redraw on stale iterations.
         self._last_display_serial: int = -1
+        # Display rebuild throttle: even on fresh frames, only rebuild the
+        # display frame (~raw_img.copy() + full redraw) every
+        # _DISPLAY_REBUILD_INTERVAL_S.  The detect→UART control path reads
+        # _latest_ai and is fully independent of the display frame, so the
+        # throttle frees the vision loop from the 10-16ms copy on intermediate
+        # frames.  The display thread / capture sink read the reused frame
+        # (read-only), so no frame pollution.
+        self._DISPLAY_REBUILD_INTERVAL_S: float = 0.033  # ~30fps rebuild
+        self._last_display_rebuild: float = 0.0
 
         self._wdt_feed = lambda: None
         self._wdt_count = 0
@@ -87,6 +96,10 @@ class VisionManager:
         self._rail_provider = None  # callable() -> RailCalibration or None
         self._rail_ppc: float = 50.0
         self._rail_cm_interval: float = 1.0
+
+        # Detection-list overlay (top-left text list).  Off for competition
+        # (display.detection_list: false) to avoid per-frame draw_string cost.
+        self._detection_list_enabled: bool = True
 
         self._test_id: int = 0
         self._hdr_prefix: str = ""
@@ -131,6 +144,14 @@ class VisionManager:
 
     def set_capture_sink(self, sink: callable) -> None:
         self._capture_sink = sink
+
+    def set_detection_list_enabled(self, enabled: bool) -> None:
+        """Enable/disable the top-left detection text list overlay.
+
+        Off for competition (display.detection_list: false) to avoid the
+        per-frame draw_string cost; the bbox + corner number remain.
+        """
+        self._detection_list_enabled = bool(enabled)
 
     def set_rail_draw(self, enabled: bool, provider=None,
                       pixels_per_cm: float = 50.0,
@@ -379,16 +400,23 @@ class VisionManager:
                 # the full redraw.  The display thread already skips the
                 # unchanged object by identity.  Still honour the capture
                 # cadence using the previous display frame.
-                if self._capture_sink is not None:
-                    now = time.monotonic()
-                    if now - self._capture_last >= self._CAPTURE_INTERVAL_S:
-                        self._capture_last += self._CAPTURE_INTERVAL_S
-                        if self._capture_last < now - 2.0 * self._CAPTURE_INTERVAL_S:
-                            self._capture_last = now
-                        self._capture_sink(self._display_frame)
+                self._maybe_push_capture(self._display_frame)
                 return
 
+            if self._display_frame is not None:
+                now = time.monotonic()
+                if now - self._last_display_rebuild < self._DISPLAY_REBUILD_INTERVAL_S:
+                    # Fresh sensor frame but inside the rebuild window: reuse
+                    # the previous display frame (no copy/redraw), which keeps
+                    # the detect→UART control path free of the 10-16ms copy.
+                    # The reused frame is only ever read (display.show /
+                    # capture sink), never mutated → no frame pollution.
+                    self._last_display_serial = serial if serial is not None else -1
+                    self._maybe_push_capture(self._display_frame)
+                    return
+
             self._last_display_serial = serial if serial is not None else -1
+            self._last_display_rebuild = time.monotonic()
             disp = raw_img.copy()
             if self._rail_draw_enabled:
                 self._draw_rail(disp, detections)
@@ -404,17 +432,23 @@ class VisionManager:
             self._draw_fill_light_button(disp)
             self._draw_exit_icon(disp)
             self._display_frame = disp
-            if self._capture_sink is not None:
-                now = time.monotonic()
-                if now - self._capture_last >= self._CAPTURE_INTERVAL_S:
-                    # Additive cadence keeps the average rate exactly
-                    # _CAPTURE_INTERVAL_S; the clamp prevents a burst of
-                    # catch-up pushes after a long vision-loop stall.
-                    self._capture_last += self._CAPTURE_INTERVAL_S
-                    if self._capture_last < now - 2.0 * self._CAPTURE_INTERVAL_S:
-                        self._capture_last = now
-                    self._capture_sink(disp)
+            self._maybe_push_capture(disp)
             return
+
+    def _maybe_push_capture(self, frame) -> None:
+        """Push *frame* to the capture sink on the fixed cadence.
+
+        Additive cadence keeps the average rate exactly _CAPTURE_INTERVAL_S;
+        the clamp prevents a burst of catch-up pushes after a long stall.
+        """
+        if self._capture_sink is None:
+            return
+        now = time.monotonic()
+        if now - self._capture_last >= self._CAPTURE_INTERVAL_S:
+            self._capture_last += self._CAPTURE_INTERVAL_S
+            if self._capture_last < now - 2.0 * self._CAPTURE_INTERVAL_S:
+                self._capture_last = now
+            self._capture_sink(frame)
 
     def _draw_rail(self, img, detections) -> None:
         """Test overlay: draw the calibrated rail axis, origin, ball projection,
@@ -679,7 +713,8 @@ class VisionManager:
 
         self._draw_header(img, pipeline_id, fps)
         self._draw_detections(img, detections, maix.image)
-        self._draw_detection_list(img, detections, maix.image)
+        if self._detection_list_enabled:
+            self._draw_detection_list(img, detections, maix.image)
 
     def _draw_header(self, img, pipeline_id: str, fps: float) -> None:
         try:
