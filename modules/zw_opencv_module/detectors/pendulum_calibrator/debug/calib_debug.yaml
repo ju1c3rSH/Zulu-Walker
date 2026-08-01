@@ -19,3 +19,8 @@ debug:
   save_frame: true
   save_binary: true
   save_column_binary: true
+  draw_cm_scale: false          # c 命令运行中切换; 画模拟厘米刻度验证 pixels_per_cm
+  cm_scale:
+    pixels_per_cm: 51.0
+    cm_interval: 1.0
+    tick_len: 40

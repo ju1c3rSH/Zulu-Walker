@@ -41,24 +41,40 @@ PendulumCalibrator (纯 OpenCV)
 
 ## 3. 核心算法
 
-### 3.1 主方法：列中心线 + fitLine（自适应倾角）
+### 3.1 主方法：下边缘列采样 + fitLine（自适应倾角）
 
 ```
 帧 BGR
   → cv2.cvtColor(COLOR_BGR2GRAY)
   → 阈值降级: column_threshold(180) → 150 → 120, 首个成功即停
-  → 逐列扫描白色像素: top/bottom 中点 = 轨道中心线采样点 (x, (top+bottom)/2)
+  → 逐列扫描白色像素: 记 top / bottom 与白跨度 span = bottom-top+1
   → 高度自适应: 取各列白跨度中位数 med, 接受 [0.6·med, 1.6·med] 内的列
        (剔钢球遮挡列/镜面噪声列; 管为圆弧面时亮带只有弧顶也能自适应)
-  → 护栏: med ≥ 5% 帧高 (防整帧背景色块); 拟合中心须在中部带 [0.2h, 0.8h]
+  → 护栏: med ≥ 5% 帧高 (防整帧背景色块); 下边缘拟合中心须在 [0.2h, 0.9h]
   → 至少 50% 列有效，否则 fail_reason='column_insufficient'
-  → cv2.fitLine(DIST_L2) 拟合所有中心点 → 直线方向 + 中心点
-  → 方向 vx<0 取反 → angle_rad = atan2(vy, vx)
+  → 对【下边缘】点集 (x, bottom) cv2.fitLine(DIST_HUBER) → 直线方向
+  → 方向 vx<0 取反 → angle_rad = atan2(vy, vx)   ← 下边缘与轴线平行
+  → 原点垂直偏移: origin = (cx + vy·med/2, cy − vx·med/2)  ← 下边缘上移到管道中心
 ```
 
-**为什么主方法选列中心线**：轨道横向铺满/超出画面宽度时，`minAreaRect` 对贴边或整帧色块返回帧对齐矩形，倾角被帧边界锁死恒为 0。逐列中心点拟合不依赖轮廓包围盒，倾角完全自适应，且钢球黑色块（遮挡约 50px）会改变该列白跨度而被过滤。
+**为什么只用下边缘**：凹槽剖面边沿贴有 0.1cm 刻度线，在画面上形成深色缺口，**污染每列的 topmost**（上边缘被系统性压低/撕裂），导致中点拟合被旋转。而轨道下边缘（管体外缘下边）是干净连续的直线。因此本方案**只对下边缘拟合**，`top` 仅用于计算白跨度做中位数滤波；钢球在凹槽内不接触管外缘，其列 span 变化会被滤波剔除。
 
 **为什么高度门限用中位数自适应而非固定窗口**：PPR 管是半剖圆弧面，俯视时只有弧顶最亮，固定 `pipe_h_min/max` 会误杀。改为逐帧取白跨度中位数 `med`，接受 `[0.6·med, 1.6·med]`，轨距变化、亮带收窄、球/噪声列均可自动处理，无需人工调参。
+
+**为什么 fitLine 用 DIST_HUBER**：抵抗少量离群列（反光、刻度阴影）拖拽 L2 直线。
+
+### 3.1.1 上边缘污染检测算法（参考，未启用）
+
+实机中轨道上边缘因 0.1cm 刻度线缺口而不宜直接测角；若后续需要上/下边缘联合验证（双边缘角平分线），可采用：
+
+```
+对同一二值图分别拟合上边缘点集 (x, top) 与下边缘点集 (x, bottom)
+  → angle_top / angle_bottom
+  → 若 |angle_top − angle_bottom| ≤ tol (如 2°) → 取角平分线 (angle_top+angle_bottom)/2
+  → 否则 → 信任更干净的边 (实机为下边缘)
+```
+
+当前实现为比赛特化，直接固定使用下边缘（`_diag['edge_used']='bottom'`），不启用双边缘校验。
 
 ### 3.2 回退方法：阈值分割 + 轮廓 + minAreaRect
 
@@ -131,7 +147,7 @@ def project(px, py):
 ```yaml
 # project_config.yaml
 pendulum:
-  pixels_per_cm: 25.6
+  pixels_per_cm: 50.0
   length_cm: 25.0
   calib_params:               # 可选，按需解除注释
     binary_threshold: 127
@@ -197,6 +213,7 @@ Phase1 完成后，LCD 右下角显示【定位】按钮（持续可见直到确
 | `column_points` | 列中心线法有效列数 |
 | `column_median_h` | 列中心线法白跨度中位数 (px) |
 | `column_fail_reason` | 列中心线法失败原因：`column_insufficient`, `column_median_height`, `column_off_band` |
+| `edge_used` | 列中心线法使用的边缘：`bottom`（比赛特化固定下边缘） |
 | `fail_reason` | 最终失败原因码：`max_area`, `no_contours`, `min_area`, `aspect_ratio`, `center_out_of_bounds`, `hough_insufficient_lines`, `no_edges`, `hough_no_lines`… |
 | `gray_mean / gray_std` | 灰度图均值和标准差 |
 | `threshold_method / threshold_ret / white_px_pct` | 阈值方式(Otsu/fixed)、结果值、白色像素比 (contour) |
@@ -215,14 +232,39 @@ python3 modules/zw_opencv_module/detectors/pendulum_calibrator/debug/debug_devic
 
 交互式命令：
 - `Enter` — 拍一帧跑标定
+- `c` — 切换模拟厘米刻度 overlay（`debug.draw_cm_scale`）
 - `calib.binary_threshold=100` — 在线调参
 - `?` — 显示当前配置
 - `save` — 持久化到 `calib_debug.yaml`
 - `q` — 退出
 
-输出：LCD 实时预览（标注帧 + 二值化帧上下拼接）+ 串口诊断文本 + `/root/calib_debug_frame.png` + `/root/calib_debug_binary.png`
+输出：LCD 实时预览（标注帧 + 二值化帧上下拼接）+ 串口诊断文本 + `/root/calib_debug_frame.png` + `/root/calib_debug_binary.png` + `/root/calib_debug_column.png`
+
+Overlay 标注：红色小点 = 下边缘采样列（每 4 列）；绿色长线 = 检测轴线；白色刻度 + 数值 = 模拟厘米刻度（用于核对 `pixels_per_cm`，配置见 `debug.cm_scale`）。
+
+**校准 pixels_per_cm**：开 `c` 显示模拟刻度，看虚拟厘米刻度是否与实物 0.1cm 刻度逐格吻合；不吻合则在线 `cm_scale.pixels_per_cm=xx` 调整。
 
 配置文件自动热加载（检测 mtime 变化）。
+
+### 6.3 主程序轨道叠加（draw_rail + 模拟厘米刻度）
+
+`project_config.yaml` 的 `pendulum.draw_rail` 控制主程序（`python run.py main`）LCD 显示帧上的轨道叠加：
+
+- **轴线**：绿色长线（过原点沿 `dir_cos/dir_sin`）
+- **原点**：红色圆点
+- **钢球投影**：黄色圆点（球心投影到轴线的位置）
+- **模拟厘米刻度**：白色短竖线 + 数值（`"1","2"..."12"` / `"-1","-2"...`），从原点起沿轴线 ± 方向每 `pixels_per_cm × cm_interval` 画一条，用于运行中核对 `pixels_per_cm`
+
+相关配置：
+
+```yaml
+pendulum:
+  pixels_per_cm: 50.0
+  cm_interval: 1.0     # 模拟刻度间隔 (cm)
+  draw_rail: true      # 测试用; 比赛置 false 关闭整个叠加(含刻度), 零开销
+```
+
+主程序刻度与 `draw_rail` 开关绑定：`draw_rail: true` 即绘制（含刻度），`false` 全关。接线见 `app/main.py`（`vm.set_rail_draw(draw_rail, provider, pixels_per_cm, cm_interval)`）。
 
 ---
 
@@ -290,7 +332,7 @@ ball_cm = dist_px / self._pixels_per_cm
 
 ```yaml
 pendulum:
-  pixels_per_cm: 25.6
+  pixels_per_cm: 50.0
   length_cm: 25.0
   rail_calibration:          # Phase2 完成后自动写入
     origin_x: 322.5
@@ -350,10 +392,11 @@ pendulum:
 
 ```
 1. 实车上电，python3 debug_device.py
-2. 观察串口诊断输出，确认 method=column_centroid、angle 随摆杆倾角变化（不再恒为 0）
-3. 如需调整阈值 → calib.column_threshold=xxx 在线调参（Enter 每拍一帧）
-4. 找到合适的参数 → save 到 calib_debug.yaml
-5. 将调好的参数抄入 project_config.yaml pendulum.calib_params 段
-6. 重启 python3 main.py → Phase 1 自动标定成功（日志 method=column_centroid pts=N angle=...）→ 右下角定位按钮出现
-7. 球放 0cm → 按定位按钮 → 绿框闪烁确认 → 按钮消失 → 持久化完成
+2. 观察串口诊断输出，确认 method=column_centroid、edge_used=bottom、angle 随摆杆倾角变化（不再恒为 0）
+3. 按 c 打开模拟厘米刻度，核对 pixels_per_cm 与实物刻度；不吻合则 cm_scale.pixels_per_cm=xx 调整
+4. 如需调整阈值 → calib.column_threshold=xxx 在线调参（Enter 每拍一帧）
+5. 找到合适的参数 → save 到 calib_debug.yaml
+6. 将调好的参数抄入 project_config.yaml pendulum.calib_params 段
+7. 重启 python3 main.py → Phase 1 自动标定成功（日志 method=column_centroid pts=N angle=...）→ 右下角定位按钮出现
+8. 球放 0cm → 按定位按钮 → 绿框闪烁确认 → 按钮消失 → 持久化完成
 ```
