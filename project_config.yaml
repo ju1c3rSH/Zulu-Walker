@@ -42,9 +42,10 @@ ai:
   active: "yolo11n"
 
 pendulum:
-  pixels_per_cm: 50.0
+  pixels_per_cm: 51.0           # 实测: 5cm 处虚拟刻度落后真实 0.1cm → 50+1.0
   length_cm: 25.0
-  draw_rail: true                  # 测试用: 显示帧上绘制标定轨道轴线 + 原点 + 钢球投影点 (比赛置 false)
+  cm_interval: 1.0              # 轨道绘制: 模拟厘米刻度间隔 (cm), 用于验证 pixels_per_cm
+  draw_rail: true                  # 测试用: 显示帧上绘制标定轨道轴线 + 原点 + 钢球投影点 + 厘米刻度 (比赛置 false)
   # calib_params:                  # 可选，按需解除注释
   #   binary_threshold: 127
   #   min_contour_area_ratio: 0.04
