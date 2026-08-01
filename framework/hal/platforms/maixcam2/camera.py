@@ -65,6 +65,11 @@ class MaixCam2Camera:
         self._reconnect_until: float = 0.0
         self._reconnecting = False
         self._last_frame_time: float = time.monotonic()
+        # Monotonic counter of fresh sensor frames received.  Used by the
+        # display-update gate to skip copying/redrawing when the sensor
+        # delivered no new frame (identity-based gating is unreliable because
+        # the maix camera may reuse Image objects).
+        self._frame_serial: int = 0
 
         self._open_camera()
         # exposure/gain set outside the Camera() try block so a failure here
@@ -185,6 +190,11 @@ class MaixCam2Camera:
         return self._last_frame
 
     @property
+    def frame_serial(self) -> int:
+        """Monotonic count of fresh sensor frames (0 before any frame)."""
+        return self._frame_serial
+
+    @property
     def last_gain(self) -> Optional[int]:
         return self._last_gain
 
@@ -214,8 +224,9 @@ class MaixCam2Camera:
                 self._check_stall()
                 return None
             self._last_raw = img
-            result = maix.image.image2cv(img, ensure_bgr=False, copy=True)[:, :, ::-1]
+            result = maix.image.image2cv(img, ensure_bgr=False, copy=False)[:, :, ::-1]
             self._last_frame = result
+            self._frame_serial += 1
             self._note_success()
             return result
         except Exception as e:
@@ -231,8 +242,12 @@ class MaixCam2Camera:
             raw = self._cam.read(block=False)
             if raw is not None:
                 self._last_raw = raw
-                np_img = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
+                # Zero-copy RGB view (no per-frame 1.29MB memcpy).  The AI
+                # path uses last_raw directly; the ndarray is consumed on
+                # demand (e.g. AEC every N frames).
+                np_img = maix.image.image2cv(raw, ensure_bgr=False, copy=False)
                 self._last_frame = np_img[:, :, ::-1]
+                self._frame_serial += 1
                 self._note_success()
             else:
                 self._check_stall()

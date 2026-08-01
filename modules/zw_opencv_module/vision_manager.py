@@ -52,6 +52,19 @@ class VisionManager:
         self._any_fresh = False
         self._pending_results: deque = deque(maxlen=5)
         self._display_frame = None
+        # Frame-freshness gate: display is rebuilt only when a NEW sensor frame
+        # arrived (frame_serial changed), skipping the 1.29MB raw_img.copy()
+        # + full redraw on stale iterations.
+        self._last_display_serial: int = -1
+        # Display rebuild throttle: even on fresh frames, only rebuild the
+        # display frame (~raw_img.copy() + full redraw) every
+        # _DISPLAY_REBUILD_INTERVAL_S.  The detect→UART control path reads
+        # _latest_ai and is fully independent of the display frame, so the
+        # throttle frees the vision loop from the 10-16ms copy on intermediate
+        # frames.  The display thread / capture sink read the reused frame
+        # (read-only), so no frame pollution.
+        self._DISPLAY_REBUILD_INTERVAL_S: float = 0.033  # ~30fps rebuild
+        self._last_display_rebuild: float = 0.0
 
         self._wdt_feed = lambda: None
         self._wdt_count = 0
@@ -84,13 +97,37 @@ class VisionManager:
         self._rail_ppc: float = 50.0
         self._rail_cm_interval: float = 1.0
 
+        # Detection-list overlay (top-left text list).  Off for competition
+        # (display.detection_list: false) to avoid per-frame draw_string cost.
+        self._detection_list_enabled: bool = True
+
         self._test_id: int = 0
         self._hdr_prefix: str = ""
         self._test_str_cached: str = ""
-        self._test_str_width_cached: int = 0
         self._time_str_cached: str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-        self._time_str_width_cached: int = 0
         self._time_counter: int = 0
+
+        # Persistent header buffer + per-fragment single-slot sprites.
+        # The 32px bar (black bg + FPS + time + test id) is composed by
+        # blitting pre-rendered RGBA8888 text sprites onto ONE persistent
+        # RGB888 buffer; the buffer is allocated once (or on width change)
+        # and never re-allocated per rebuild.  Each fragment uses a single
+        # cache slot that is re-rasterised only when its string changes,
+        # keeping both per-frame and per-second font work minimal.
+        self._header_bmp = None
+        self._header_dirty = True
+        self._hdr_fps_last: Optional[float] = None
+        self._hdr_width: int = 0
+        self._hdr_fps_sprite = None
+        self._hdr_fps_text: str = ""
+        self._hdr_time_sprite = None
+        self._hdr_time_text: str = ""
+        self._hdr_test_sprite = None
+        self._hdr_test_text: str = ""
+
+        # cm-ruler label sprites: each numeric label pre-rendered once into a
+        # transparent RGBA8888 sprite and blitted each frame.
+        self._cm_label_sprites: Dict[str, Any] = {}
 
         self._aec_enabled: bool = False
         self._aec_cam_id: str = ""
@@ -107,6 +144,14 @@ class VisionManager:
 
     def set_capture_sink(self, sink: callable) -> None:
         self._capture_sink = sink
+
+    def set_detection_list_enabled(self, enabled: bool) -> None:
+        """Enable/disable the top-left detection text list overlay.
+
+        Off for competition (display.detection_list: false) to avoid the
+        per-frame draw_string cost; the bbox + corner number remain.
+        """
+        self._detection_list_enabled = bool(enabled)
 
     def set_rail_draw(self, enabled: bool, provider=None,
                       pixels_per_cm: float = 50.0,
@@ -301,7 +346,7 @@ class VisionManager:
                     time.sleep(0.001)
 
                 _frame_count += 1
-                if _frame_count % 60 == 0:
+                if _frame_count % 120 == 0:
                     gc.collect(0)
             except Exception:
                 traceback.print_exc()
@@ -348,6 +393,30 @@ class VisionManager:
             if ai_result is not None and ai_result.success:
                 detections = ai_result.result_data.get("detections", [])
 
+            serial = getattr(pipe.camera, "frame_serial", None)
+            if serial is not None and self._display_frame is not None \
+                    and serial == self._last_display_serial:
+                # No new sensor frame this iteration: skip the 1.29MB copy and
+                # the full redraw.  The display thread already skips the
+                # unchanged object by identity.  Still honour the capture
+                # cadence using the previous display frame.
+                self._maybe_push_capture(self._display_frame)
+                return
+
+            if self._display_frame is not None:
+                now = time.monotonic()
+                if now - self._last_display_rebuild < self._DISPLAY_REBUILD_INTERVAL_S:
+                    # Fresh sensor frame but inside the rebuild window: reuse
+                    # the previous display frame (no copy/redraw), which keeps
+                    # the detect→UART control path free of the 10-16ms copy.
+                    # The reused frame is only ever read (display.show /
+                    # capture sink), never mutated → no frame pollution.
+                    self._last_display_serial = serial if serial is not None else -1
+                    self._maybe_push_capture(self._display_frame)
+                    return
+
+            self._last_display_serial = serial if serial is not None else -1
+            self._last_display_rebuild = time.monotonic()
             disp = raw_img.copy()
             if self._rail_draw_enabled:
                 self._draw_rail(disp, detections)
@@ -363,17 +432,23 @@ class VisionManager:
             self._draw_fill_light_button(disp)
             self._draw_exit_icon(disp)
             self._display_frame = disp
-            if self._capture_sink is not None:
-                now = time.monotonic()
-                if now - self._capture_last >= self._CAPTURE_INTERVAL_S:
-                    # Additive cadence keeps the average rate exactly
-                    # _CAPTURE_INTERVAL_S; the clamp prevents a burst of
-                    # catch-up pushes after a long vision-loop stall.
-                    self._capture_last += self._CAPTURE_INTERVAL_S
-                    if self._capture_last < now - 2.0 * self._CAPTURE_INTERVAL_S:
-                        self._capture_last = now
-                    self._capture_sink(disp)
+            self._maybe_push_capture(disp)
             return
+
+    def _maybe_push_capture(self, frame) -> None:
+        """Push *frame* to the capture sink on the fixed cadence.
+
+        Additive cadence keeps the average rate exactly _CAPTURE_INTERVAL_S;
+        the clamp prevents a burst of catch-up pushes after a long stall.
+        """
+        if self._capture_sink is None:
+            return
+        now = time.monotonic()
+        if now - self._capture_last >= self._CAPTURE_INTERVAL_S:
+            self._capture_last += self._CAPTURE_INTERVAL_S
+            if self._capture_last < now - 2.0 * self._CAPTURE_INTERVAL_S:
+                self._capture_last = now
+            self._capture_sink(frame)
 
     def _draw_rail(self, img, detections) -> None:
         """Test overlay: draw the calibrated rail axis, origin, ball projection,
@@ -430,7 +505,8 @@ class VisionManager:
         """Draw vertical (axis-perpendicular) cm ticks with labels.
 
         Ticks span roughly half the rail thickness on either side of the axis.
-        Coordinates outside the frame are skipped.
+        Coordinates outside the frame are skipped.  Labels are pre-rendered
+        once into transparent RGBA8888 sprites and blitted each frame.
         """
         import maix.image
         step = self._rail_ppc * self._rail_cm_interval
@@ -452,8 +528,78 @@ class VisionManager:
                               cx + int(px0), cy + int(py0),
                               color=maix.image.COLOR_WHITE, thickness=2)
                 label = str(int(round(sign * k * self._rail_cm_interval)))
-                img.draw_string(cx + 2, cy - 4, label,
-                                color=maix.image.COLOR_WHITE)
+                sprite = self._get_cm_label_sprite(label, maix.image)
+                if sprite is not None:
+                    try:
+                        # Text sits at sprite-local (1,1); blit so the glyph
+                        # lands at the same spot as the old draw_string.
+                        img.draw_image(cx + 1, cy - 5, sprite)
+                    except Exception:
+                        pass
+
+    def _make_rgb_text_sprite(self, text: str, maix_image,
+                              scale=1, thickness=1) -> Optional[Any]:
+        """Rasterise *text* onto an opaque black-background RGB888 sprite.
+
+        Used for the header fragments: the header bar is itself black, so an
+        opaque black sprite with white glyphs blits seamlessly onto it.  This
+        avoids the RGBA8888 alpha path (draw_string on an RGBA canvas is
+        unreliable on this platform) while keeping the same single-slot cache
+        behaviour.
+        """
+        try:
+            size = maix_image.string_size(text, scale=scale, thickness=thickness)
+            lw = size[0] + 4
+            lh = size[1] + 2
+            sprite = maix_image.Image(lw, lh, maix_image.Format.FMT_RGB888,
+                                      bg=maix_image.COLOR_BLACK)
+            sprite.draw_string(1, 1, text,
+                               color=maix_image.COLOR_WHITE, scale=scale, thickness=thickness)
+            return sprite
+        except Exception:
+            return None
+
+    def _make_rgba_text_sprite(self, text: str, maix_image,
+                               scale=1, thickness=1) -> Optional[Any]:
+        """Rasterise *text* onto a transparent RGBA8888 sprite, or None.
+
+        Transparent background (alpha=0) with opaque white glyphs (alpha=0xFF),
+        per the MaixPy draw-transparent-image pattern.  Used by the cm ruler
+        labels; callers cache the result.
+        """
+        try:
+            size = maix_image.string_size(text, scale=scale, thickness=thickness)
+            lw = size[0] + 4
+            lh = size[1] + 2
+            sprite = maix_image.Image(lw, lh, maix_image.Format.FMT_RGBA8888)
+            sprite.draw_string(1, 1, text,
+                               color=maix_image.COLOR_WHITE, scale=scale, thickness=thickness)
+            for y in range(lh):
+                for x in range(lw):
+                    pix = sprite.get_pixel(x, y)
+                    val = pix[0] & 0x00ffffff
+                    if val != 0:
+                        val = val | 0xff000000
+                    sprite.set_pixel(x, y, [val])
+            return sprite
+        except Exception:
+            return None
+
+    def _get_cm_label_sprite(self, label: str, maix_image) -> Optional[Any]:
+        """Return a cached transparent RGBA8888 sprite for a cm label, or None.
+
+        On first use the label is rasterised onto a transparent background
+        (per the MaixPy draw-transparent-image pattern), then cached; later
+        frames only blit.  Any failure returns None so the caller can degrade
+        gracefully (label simply not drawn).
+        """
+        cached = self._cm_label_sprites.get(label)
+        if cached is not None:
+            return cached
+        sprite = self._make_rgba_text_sprite(label, maix_image, scale=1, thickness=1)
+        if sprite is not None:
+            self._cm_label_sprites[label] = sprite
+        return sprite
 
     def _draw_camera_fault_banner(self, img) -> None:
         try:
@@ -567,7 +713,8 @@ class VisionManager:
 
         self._draw_header(img, pipeline_id, fps)
         self._draw_detections(img, detections, maix.image)
-        self._draw_detection_list(img, detections, maix.image)
+        if self._detection_list_enabled:
+            self._draw_detection_list(img, detections, maix.image)
 
     def _draw_header(self, img, pipeline_id: str, fps: float) -> None:
         try:
@@ -576,40 +723,93 @@ class VisionManager:
             return
         w = img.width()
         bar_h = 32
-        try:
-            img.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
-        except Exception:
-            pass
         if not self._hdr_prefix:
             self._hdr_prefix = f"{pipeline_id}  FPS:"
-        try:
-            img.draw_string(6, 2, f"{self._hdr_prefix}{fps:.1f}",
-                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
-        except Exception:
-            pass
+
+        # Update cached strings on a 1 Hz cadence (same as before). The time
+        # change must also mark the header dirty, otherwise the clock could go
+        # stale/frozen if fps happens to be stable.
         self._time_counter += 1
         if self._time_counter % 60 == 0:
             self._time_str_cached = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        if not self._time_str_width_cached:
-            self._time_str_width_cached = maix.image.string_size(
-                self._time_str_cached, scale=1.2, thickness=1)[0]
-        try:
-            img.draw_string((w - self._time_str_width_cached) // 2, 2,
-                            self._time_str_cached,
-                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
-        except Exception:
-            pass
+            self._header_dirty = True
+
+        # Rebuild the header bitmap only when its content changed.
+        if self._header_bmp is None or w != self._hdr_width:
+            self._header_dirty = True
+        if fps != self._hdr_fps_last:
+            self._hdr_fps_last = fps
+            self._header_dirty = True
         if self._test_id > 0:
+            test_str = f"Record Round: {self._test_id}"
+            if test_str != self._test_str_cached:
+                self._test_str_cached = test_str
+                self._header_dirty = True
+
+        if self._header_dirty:
             try:
-                test_str = f"Record Round: {self._test_id}"
-                if test_str != self._test_str_cached:
-                    self._test_str_cached = test_str
-                    self._test_str_width_cached = maix.image.string_size(
-                        test_str, scale=1.2, thickness=1)[0]
-                #log_print(self._test_str_cached)
-                img.draw_string(w - self._test_str_width_cached - 8, 2,
-                                self._test_str_cached,
-                                color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+                # Allocate the persistent buffer once (or on width change);
+                # reuse it across rebuilds to avoid per-second allocation.
+                if self._header_bmp is None or w != self._hdr_width:
+                    self._header_bmp = maix.image.Image(
+                        w, bar_h, maix.image.Format.FMT_RGB888,
+                        bg=maix.image.COLOR_BLACK)
+                    self._hdr_width = w
+                bmp = self._header_bmp
+                try:
+                    bmp.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
+                except Exception:
+                    pass
+
+                # FPS fragment (single-slot cache).
+                fps_text = f"{self._hdr_prefix}{fps:.1f}"
+                if fps_text != self._hdr_fps_text:
+                    self._hdr_fps_text = fps_text
+                    self._hdr_fps_sprite = self._make_rgb_text_sprite(
+                        fps_text, maix.image, scale=1.2, thickness=1)
+                if self._hdr_fps_sprite is not None:
+                    try:
+                        # Sprite text sits at local (1,1); blit at (5,1) so the
+                        # glyph lands at the old draw_string(6,2) position.
+                        bmp.draw_image(5, 1, self._hdr_fps_sprite)
+                    except Exception:
+                        pass
+
+                # Time fragment (single-slot cache).
+                if self._time_str_cached != self._hdr_time_text:
+                    self._hdr_time_text = self._time_str_cached
+                    self._hdr_time_sprite = self._make_rgb_text_sprite(
+                        self._time_str_cached, maix.image, scale=1.2, thickness=1)
+                if self._hdr_time_sprite is not None:
+                    try:
+                        tw = self._hdr_time_sprite.width() - 4  # text width
+                        bmp.draw_image((w - tw) // 2, 1, self._hdr_time_sprite)
+                    except Exception:
+                        pass
+
+                # Test-id fragment (single-slot cache).
+                if self._test_id > 0:
+                    test_str = f"Record Round: {self._test_id}"
+                    if test_str != self._hdr_test_text:
+                        self._hdr_test_text = test_str
+                        self._hdr_test_sprite = self._make_rgb_text_sprite(
+                            test_str, maix.image, scale=1.2, thickness=1)
+                    if self._hdr_test_sprite is not None:
+                        try:
+                            tw = self._hdr_test_sprite.width() - 4  # text width
+                            bmp.draw_image(w - tw - 8, 1, self._hdr_test_sprite)
+                        except Exception:
+                            pass
+
+                self._header_dirty = False
+            except Exception:
+                self._header_bmp = None
+                self._header_dirty = True
+                return
+
+        if self._header_bmp is not None:
+            try:
+                img.draw_image(0, 0, self._header_bmp)
             except Exception:
                 pass
 

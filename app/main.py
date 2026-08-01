@@ -655,6 +655,9 @@ def main():
         vm.set_rail_draw(draw_rail, lambda: coordinator.get_rail_calibration(),
                          pixels_per_cm=pixels_per_cm, cm_interval=rail_cm_int)
         log_print(f"[RAIL] draw_rail={'ON' if draw_rail else 'OFF'} ppc={pixels_per_cm} cm_interval={rail_cm_int}")
+        det_list = _cfg.get("display", {}).get("detection_list", False)
+        vm.set_detection_list_enabled(det_list)
+        log_print(f"[DISPLAY] detection_list={'ON' if det_list else 'OFF'}")
 
     uart = get_interface()
     if uart:
