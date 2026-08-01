@@ -35,7 +35,7 @@ cameras:
 
 uart_defaults:
   port: "/dev/ttyS4"
-  baudrate: 115200
+  baudrate: 921600
 
 ai:
   models:
