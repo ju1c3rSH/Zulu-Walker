@@ -81,6 +81,8 @@ class VisionManager:
 
         self._rail_draw_enabled: bool = False
         self._rail_provider = None  # callable() -> RailCalibration or None
+        self._rail_ppc: float = 50.0
+        self._rail_cm_interval: float = 1.0
 
         self._test_id: int = 0
         self._hdr_prefix: str = ""
@@ -106,14 +108,21 @@ class VisionManager:
     def set_capture_sink(self, sink: callable) -> None:
         self._capture_sink = sink
 
-    def set_rail_draw(self, enabled: bool, provider=None) -> None:
+    def set_rail_draw(self, enabled: bool, provider=None,
+                      pixels_per_cm: float = 50.0,
+                      cm_interval: float = 1.0) -> None:
         """Enable/disable test-time rail overlay drawing.
 
         *provider* is a callable returning a ``RailCalibration`` (or None),
         evaluated lazily each frame so Phase-2 origin updates are reflected.
+        ``pixels_per_cm`` / ``cm_interval`` drive the simulated cm ruler ticks
+        drawn along the rail axis from the origin (for verifying the physical
+        pixel-per-cm figure against the real ruler).
         """
         self._rail_draw_enabled = bool(enabled)
         self._rail_provider = provider
+        self._rail_ppc = float(pixels_per_cm) if pixels_per_cm > 0 else 50.0
+        self._rail_cm_interval = float(cm_interval) if cm_interval > 0 else 1.0
 
     def set_exit_icon(self, icon, icon_size: int = 48, margin: int = 12) -> None:
         self._exit_icon = icon
@@ -367,7 +376,8 @@ class VisionManager:
             return
 
     def _draw_rail(self, img, detections) -> None:
-        """Test overlay: draw the calibrated rail axis, origin, and ball projection."""
+        """Test overlay: draw the calibrated rail axis, origin, ball projection,
+        and simulated cm ruler ticks (for verifying pixels_per_cm)."""
         if not self._rail_draw_enabled:
             return
         provider = self._rail_provider
@@ -396,6 +406,11 @@ class VisionManager:
                           color=maix.image.COLOR_GREEN, thickness=2)
             img.draw_circle(int(ox), int(oy), 5,
                             color=maix.image.COLOR_RED, thickness=2)
+
+            # Simulated cm ruler: from the origin, along +/- rail direction,
+            # draw a perpendicular tick every pixels_per_cm * cm_interval.
+            self._draw_cm_ruler(img, ox, oy, dx, dy, w, h)
+
             if detections:
                 ball = max((d for d in detections if d.class_id == 0),
                            key=lambda d: d.score, default=None)
@@ -410,6 +425,35 @@ class VisionManager:
                                         color=maix.image.COLOR_YELLOW, thickness=-1)
         except Exception:
             pass
+
+    def _draw_cm_ruler(self, img, ox, oy, dx, dy, w, h) -> None:
+        """Draw vertical (axis-perpendicular) cm ticks with labels.
+
+        Ticks span roughly half the rail thickness on either side of the axis.
+        Coordinates outside the frame are skipped.
+        """
+        import maix.image
+        step = self._rail_ppc * self._rail_cm_interval
+        if step <= 0:
+            return
+        tick_half = 20  # ~half the ruler tick length in px
+        px0 = -dy * tick_half  # perpendicular (up) component
+        py0 = dx * tick_half
+        n_max = int((w + h) / max(step, 1.0)) + 1
+        n_max = min(n_max, 60)  # hard cap against degenerate configs
+        for k in range(1, n_max + 1):
+            for sign in (1, -1):
+                t = sign * k * step
+                cx = int(ox + t * dx)
+                cy = int(oy + t * dy)
+                if not (0 <= cx < w and 0 <= cy < h):
+                    continue
+                img.draw_line(cx - int(px0), cy - int(py0),
+                              cx + int(px0), cy + int(py0),
+                              color=maix.image.COLOR_WHITE, thickness=2)
+                label = str(int(round(sign * k * self._rail_cm_interval)))
+                img.draw_string(cx + 2, cy - 4, label,
+                                color=maix.image.COLOR_WHITE)
 
     def _draw_camera_fault_banner(self, img) -> None:
         try:
