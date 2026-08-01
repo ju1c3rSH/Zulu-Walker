@@ -3,6 +3,9 @@ platform: maixcam2
 debug_console_enabled: false
 display_enabled: true
 
+display:
+  detection_list: false              # 左上角检测文字列表; 比赛置 false (省每帧 draw_string), 调试置 true
+
 fill_light:
   start_on: false                      # 启动默认补光灯状态; 运行中点击手电筒按钮切换后持久化到 logs/fill_light.state (启动时该文件优先)
   icon_on: "assets/flashlight_on.png"   # 48x48

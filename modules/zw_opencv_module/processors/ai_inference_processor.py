@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 import numpy as np
@@ -22,7 +23,8 @@ class AIInferenceProcessor(Processor):
         super().__init__(name)
         self._ai: Optional[AIInference] = None
         self._handler = None
-        self._filter_logged: bool = False
+        # Last wall-clock time the filter aggregate was logged (once/second).
+        self._last_discard_log_ts: float = 0.0
 
     def set_ai(self, ai: AIInference) -> None:
         self._ai = ai
@@ -79,18 +81,16 @@ class AIInferenceProcessor(Processor):
             image_height=h,
             on_discard=lambda obj, reason: discard_log.append((obj, reason)),
         )
-        for obj, reason in discard_log:
-            log_print(
-                f"filter_discard reason={reason} "
-                f"cls={obj.class_id} score={obj.score:.2f} "
-                f"xywh=({obj.x},{obj.y},{obj.w},{obj.h}) area={obj.w * obj.h}"
-            )
-        if discard_log and not self._filter_logged:
-            self._filter_logged = True
-            log_print(
-                f"filter_detections: {pre_count} -> {len(detections)} "
-                f"(removed {len(discard_log)})"
-            )
+        # Log only a once-per-second aggregate instead of one line per discarded
+        # object every frame (the per-item spam was pure log noise).
+        if discard_log:
+            now = time.monotonic()
+            if now - self._last_discard_log_ts >= 1.0:
+                self._last_discard_log_ts = now
+                log_print(
+                    f"filter_detections: {pre_count} -> {len(detections)} "
+                    f"(removed {len(discard_log)})"
+                )
 
         segment_dicts = []
         for d in detections:
