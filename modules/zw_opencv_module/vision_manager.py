@@ -87,18 +87,26 @@ class VisionManager:
         self._test_id: int = 0
         self._hdr_prefix: str = ""
         self._test_str_cached: str = ""
-        self._test_str_width_cached: int = 0
         self._time_str_cached: str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-        self._time_str_width_cached: int = 0
         self._time_counter: int = 0
 
-        # Header bitmap cache: the whole 32px bar (black bg + FPS + time +
-        # test id) is pre-rasterised once per second and blitted each frame,
-        # avoiding per-frame draw_string font rasterisation.
+        # Persistent header buffer + per-fragment single-slot sprites.
+        # The 32px bar (black bg + FPS + time + test id) is composed by
+        # blitting pre-rendered RGBA8888 text sprites onto ONE persistent
+        # RGB888 buffer; the buffer is allocated once (or on width change)
+        # and never re-allocated per rebuild.  Each fragment uses a single
+        # cache slot that is re-rasterised only when its string changes,
+        # keeping both per-frame and per-second font work minimal.
         self._header_bmp = None
         self._header_dirty = True
         self._hdr_fps_last: Optional[float] = None
         self._hdr_width: int = 0
+        self._hdr_fps_sprite = None
+        self._hdr_fps_text: str = ""
+        self._hdr_time_sprite = None
+        self._hdr_time_text: str = ""
+        self._hdr_test_sprite = None
+        self._hdr_test_text: str = ""
 
         # cm-ruler label sprites: each numeric label pre-rendered once into a
         # transparent RGBA8888 sprite and blitted each frame.
@@ -313,7 +321,7 @@ class VisionManager:
                     time.sleep(0.001)
 
                 _frame_count += 1
-                if _frame_count % 60 == 0:
+                if _frame_count % 120 == 0:
                     gc.collect(0)
             except Exception:
                 traceback.print_exc()
@@ -474,6 +482,32 @@ class VisionManager:
                     except Exception:
                         pass
 
+    def _make_rgba_text_sprite(self, text: str, maix_image,
+                               scale=1, thickness=1) -> Optional[Any]:
+        """Rasterise *text* onto a transparent RGBA8888 sprite, or None.
+
+        Transparent background (alpha=0) with opaque white glyphs (alpha=0xFF),
+        per the MaixPy draw-transparent-image pattern.  Used by both the cm
+        ruler labels and the header fragments; callers cache the result.
+        """
+        try:
+            size = maix_image.string_size(text, scale=scale, thickness=thickness)
+            lw = size[0] + 4
+            lh = size[1] + 2
+            sprite = maix_image.Image(lw, lh, maix_image.Format.FMT_RGBA8888)
+            sprite.draw_string(1, 1, text,
+                               color=maix_image.COLOR_WHITE, scale=scale, thickness=thickness)
+            for y in range(lh):
+                for x in range(lw):
+                    pix = sprite.get_pixel(x, y)
+                    val = pix[0] & 0x00ffffff
+                    if val != 0:
+                        val = val | 0xff000000
+                    sprite.set_pixel(x, y, [val])
+            return sprite
+        except Exception:
+            return None
+
     def _get_cm_label_sprite(self, label: str, maix_image) -> Optional[Any]:
         """Return a cached transparent RGBA8888 sprite for a cm label, or None.
 
@@ -485,25 +519,10 @@ class VisionManager:
         cached = self._cm_label_sprites.get(label)
         if cached is not None:
             return cached
-        try:
-            size = maix_image.string_size(label, scale=1, thickness=1)
-            lw = size[0] + 4
-            lh = size[1] + 2
-            sprite = maix_image.Image(lw, lh, maix_image.Format.FMT_RGBA8888)
-            sprite.draw_string(1, 1, label,
-                               color=maix_image.COLOR_WHITE, scale=1, thickness=1)
-            # Make the background transparent (alpha=0); keep text pixels.
-            for y in range(lh):
-                for x in range(lw):
-                    pix = sprite.get_pixel(x, y)
-                    val = pix[0] & 0x00ffffff
-                    if val != 0:
-                        val = val | 0xff000000
-                    sprite.set_pixel(x, y, [val])
+        sprite = self._make_rgba_text_sprite(label, maix_image, scale=1, thickness=1)
+        if sprite is not None:
             self._cm_label_sprites[label] = sprite
-            return sprite
-        except Exception:
-            return None
+        return sprite
 
     def _draw_camera_fault_banner(self, img) -> None:
         try:
@@ -651,38 +670,59 @@ class VisionManager:
 
         if self._header_dirty:
             try:
-                bmp = maix.image.Image(w, bar_h, maix.image.Format.FMT_RGB888,
-                                       bg=maix.image.COLOR_BLACK)
+                # Allocate the persistent buffer once (or on width change);
+                # reuse it across rebuilds to avoid per-second allocation.
+                if self._header_bmp is None or w != self._hdr_width:
+                    self._header_bmp = maix.image.Image(
+                        w, bar_h, maix.image.Format.FMT_RGB888,
+                        bg=maix.image.COLOR_BLACK)
+                    self._hdr_width = w
+                bmp = self._header_bmp
                 try:
                     bmp.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
                 except Exception:
                     pass
-                try:
-                    bmp.draw_string(6, 2, f"{self._hdr_prefix}{fps:.1f}",
-                                    color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
-                except Exception:
-                    pass
-                try:
-                    if not self._time_str_width_cached:
-                        self._time_str_width_cached = maix.image.string_size(
-                            self._time_str_cached, scale=1.2, thickness=1)[0]
-                    bmp.draw_string((w - self._time_str_width_cached) // 2, 2,
-                                    self._time_str_cached,
-                                    color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
-                except Exception:
-                    pass
-                if self._test_id > 0:
+
+                # FPS fragment (single-slot cache).
+                fps_text = f"{self._hdr_prefix}{fps:.1f}"
+                if fps_text != self._hdr_fps_text:
+                    self._hdr_fps_text = fps_text
+                    self._hdr_fps_sprite = self._make_rgba_text_sprite(
+                        fps_text, maix.image, scale=1.2, thickness=1)
+                if self._hdr_fps_sprite is not None:
                     try:
-                        if not self._test_str_width_cached:
-                            self._test_str_width_cached = maix.image.string_size(
-                                self._test_str_cached, scale=1.2, thickness=1)[0]
-                        bmp.draw_string(w - self._test_str_width_cached - 8, 2,
-                                        self._test_str_cached,
-                                        color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+                        # Sprite text sits at local (1,1); blit at (5,1) so the
+                        # glyph lands at the old draw_string(6,2) position.
+                        bmp.draw_image(5, 1, self._hdr_fps_sprite)
                     except Exception:
                         pass
-                self._header_bmp = bmp
-                self._hdr_width = w
+
+                # Time fragment (single-slot cache).
+                if self._time_str_cached != self._hdr_time_text:
+                    self._hdr_time_text = self._time_str_cached
+                    self._hdr_time_sprite = self._make_rgba_text_sprite(
+                        self._time_str_cached, maix.image, scale=1.2, thickness=1)
+                if self._hdr_time_sprite is not None:
+                    try:
+                        tw = self._hdr_time_sprite.width() - 4  # text width
+                        bmp.draw_image((w - tw) // 2, 1, self._hdr_time_sprite)
+                    except Exception:
+                        pass
+
+                # Test-id fragment (single-slot cache).
+                if self._test_id > 0:
+                    test_str = f"Record Round: {self._test_id}"
+                    if test_str != self._hdr_test_text:
+                        self._hdr_test_text = test_str
+                        self._hdr_test_sprite = self._make_rgba_text_sprite(
+                            test_str, maix.image, scale=1.2, thickness=1)
+                    if self._hdr_test_sprite is not None:
+                        try:
+                            tw = self._hdr_test_sprite.width() - 4  # text width
+                            bmp.draw_image(w - tw - 8, 1, self._hdr_test_sprite)
+                        except Exception:
+                            pass
+
                 self._header_dirty = False
             except Exception:
                 self._header_bmp = None
