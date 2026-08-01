@@ -19,7 +19,7 @@ cameras:
     gain: 200
     aec:
       enabled: true
-      adjust_interval_frames: 30   # 每N帧调整一次 (~0.5s @ 60fps)
+      adjust_interval_frames: 60   # 每N帧调整一次 (~1s @ 60fps)
       target_mean: 80              # ROI目标亮度 0-255, 越低越暗
       gain_min: 50                 # 增益下限, 避免过暗
       gain_max: 600                # 增益上限, 避免噪点过多
