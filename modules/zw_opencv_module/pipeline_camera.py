@@ -93,6 +93,7 @@ class PipelineCamera:
         return None
 
     def process_frame(self, fps: float = 0.0) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
+        serial = getattr(self.camera, "frame_serial", None)
         raw_img = self.camera.read_raw()
 
         if raw_img is not None:
@@ -103,6 +104,12 @@ class PipelineCamera:
  
         if frame is None:
             return None, {}
+
+        if serial is not None and getattr(self.camera, "frame_serial", None) == serial:
+            # No fresh sensor frame since the last read: reuse the cached task
+            # results and skip the task chain (NPU re-inference on a stale
+            # frame) so the vision loop idles instead of busy-spinning.
+            return None, self._last_results
 
         env_context = {
             "fps": fps,
