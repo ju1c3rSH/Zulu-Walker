@@ -6,8 +6,15 @@ import threading
 from collections import deque
 from typing import Optional
 
-_QUEUE_MAX = 2
+_QUEUE_MAX = 12
 _EMPTY_SLEEP = 0.015
+# JPEG encode quality for the WiFi stream.  Lower quality -> smaller frames
+# -> higher effective frame rate on WiFi links.
+_JPEG_QUALITY = 90
+# Proportional downscale factor applied to the streamed frame before JPEG
+# encoding (e.g. 0.5 -> half width/height).  Smaller frames -> much lower
+# encode cost and bandwidth -> higher effective frame rate on WiFi links.
+_STREAM_SCALE = 0.5
 
 
 class JpegStreamer:
@@ -58,9 +65,17 @@ class JpegStreamer:
                     img = None
             if img is not None:
                 try:
-                    self._server.write(img)
+                    if _STREAM_SCALE < 1.0:
+                        w = max(1, int(img.width() * _STREAM_SCALE))
+                        h = max(1, int(img.height() * _STREAM_SCALE))
+                        img = img.resize(w, h)
+                    jpg = img.to_jpeg(_JPEG_QUALITY)
+                    self._server.write(jpg)
                 except Exception:
-                    pass
+                    try:
+                        self._server.write(img)
+                    except Exception:
+                        pass
             else:
                 time.sleep(_EMPTY_SLEEP)
 
