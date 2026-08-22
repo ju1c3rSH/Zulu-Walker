@@ -63,6 +63,9 @@ _BALL_MIN_FPS = 40.0              # worst-case pipeline framerate
 _VEL_SAFETY_FACTOR = 2.0          # pixel displacement safety factor
 _BALL_ARM_FRAMES = 2              # consecutive valid detections to start sending
 _BALL_DROP_FRAMES = 3             # consecutive invalid detections to stop sending
+_AI_STALL_TIMEOUT_S = 0.3         # no fresh AI data for this long => disarm and
+                                  # stop streaming, letting the master's frame
+                                  # timeout fail safe (~18 AI periods @60fps)
 
 # α-β filter parameters (steady-state Kalman for 1D constant-velocity model)
 _AB_ALPHA = 0.7                  # position smoothing gain (0=full smooth, 1=raw measurement)
@@ -117,6 +120,7 @@ class Ti2026Coordinator:
         self._latest_ai: dict = {}
         self._ai_seq: int = 0
         self._ai_new: bool = False
+        self._last_ai_data_ts: float = 0.0  # last monotonic ts of fresh AI data
         self._pixels_per_cm: float = 50.0
         self._frame_width: int = 640
         self._frame_height: int = 640
@@ -320,6 +324,8 @@ class Ti2026Coordinator:
                 if task_name == "line_follow":
                     self._latest_line = data
                 elif task_name == "ai_inference":
+                    if vision_result.success:
+                        self._last_ai_data_ts = time.monotonic()
                     self._latest_ai = data
                     self._ai_seq += 1
                     self._ai_new = True
@@ -543,10 +549,14 @@ class Ti2026Coordinator:
         self._ball_hit_count = 0
         self._ball_miss_count += 1
         if self._ball_miss_count >= _BALL_DROP_FRAMES:
-            self._ball_armed = False
-            self._ball_last_cx = None
-            self._ball_last_cy = None
-            self._ab_ball_filter_reset()
+            self._reset_ball_tracking()
+
+    def _reset_ball_tracking(self) -> None:
+        """Disarm streaming and forget filter state (target lost / source dead)."""
+        self._ball_armed = False
+        self._ball_last_cx = None
+        self._ball_last_cy = None
+        self._ab_ball_filter_reset()
 
     # ===== α-β filter (X-axis only, pendulum 1D groove) =====
 
@@ -636,6 +646,15 @@ class Ti2026Coordinator:
         is_new_frame = self._ai_new
         self._ai_new = False
         t_ns = time.perf_counter_ns()
+
+        # Camera/AI stalled (no fresh inference for a while): stop claiming
+        # positions. Coasting on extrapolation forever would feed the master
+        # plausible-looking ghosts; going silent lets its frame-timeout fail
+        # safe. Re-arming happens automatically once fresh detections return.
+        if self._ball_armed and \
+                time.monotonic() - self._last_ai_data_ts > _AI_STALL_TIMEOUT_S:
+            self._reset_ball_tracking()
+            return None
 
         if ball is None:
             # Count a miss only when a *new* AI frame reports no ball: the hit
