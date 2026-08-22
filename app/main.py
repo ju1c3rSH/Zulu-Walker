@@ -438,7 +438,9 @@ _CONFIG_WRITE_LOCK = threading.Lock()
 
 
 def _persist_calibration(calib):
-    """Write RailCalibration to project_config.yaml, preserving existing content."""
+    """Write RailCalibration to project_config.yaml atomically, preserving existing content."""
+    import tempfile
+
     import yaml
     with _CONFIG_WRITE_LOCK:
         try:
@@ -449,11 +451,20 @@ def _persist_calibration(calib):
         if "pendulum" not in cfg:
             cfg["pendulum"] = {}
         cfg["pendulum"]["rail_calibration"] = calib.to_dict()
+        # Same-directory temp + os.replace: a power cut mid-write leaves the
+        # old config intact instead of a truncated file losing WiFi/AEC/model
+        # settings along with the calibration.
+        fd, tmp_path = tempfile.mkstemp(dir=".", suffix=".yaml.tmp")
         try:
-            with open("project_config.yaml", "w", encoding="utf-8") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        except Exception:
-            pass
+            os.replace(tmp_path, "project_config.yaml")
+        except Exception as e:
+            log_print(f"[CALIB] persist FAILED: {e}")
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 def _load_icon(path, size: int = 48):
