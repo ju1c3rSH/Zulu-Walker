@@ -17,6 +17,7 @@ import yaml
 
 from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference
+from framework.slot import Slot
 from utils.log_util import log_print
 
 from .pipeline_camera import PipelineCamera
@@ -50,7 +51,8 @@ class VisionManager:
         self._fps_data: Dict[str, dict] = {}
 
         self._any_fresh = False
-        self._pending_results: deque = deque(maxlen=5)
+        self._results_slot: Slot = Slot()
+        self._results_seen_gen: int = 0
         self._display_frame = None
         # Frame-freshness gate: display is rebuilt only when a NEW sensor frame
         # arrived (frame_serial changed), skipping the 1.29MB raw_img.copy()
@@ -323,7 +325,7 @@ class VisionManager:
                 self._update_display_frame()
 
                 if self._event_bus:
-                    self._pending_results.append(all_results)
+                    self._results_slot.publish(all_results)
 
                 for cb in self._result_callbacks:
                     try:
@@ -981,10 +983,16 @@ class VisionManager:
             pass
 
     def drain_results(self):
-        results = []
-        while self._pending_results:
-            results.append(self._pending_results.popleft())
-        return results
+        """Newest-wins result delivery: one Slot instead of a bounded deque.
+
+        Intermediate result sets are intentionally dropped - the control path
+        only ever needed the freshest snapshot (SCHED-03).
+        """
+        stamped = self._results_slot.load(self._results_seen_gen)
+        if stamped is None:
+            return []
+        self._results_seen_gen = stamped.gen
+        return [stamped.value]
 
     def get_pipeline_fps(self, pipeline_id: str) -> float:
         fd = self._fps_data.get(pipeline_id)
