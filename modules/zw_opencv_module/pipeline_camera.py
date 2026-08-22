@@ -34,6 +34,7 @@ class PipelineCamera:
 
         self._last_frame: Optional[np.ndarray] = None
         self._last_results: Dict[str, VisionResult] = {}
+        self._last_input_serial: Optional[int] = None
         self._ai: Optional[AIInference] = ai
 
         self._init_focal_calculator(
@@ -93,7 +94,6 @@ class PipelineCamera:
         return None
 
     def process_frame(self, fps: float = 0.0) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
-        serial = getattr(self.camera, "frame_serial", None)
         raw_img = self.camera.read_raw()
 
         if raw_img is not None:
@@ -101,15 +101,18 @@ class PipelineCamera:
             self._last_frame = frame
         else:
             frame = self._last_frame
- 
+
         if frame is None:
             return None, {}
 
-        if serial is not None and getattr(self.camera, "frame_serial", None) == serial:
-            # No fresh sensor frame since the last read: reuse the cached task
-            # results and skip the task chain (NPU re-inference on a stale
-            # frame) so the vision loop idles instead of busy-spinning.
-            return None, self._last_results
+        # Freshness gate: read_raw returning no new pixels (stall / reconnect)
+        # means the cached `frame` is a frozen image. Re-running tasks on it
+        # would hand downstream consumers stale detections dressed as fresh
+        # results — return absence of evidence instead.
+        serial = getattr(self.camera, "frame_serial", None)
+        if serial is not None and serial == self._last_input_serial:
+            return None, {}
+        self._last_input_serial = serial
 
         env_context = {
             "fps": fps,
