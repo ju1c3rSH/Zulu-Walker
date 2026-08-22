@@ -179,6 +179,10 @@ class Ti2026Coordinator:
     def set_wdt_feed(self, feed_fn) -> None:
         self._wdt_feed = feed_fn
 
+    def set_sys_info(self, sys_info) -> None:
+        """Late-inject the platform SysInfo (Machine.create runs after ctor)."""
+        self._sys_info = sys_info
+
     def set_record_cmd_sender(self, sender: callable) -> None:
         self._record_cmd_sender = sender
 

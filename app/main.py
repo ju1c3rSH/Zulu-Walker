@@ -608,7 +608,7 @@ def main():
     from app.coordinator import Ti2026Coordinator
     from framework.hal.camera_hub import CameraHub
     bus = EventBus()
-    coordinator = Ti2026Coordinator(bus, sys_info=getattr(machine, "sys_info", None))
+    coordinator = Ti2026Coordinator(bus)
     coordinator.set_wdt_feed(wdt_feed)
 
     pc_heartbeat = PcHeartbeatDetector()
@@ -622,6 +622,7 @@ def main():
 
     machine = Machine.create("project_config.yaml")
     wdt_feed()  # post-model-load feed: AI model load from flash can take seconds
+    coordinator.set_sys_info(getattr(machine, "sys_info", None))
 
     # --- Pendulum rail calibration (Phase-1) ---
     # Runs here, BEFORE the vision module starts, so the camera is read by a
