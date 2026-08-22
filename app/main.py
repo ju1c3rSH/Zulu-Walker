@@ -654,7 +654,12 @@ def main():
     except Exception:
         pass
 
-    manager = ModuleManager(machine, event_bus=bus, wdt_feed=wdt_feed)
+    manager = ModuleManager(
+        machine,
+        event_bus=bus,
+        wdt_feed=wdt_feed,
+        exit_check=getattr(machine, "exit_check", None),
+    )
     manager.register_many(["zw_opencv_module", "zw_uart_module", "zw_wifi_stream"])
 
     from modules.zw_opencv_module import get_vision_manager
