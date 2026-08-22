@@ -18,7 +18,7 @@ import ast
 import sys
 from pathlib import Path
 
-TARGET = Path(__file__).resolve().parent.parent / "app" / "main.py"
+DEFAULT_TARGET = Path(__file__).resolve().parent.parent / "app" / "main.py"
 
 
 def scan(fn: ast.FunctionDef):
@@ -48,7 +48,11 @@ def scan(fn: ast.FunctionDef):
 
 
 def main() -> int:
-    tree = ast.parse(TARGET.read_text(encoding="utf-8"), filename=str(TARGET))
+    target = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_TARGET
+    if not target.exists():
+        print(f"check_boot_scope: target not found: {target}", file=sys.stderr)
+        return 1
+    tree = ast.parse(target.read_text(encoding="utf-8"), filename=str(target))
     violations = []
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "main":
