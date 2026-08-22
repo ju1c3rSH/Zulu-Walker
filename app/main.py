@@ -7,9 +7,9 @@ from utils.log_util import log_print
 from app.vision_state import VisionState
 from app.pc_heartbeat import PcHeartbeatDetector
 
-_DISPLAY_EVERY_N = 2
 _ICON_SIZE = 48
 _ICON_MARGIN = 12
+_DISPLAY_FPS_LIMIT = 30.0  # presentation cap; the sink self-throttles (DISP-05)
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -71,144 +71,157 @@ def _load_exit_icon():
 
 
 def _build_callbacks(manager, machine, coordinator, wdt_feed=None):
-    """Returns (main_callback, start_display_thread).
+    """Returns main_callback — the per-tick main-thread hook.
 
-    main_callback: touch/input handling (~0ms), runs in main loop.
-    display thread: display.show() only, runs independently.
-    exit icon is drawn by VisionManager (via set_exit_icon).
-    calibrate button is drawn by VisionManager and handled here.
+    Per tick: input first (touch, ~0ms), then the presentation pump pushes
+    the latest composed frame into the sinks and flushes them (D4). There is
+    no display thread; the LCD sink self-throttles and skips unchanged
+    frames. Exit/calib icons are drawn by VisionManager.
     """
-    _last_seen_frame = None
+    from app.display.ui_state import CooldownGate, HitRegion, bottom_left_region
+    from framework.hal.interface.sink import SinkGroup
+
+    sinks = SinkGroup()
+    if machine is not None and getattr(machine, "display", None) is not None:
+        try:
+            from framework.hal.platforms.maixcam2.sink import MaixLcdSink
+
+            sinks.add(
+                MaixLcdSink(
+                    machine.display,
+                    fps_limit=_DISPLAY_FPS_LIMIT,
+                    pressure_check=lambda: _check_cmm_pressure(machine),
+                )
+            )
+        except ImportError:
+            pass
 
     _touch = None
     try:
         from maix import touchscreen
+
         _touch = touchscreen.TouchScreen()
     except Exception:
         pass
 
     _touch_down = False
     _touch_x = _touch_y = 0
-    _last_flash_toggle = 0.0
-
-    def _in_btn(x, y, bx, by, size=None):
-        if size is None:
-            size = _ICON_SIZE
-        return bx - 4 <= x <= bx + size + 4 and by - 4 <= y <= by + size + 4
+    _led_gate = CooldownGate(cooldown_s=0.3)
 
     def main_callback():
-        """Touch handling only — fast (~0ms), no JPEG encoding, no GIL hog."""
-        nonlocal _touch_down, _touch_x, _touch_y, _last_flash_toggle
+        """Input handling + presentation pump for one main-loop tick."""
+        nonlocal _touch_down, _touch_x, _touch_y
 
+        # ---------- input ----------
         if _touch is not None:
             try:
                 x, y, pressed = _touch.read()
                 if pressed:
                     _touch_down = True
-                    try:
-                        vision_mod = manager.modules.get("zw_opencv_module")
-                        if vision_mod:
-                            vm2 = getattr(vision_mod, "get_vision_manager", lambda: None)()
-                            if vm2:
-                                frame2 = vm2.get_display_frame()
-                                if frame2 is not None and machine is not None:
-                                    import maix.image as _mi2
-                                    pt = _mi2.resize_map_pos_reverse(
-                                        frame2.width(), frame2.height(),
-                                        machine.display.width(), machine.display.height(),
-                                        _mi2.Fit.FIT_CONTAIN, x, y,
-                                    )
-                                    _touch_x, _touch_y = int(pt[0]), int(pt[1])
-                                else:
-                                    _touch_x, _touch_y = x, y
-                            else:
-                                _touch_x, _touch_y = x, y
-                        else:
-                            _touch_x, _touch_y = x, y
-                    except Exception:
-                        _touch_x, _touch_y = x, y
-                else:
-                    if _touch_down:
-                        vision_mod = manager.modules.get("zw_opencv_module")
-                        if vision_mod:
-                            vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
-                            if vm:
-                                frame = vm.get_display_frame()
-                                if frame is not None:
-                                    h = frame.height()
-                                    by = h - _ICON_SIZE - 8
-                                    bx = _ICON_MARGIN
-                                    if _in_btn(_touch_x, _touch_y, bx, by):
-                                        import os
-                                        if wdt_feed is not None:
-                                            try:
-                                                wdt_feed.disable()
-                                            except Exception:
-                                                pass
-                                        os._exit(0)
-                                    # Check calibrate button
-                                    calib_rect = vm.get_calib_button_rect()
-                                    if calib_rect is not None:
-                                        cbx, cby, cbw, _ = calib_rect
-                                        if _in_btn(_touch_x, _touch_y, cbx, cby, size=cbw):
-                                                coordinator.change_state(VisionState.CALIB)
-                                                ok = coordinator.calibrate_origin_from_ball()
-                                                if ok:
-                                                    log_print("[CALIB] Phase2 done: origin set from ball position")
-                                                    bbox = coordinator.get_last_ball_bbox()
-                                                    if bbox:
-                                                        vm.trigger_calib_flash(bbox)
-                                                    vm.set_calib_button_visible(False)
-                                                    _persist_calibration(coordinator.get_rail_calibration())
-                                                else:
-                                                    log_print("[CALIB] Phase2 FAILED: no ball detected")
-                                                coordinator.change_state(VisionState.IDLE)
-                                    # Check fill light button
-                                    fl_rect = vm.get_fill_light_button_rect()
-                                    if fl_rect is not None:
-                                        fx, fy, fw, _ = fl_rect
-                                        if _in_btn(_touch_x, _touch_y, fx, fy, size=fw):
-                                            now = time.monotonic()
-                                            if now - _last_flash_toggle >= 0.3:
-                                                _last_flash_toggle = now
-                                                new_state = vm.toggle_fill_light()
-                                                if new_state is not None:
-                                                    _persist_fill_light_state(new_state)
-                                                    log_print(f"[LED] fill light -> {'ON' if new_state else 'OFF'}")
-                                                else:
-                                                    log_print("[LED] fill light toggle FAILED (GPIO)")
+                    _touch_x, _touch_y = _map_touch_to_frame(machine, manager, x, y)
+                elif _touch_down:
+                    vision_mod = manager.modules.get("zw_opencv_module")
+                    vm = (
+                        getattr(vision_mod, "get_vision_manager", lambda: None)()
+                        if vision_mod
+                        else None
+                    )
+                    if vm is not None:
+                        frame = vm.get_display_frame()
+                        if frame is not None:
+                            _dispatch_ui_tap(
+                                vm,
+                                coordinator,
+                                wdt_feed,
+                                _touch_x,
+                                _touch_y,
+                                frame.height(),
+                                _led_gate,
+                            )
                     _touch_down = False
             except Exception:
                 pass
 
-    def _display_loop():
-        nonlocal _last_seen_frame
-        _tick = 0
-        while True:
-            vision_mod = manager.modules.get("zw_opencv_module")
-            if vision_mod and machine and machine.display:
-                vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
-                if vm:
-                    frame = vm.get_display_frame()
-                    if frame is not None and frame is not _last_seen_frame:
-                        _last_seen_frame = frame
-                        _tick += 1
-                        if _tick % _DISPLAY_EVERY_N != 0:
-                            continue
-                        if _check_cmm_pressure(machine):
-                            continue
-                        try:
-                            machine.display.show(frame)
-                        except Exception:
-                            pass
-            time.sleep(0.001)
+        # ---------- presentation pump ----------
+        vision_mod = manager.modules.get("zw_opencv_module")
+        if vision_mod and machine is not None and machine.display:
+            vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
+            if vm:
+                frame = vm.get_display_frame()
+                if frame is not None:
+                    sinks.push(frame)
+        sinks.flush()
 
-    def start_display_thread():
-        t = threading.Thread(target=_display_loop, daemon=True)
-        t.start()
-        return t
+    return main_callback
 
-    return main_callback, start_display_thread
+
+def _map_touch_to_frame(machine, manager, x, y):
+    """Map raw screen coords into composed-frame coords (platform-specific)."""
+    try:
+        vision_mod = manager.modules.get("zw_opencv_module")
+        vm2 = getattr(vision_mod, "get_vision_manager", lambda: None)() if vision_mod else None
+        if vm2 and machine is not None:
+            frame2 = vm2.get_display_frame()
+            if frame2 is not None:
+                import maix.image as _mi2
+
+                pt = _mi2.resize_map_pos_reverse(
+                    frame2.width(), frame2.height(),
+                    machine.display.width(), machine.display.height(),
+                    _mi2.Fit.FIT_CONTAIN, x, y,
+                )
+                return int(pt[0]), int(pt[1])
+    except Exception:
+        pass
+    return x, y
+
+
+def _dispatch_ui_tap(vm, coordinator, wdt_feed, tx, ty, frame_h, led_gate):
+    """Route a released tap to whichever UI button contains it."""
+    from app.display.ui_state import HitRegion, bottom_left_region
+
+    # Exit button (bottom-left slot)
+    exit_r = bottom_left_region(frame_h=frame_h, size=_ICON_SIZE, margin=_ICON_MARGIN)
+    if exit_r.contains(tx, ty):
+        import os
+
+        if wdt_feed is not None:
+            try:
+                wdt_feed.disable()
+            except Exception:
+                pass
+        os._exit(0)
+
+    # Calibrate button
+    calib_rect = vm.get_calib_button_rect()
+    if calib_rect is not None:
+        cbx, cby, cbw, _ = calib_rect
+        if HitRegion(cbx, cby, cbw, cbw).contains(tx, ty):
+            coordinator.change_state(VisionState.CALIB)
+            ok = coordinator.calibrate_origin_from_ball()
+            if ok:
+                log_print("[CALIB] Phase2 done: origin set from ball position")
+                bbox = coordinator.get_last_ball_bbox()
+                if bbox:
+                    vm.trigger_calib_flash(bbox)
+                vm.set_calib_button_visible(False)
+                _persist_calibration(coordinator.get_rail_calibration())
+            else:
+                log_print("[CALIB] Phase2 FAILED: no ball detected")
+            coordinator.change_state(VisionState.IDLE)
+
+    # Fill light button (0.3s debounce via gate)
+    fl_rect = vm.get_fill_light_button_rect()
+    if fl_rect is not None:
+        fx, fy, fw, _ = fl_rect
+        if HitRegion(fx, fy, fw, fw).contains(tx, ty):
+            if led_gate.allow(time.monotonic()):
+                new_state = vm.toggle_fill_light()
+                if new_state is not None:
+                    _persist_fill_light_state(new_state)
+                    log_print(f"[LED] fill light -> {'ON' if new_state else 'OFF'}")
+                else:
+                    log_print("[LED] fill light toggle FAILED (GPIO)")
 
 
 def _make_wdt_feed():
@@ -718,10 +731,9 @@ def main():
         else:
             log_print("[CALIB] Button NOT shown: VisionManager is None")
 
-    main_callback, start_display_thread = _build_callbacks(manager, machine, coordinator, wdt_feed=wdt_feed)
+    main_callback = _build_callbacks(manager, machine, coordinator, wdt_feed=wdt_feed)
 
     coordinator.start()
-    start_display_thread()
     manager.run_main_loop(coordinator, tick_callback=_push_coordinator_status, display_callback=main_callback)
 
 
