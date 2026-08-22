@@ -1,0 +1,110 @@
+id: zulu_framework
+name: zulu_framework
+version: 0.1.0
+icon: app.png
+author: your-team
+desc: Device package for a project built on the zulu framework.
+desc[zh]: 基于本框架的项目设备打包清单模板
+
+# ── 用法 ─────────────────────────────────────────────────────────────
+# maixpack 要求 app.yaml 与固件入口 main.py 位于仓库根目录:
+#   1. 把 deploy/maixcam/ 下的 app.yaml 和 main.py 复制到仓库根目录
+#   2. 按项目需要增删下方 files 清单(默认=框架核心,不含 detectors)
+#   3. 在根目录执行 maixpack 打包
+# 完整工作示例见 release/2026H 分支根目录的 app.yaml。
+#
+# 启用一个 detector 方案(如 cargo)的打包三件事:
+#   a) files 增加 modules\zw_opencv_module\detectors\cargo_detector 目录
+#   b) files 增加 modules\zw_opencv_module\processors\cargo_processor.py
+#   c) 项目代码在流水线启动前 enable_optional(["TrackCargoProcessor"])
+
+exclude:
+  - .git
+  - .gitignore
+  - __pycache__
+  - .vscode
+  - .claude
+  - stories
+  - docs
+  - requirements*
+  - logs
+  - tests
+  - scripts
+  - archive
+  - deploy
+
+files:
+  - app\__init__.py
+  - app\coordinator.py
+  - app\main.py
+  - framework\__init__.py
+  - framework\cmd_queue.py
+  - framework\event_bus.py
+  - framework\log.py
+  - framework\module_manager.py
+  - framework\slot.py
+  - framework\ui_state.py
+  - framework\state_machine\__init__.py
+  - framework\state_machine\base.py
+  - framework\state_machine\bridge.py
+  - framework\hal\__init__.py
+  - framework\hal\camera_hub.py
+  - framework\hal\machine.py
+  - framework\hal\interface\__init__.py
+  - framework\hal\interface\ai.py
+  - framework\hal\interface\camera.py
+  - framework\hal\interface\display.py
+  - framework\hal\interface\sink.py
+  - framework\hal\interface\uart.py
+  - framework\hal\interface\watchdog.py
+  - framework\hal\interface\sysinfo.py
+  - framework\hal\platforms\maixcam2\__init__.py
+  - framework\hal\platforms\maixcam2\ai.py
+  - framework\hal\platforms\maixcam2\camera.py
+  - framework\hal\platforms\maixcam2\display.py
+  - framework\hal\platforms\maixcam2\sink.py
+  - framework\hal\platforms\maixcam2\sysinfo.py
+  - framework\hal\platforms\maixcam2\uart.py
+  - framework\hal\platforms\maixcam2\watchdog.py
+  - framework\hal\platforms\linux\__init__.py
+  - framework\hal\platforms\linux\ai.py
+  - framework\hal\platforms\linux\camera.py
+  - framework\hal\platforms\linux\camera_warmup.py
+  - framework\hal\platforms\linux\display.py
+  - framework\hal\platforms\linux\sysinfo.py
+  - framework\hal\platforms\linux\uart.py
+  - framework\hal\platforms\mock\__init__.py
+  - framework\hal\platforms\mock\ai.py
+  - framework\hal\platforms\mock\camera.py
+  - framework\hal\platforms\mock\display.py
+  - framework\hal\platforms\mock\uart.py
+  - modules\zw_opencv_module\__init__.py
+  - modules\zw_opencv_module\config\camera_config.yaml
+  - modules\zw_opencv_module\config\vision_config.yaml
+  - modules\zw_opencv_module\models\__init__.py
+  - modules\zw_opencv_module\models\color.py
+  - modules\zw_opencv_module\param_utils.py
+  - modules\zw_opencv_module\performance.py
+  - modules\zw_opencv_module\pipeline_camera.py
+  - modules\zw_opencv_module\task_manager.py
+  - modules\zw_opencv_module\vision_manager.py
+  - modules\zw_opencv_module\processors\__init__.py
+  - modules\zw_opencv_module\processors\base.py
+  - modules\zw_opencv_module\processors\registry.py
+  - modules\zw_opencv_module\processors\ai_inference_processor.py
+  - modules\zw_opencv_module\processors\handlers\__init__.py
+  - modules\zw_opencv_module\processors\handlers\base.py
+  - modules\zw_opencv_module\processors\handlers\registry.py
+  - modules\zw_opencv_module\processors\handlers\yolo.py
+  - modules\zw_opencv_module\utils\__init__.py
+  - modules\zw_opencv_module\utils\focal_distance_util.py
+  - utils\__init__.py
+  - utils\camera_misc_util.py
+  - utils\console_capture.py
+  - utils\cpu_affinity.py
+  - utils\debug_console.py
+  - utils\focal_distance_util.py
+  - utils\log_util.py
+  - utils\point.py
+  - run.py
+  - project_config.yaml

@@ -66,6 +66,6 @@ pendulum:
 streaming:
   wifi_mode: "ap"           # "ap" | "sta" | "off"
   ap_ssid: "Zulu-Walker"
-  ap_password: "88888888"
+  ap_password: ""           # 填你自己的密码;不要提交真实值(OPS-01 教训)
   sta_ssid: ""
   sta_password: ""
