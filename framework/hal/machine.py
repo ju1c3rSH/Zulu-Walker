@@ -24,11 +24,18 @@ class Machine:
         display: Display,
         uart: Uart,
         ai: Optional[AIInference] = None,
+        exit_check: Optional[object] = None,
+        sys_info: Optional[object] = None,
+        platform: Optional[str] = None,
     ) -> None:
         self.camera_hub = camera_hub
         self.display = display
         self.uart = uart
         self.ai = ai
+        self.platform = platform
+        # Platform capability hooks (probed via getattr, never hard imports):
+        self.exit_check = exit_check
+        self.sys_info = sys_info
 
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
@@ -57,19 +64,27 @@ class Machine:
 
         hub = CameraHub.init_instance(platform)
 
+        # Optional platform capabilities: probe by name instead of branching
+        # on the platform string (ARCH-06/MOD-02/ARCH-07).
+        exit_factory = getattr(platform_mod, "create_exit_check", None)
+        exit_check = exit_factory() if callable(exit_factory) else None
+        source_resolver = getattr(platform_mod, "resolve_camera_source", None)
+        sysinfo_factory = getattr(platform_mod, "create_sys_info", None)
+        try:
+            sys_info = sysinfo_factory() if callable(sysinfo_factory) else None
+        except Exception as e:
+            logger.warning("SysInfo unavailable: %s", e)
+            sys_info = None
+
         for cam_cfg in cameras_config:
             cid = cam_cfg.get("camera_id", str(cam_cfg.get("source", "")))
             raw_source = cam_cfg["source"]
-            source = raw_source
-            try:
-                from utils.camera_misc_util import CameraMiscUtil
-            except ImportError:
-                CameraMiscUtil = None
-            if platform == "linux" and CameraMiscUtil is not None:
-                resolved = CameraMiscUtil.resolve_camera_source(raw_source)
-                if resolved != raw_source:
-                    logger.info("Camera '%s': source %s -> %s", cid, raw_source, resolved)
-                source = resolved
+            if callable(source_resolver):
+                source = source_resolver(raw_source)
+                if source != raw_source:
+                    logger.info("Camera '%s': source %s -> %s", cid, raw_source, source)
+            else:
+                source = raw_source
             hub.open(
                 camera_id=cid,
                 source=source,
@@ -118,7 +133,15 @@ class Machine:
                 logger.error("Failed to initialize AI: %s", e)
                 ai = None
 
-        return cls(camera_hub=hub, display=display, uart=uart, ai=ai)
+        return cls(
+            camera_hub=hub,
+            display=display,
+            uart=uart,
+            ai=ai,
+            exit_check=exit_check,
+            sys_info=sys_info,
+            platform=platform,
+        )
 
     def close(self) -> None:
         if self.camera_hub:
