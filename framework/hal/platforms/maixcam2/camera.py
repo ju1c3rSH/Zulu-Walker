@@ -251,6 +251,11 @@ class MaixCam2Camera:
                 self._note_success()
             else:
                 self._check_stall()
+                # No new sensor frame: report absence instead of re-serving
+                # the cached ndarray, so callers can tell "fresh" from
+                # "frozen". The cache stays reachable via last_frame/last_raw
+                # for display and AEC, which gate on frame_serial themselves.
+                return None
             return self._last_frame
         except Exception as e:
             logger.warning("Camera read_raw failed: %s", e)
