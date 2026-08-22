@@ -4,6 +4,16 @@ from .display import MaixCam2Display
 from .uart import MaixCam2Uart
 
 
+def create_exit_check():
+    """Return the platform exit predicate for the framework main loop.
+
+    The framework calls this without importing maix itself (ARCH-06).
+    """
+    from maix import app as _app
+
+    return _app.need_exit
+
+
 def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> MaixCam2Camera:  # type: ignore[type-arg]
     camera_id = kwargs.pop("camera_id", str(source))
     fps = kwargs.pop("fps", None)

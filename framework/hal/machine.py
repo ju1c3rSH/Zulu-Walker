@@ -24,11 +24,14 @@ class Machine:
         display: Display,
         uart: Uart,
         ai: Optional[AIInference] = None,
+        exit_check: Optional[object] = None,
     ) -> None:
         self.camera_hub = camera_hub
         self.display = display
         self.uart = uart
         self.ai = ai
+        # Platform capability hooks (probed via getattr, never hard imports):
+        self.exit_check = exit_check
 
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
@@ -56,6 +59,11 @@ class Machine:
         platform_mod = importlib.import_module(f"framework.hal.platforms.{platform}")
 
         hub = CameraHub.init_instance(platform)
+
+        # Optional platform capabilities: probe by name instead of branching
+        # on the platform string (ARCH-06).
+        exit_factory = getattr(platform_mod, "create_exit_check", None)
+        exit_check = exit_factory() if callable(exit_factory) else None
 
         for cam_cfg in cameras_config:
             cid = cam_cfg.get("camera_id", str(cam_cfg.get("source", "")))
@@ -118,7 +126,13 @@ class Machine:
                 logger.error("Failed to initialize AI: %s", e)
                 ai = None
 
-        return cls(camera_hub=hub, display=display, uart=uart, ai=ai)
+        return cls(
+            camera_hub=hub,
+            display=display,
+            uart=uart,
+            ai=ai,
+            exit_check=exit_check,
+        )
 
     def close(self) -> None:
         if self.camera_hub:
