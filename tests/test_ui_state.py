@@ -1,8 +1,8 @@
-"""Unit tests for app.display.ui_state (pure logic, no device deps)."""
+"""Unit tests for framework.ui_state (pure logic, no device deps)."""
 
 import unittest
 
-from app.display.ui_state import CooldownGate, HitRegion, bottom_left_region
+from framework.ui_state import CooldownGate, HitRegion, bottom_left_region
 
 
 class TestHitRegion(unittest.TestCase):
