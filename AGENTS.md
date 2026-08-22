@@ -22,7 +22,7 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读参考, 在仓库外
 
 - **入口是 `app/main.py` 的 `main()`**（根目录 `main.py` 只是 MaixPy 打包转发壳）。启动顺序敏感：WDT(10s) 构造后立即喂 → WiFi AP 启动 → Phase-1 轨道标定（独占摄像头读帧）→ `Machine.create`（模型加载后再喂狗）→ 主循环。改动启动流程时保持 `wdt_feed()` 分布，否则板端会被看门狗复位。
 - **摆杆轨道标定两阶段**：Phase-1 开机自动测倾角；Phase-2 触摸屏"标定"按钮用钢球位置设原点。结果持久化回写 `project_config.yaml` 的 `pendulum.rail_calibration`。代码在 `modules/zw_opencv_module/detectors/pendulum_calibrator/`
-- **`app/mission_state_machine.py`（34 状态竞赛 SM）是旧赛题遗留，main.py 已不引用**。不要往里加逻辑；当前赛题逻辑在 `app/coordinator.py` (`Ti2026Coordinator`)
+- **旧赛题遗留代码已删除**（2026 赛后清理）：`app/mission_state_machine.py`、`app/line_follow_sm.py`、`utils/state_machine/`、`framework/visual_state_machine.py` 均已移除，需要考古时翻 git 历史。当前赛题逻辑在 `app/coordinator.py` (`Ti2026Coordinator`)
 - 钢球位置走 α-β 滤波 + 空间门控（速度/帧率约束、连续帧 arm/drop），常量集中在 `coordinator.py` 头部；理论见 `docs/theory/alpha_beta_filter_guide.md`
 - 图传录制信令：UDP port 5000（广播/单播，`app/main.py _send_record_cmd`）；设备发现 beacon port 9999；PC 心跳检测 `app/pc_heartbeat.py`
 
