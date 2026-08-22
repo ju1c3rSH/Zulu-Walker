@@ -179,7 +179,7 @@
 - **位置**: `app.yaml` — exclude 第 17 行 `requirements*` vs files 第 197/227/228 行又列出三个 requirements 文件;exclude 第 18-24 行排除 cargo/circle/ring 检测器与四个处理器 vs files 第 89-139/148-165/181/184/186 行逐一列出同一批文件
 - **描述**: 打包结果完全取决于 maixpack 对 exclude/files 的优先级(当前 exclude 生效)。files 里近 50 行是被 exclude 否决的死条目。
 - **后果**: 强烈误导维护者(以为在打包);工具升级改变优先级时会突然打进一堆废弃代码。
-- **建议**: 以 exclude 为准重写 files 清单,删掉全部死条目。
+- **建议**: 以 exclude 为准重写 files 清单,删掉全部死条目。【2026-08-22 已执行,附关键发现】实测 maixpack **files 条目压过 exclude**(与原审计"当前 exclude 生效"的假设相反)——铁证是 `processors/__init__.py` 无条件 import 四个被排除处理器而设备从未崩,说明它们一直被实际打包。故修复分两步:①瘦身 `processors/__init__.py` 至生产导出;②files 清单删除全部死条目(检测器子树/debug/qr 模型/logs/requirements,-102 行),exclude 补充 debug 目录声明。capture_exposure_set.py 本就未入库,移入 archive/。
 
 ### DEAD-06 [低] 游离脚本与 debug 目录打包进设备包
 - **位置**: 根目录 `capture_exposure_set.py`(游离 maix 脚本,不属于任何结构);app.yaml files 包含 modules/zw_opencv_module/debug 与 detectors/*/debug 全部调试窗口
