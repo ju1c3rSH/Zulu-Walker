@@ -59,6 +59,26 @@ def create_ai(**kwargs) -> LinuxAI:
     return LinuxAI()
 
 
+def resolve_camera_source(raw_source):
+    """Capability hook (MOD-02): map user-friendly sources to /dev nodes.
+
+    The container probes this by name; platforms without a resolver simply
+    omit it and Machine uses the raw source as-is.
+    """
+    try:
+        from utils.camera_misc_util import CameraMiscUtil
+    except ImportError:
+        return raw_source
+    return CameraMiscUtil.resolve_camera_source(raw_source)
+
+
+def create_sys_info():
+    """Capability hook (ARCH-07): /proc/meminfo snapshot, None off-Linux."""
+    from .sysinfo import LinuxSysInfo
+
+    return LinuxSysInfo()
+
+
 __all__ = [
     "LinuxAI",
     "LinuxCamera",
@@ -68,4 +88,6 @@ __all__ = [
     "create_camera",
     "create_display",
     "create_uart",
+    "resolve_camera_source",
+    "create_sys_info",
 ]

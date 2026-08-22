@@ -11,10 +11,27 @@ from utils.log_util import log_print
 logger = logging.getLogger(__name__)
 
 
+def supports_platform(module_or_cls, platform: Optional[str]) -> bool:
+    """Platform gating for optional modules (ARCH-03/05).
+
+    A module may declare ``PLATFORMS = ("maixcam2", ...)``; absent or empty
+    means "runs anywhere".
+    """
+    declared = getattr(module_or_cls, "PLATFORMS", None)
+    return not declared or platform in declared
+
+
 class ModuleManager:
     MAIN_LOOP_DELAY = 0.002
 
-    def __init__(self, machine: Machine, event_bus=None, wdt_feed=None, **module_init_kwargs) -> None:
+    def __init__(
+        self,
+        machine: Machine,
+        event_bus=None,
+        wdt_feed=None,
+        exit_check: Optional[Callable[[], bool]] = None,
+        **module_init_kwargs,
+    ) -> None:
         self._machine = machine
         self._event_bus = event_bus
         self.modules: Dict[str, object] = {}
@@ -22,6 +39,7 @@ class ModuleManager:
         self._running = True
         self._wdt_feed = wdt_feed or (lambda: None)
         self._wdt_count = 0
+        self._exit_check = exit_check
         if wdt_feed is not None:
             module_init_kwargs.setdefault('wdt_feed', wdt_feed)
         self._module_init_kwargs = module_init_kwargs
@@ -39,6 +57,14 @@ class ModuleManager:
         try:
             full_name = f"modules.{name}"
             mod = importlib.import_module(full_name)
+            if not supports_platform(mod, getattr(self._machine, "platform", None)):
+                logger.info(
+                    "Module '%s' skipped on platform '%s' (declares PLATFORMS=%s)",
+                    name,
+                    getattr(self._machine, "platform", None),
+                    getattr(mod, "PLATFORMS", None),
+                )
+                return True
             self.modules[name] = mod
             if hasattr(mod, "init"):
                 mod.init(machine=self._machine, event_bus=self._event_bus, **self._module_init_kwargs)
@@ -59,13 +85,6 @@ class ModuleManager:
         try:
             from utils.cpu_affinity import bind_current_thread
             bind_current_thread("main_loop")
-        except ImportError:
-            pass
-
-        _CHECK_EXIT = False
-        try:
-            from maix import app as _maix_app
-            _CHECK_EXIT = True
         except ImportError:
             pass
 
@@ -102,7 +121,9 @@ class ModuleManager:
                     except Exception:
                         logger.exception("display_callback() failed")
 
-                if _CHECK_EXIT and _maix_app.need_exit():
+                # Platform-provided predicate (ARCH-06): the framework never
+                # imports a concrete platform to learn how "exit" looks.
+                if self._exit_check and self._exit_check():
                     break
 
                 time.sleep(self.MAIN_LOOP_DELAY)
