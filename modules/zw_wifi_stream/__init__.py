@@ -6,6 +6,9 @@ from framework.hal import Machine
 
 from .streamer import JpegStreamer
 
+# maix.http is only importable inside MaixPy firmware (ARCH-05).
+PLATFORMS = ("maixcam2",)
+
 _streamer: Optional[JpegStreamer] = None
 
 

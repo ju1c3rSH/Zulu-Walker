@@ -26,11 +26,13 @@ class Machine:
         ai: Optional[AIInference] = None,
         exit_check: Optional[object] = None,
         sys_info: Optional[object] = None,
+        platform: Optional[str] = None,
     ) -> None:
         self.camera_hub = camera_hub
         self.display = display
         self.uart = uart
         self.ai = ai
+        self.platform = platform
         # Platform capability hooks (probed via getattr, never hard imports):
         self.exit_check = exit_check
         self.sys_info = sys_info
@@ -138,6 +140,7 @@ class Machine:
             ai=ai,
             exit_check=exit_check,
             sys_info=sys_info,
+            platform=platform,
         )
 
     def close(self) -> None:

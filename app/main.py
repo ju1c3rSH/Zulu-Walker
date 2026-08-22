@@ -259,57 +259,29 @@ def _make_wdt_feed():
     return _feed
 
 
-def _init_streamer(vm) -> None:
-    from modules.zw_wifi_stream import get_streamer
-    s = get_streamer()
+def _init_streamer(vm, machine=None) -> None:
+    from framework.module_manager import supports_platform
+    import modules.zw_wifi_stream as stream_mod
+
+    if not supports_platform(stream_mod, getattr(machine, "platform", None)):
+        log_print("[Streamer] skipped: module not supported on this platform")
+        return
+    s = stream_mod.get_streamer()
     if s is not None and vm is not None:
         vm.set_capture_sink(s.push_frame)
         s.start_async()
 
 
-def _init_wifi(cfg: dict):
-    streaming = cfg.get("streaming", {})
-    mode = streaming.get("wifi_mode", "off")
-    if mode not in ("ap", "sta"):
-        return None
-    try:
-        from maix.network import wifi as _mw
-        w = _mw.Wifi()
-        if mode == "ap":
-            if w.is_connected():
-                log_print("[WiFi] Disconnecting existing STA before AP...")
-                e = w.disconnect()
-                if e != 0:
-                    log_print(f"[WiFi] Disconnect failed, err={e}")
-            # Credentials must come from project_config.yaml — no hardcoded
-            # fallback (a missing key now skips AP start instead of bringing
-            # up a well-known-password network).
-            ssid = streaming.get("ap_ssid")
-            password = streaming.get("ap_password")
-            if not ssid or not password:
-                log_print("[WiFi] ap_ssid/ap_password missing in config, skip AP start")
-                return None
-            e = w.start_ap(ssid, password, ip="192.168.1.1")
-            if e != 0:
-                log_print(f"[WiFi] AP start failed, err={e}")
-                return None
-            time.sleep(0.5)
-            if not w.is_ap_mode():
-                log_print("[WiFi] AP mode not confirmed after start_ap")
-                return None
-            ip = w.get_ip()
-            log_print(f"[WiFi] AP mode started, SSID={ssid}, IP={ip}")
-            return ip
-        elif mode == "sta":
-            ip = w.get_ip()
-            if ip:
-                log_print(f"[WiFi] STA mode, system-managed, IP={ip}")
-            else:
-                log_print("[WiFi] STA mode, no IP yet (waiting for system connection)")
-            return ip
-    except Exception as e:
-        log_print(f"[WiFi] init FAIL: {e}")
-        return None
+def _init_boot_wifi(cfg: dict) -> None:
+    """ARCH-03: WiFi bring-up lives in app/boot_wifi.py with declared scope."""
+    import app.boot_wifi as boot_wifi
+    from framework.module_manager import supports_platform
+
+    platform = cfg.get("platform", "maixcam2")
+    if not supports_platform(boot_wifi, platform):
+        log_print(f"[WiFi] skipped: boot wifi declares {boot_wifi.PLATFORMS}, on '{platform}'")
+        return
+    boot_wifi.init(cfg)
 
 
 def _send_record_cmd(cmd: str, test_id: int, target_ip: str = None) -> None:
@@ -570,7 +542,7 @@ def main():
     wdt_feed = _make_wdt_feed()
     wdt_feed()  # pre-WiFi feed: WDT countdown starts at construction
 
-    _init_wifi(_cfg)
+    _init_boot_wifi(_cfg)
 
     wdt_feed()  # post-WiFi feed: AP/STA start can take >1s
 
@@ -688,7 +660,7 @@ def main():
 
     coordinator.set_ai(machine.ai)
 
-    _init_streamer(vm)
+    _init_streamer(vm, machine)
 
     exit_icon = _load_exit_icon()
     if exit_icon is not None and vm is not None:
