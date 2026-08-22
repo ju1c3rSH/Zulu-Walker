@@ -520,6 +520,19 @@ P5 收敛治理:  CFG-01..04 单一事实源、BRANCH-01/02 归档、LOG/CONC/VI
 
 交叉依赖提示:P4 依赖 P2(Sink 协议)与 P3(平台能力收编后 vision_manager 才能瘦身);PROTO-01 必须在任何协议复用之前解决;VIS-02 需板端实验,安排在下次上电窗口。
 
+### 执行状态(2026-08-22 重构日)
+
+| 阶段 | 状态 | 落点(提交) |
+|------|------|------------|
+| P0 热修 | ✅ 全部 | 原子写(a8251d3)· CTRL-01(aa04dd2)· VIS-01(20bca15+启动顺序修复 6b96e38)· OPS-01 代码级(6324c7c);**凭据历史重写仍待业主决策** |
+| P1 减重 | ✅ 全部 | 两套死 SM/legacy 删除(662721a,-2166 行)· camera_hub shim(bfe8368)· 清单手术+processors 瘦身(70020bb/503c7c8)。发现:maixpack 实为 **files 压过 exclude**,死代码一直在被打包(审计假设已修正) |
+| P2 定契约 | ✅ 全部 | Slot/CmdQueue+单测(2a520f5)· FrameSink/SinkGroup/InputSource(963ee01)· 拓扑文档(a318a29,替换 v2 旧版) |
+| P3 收编平台 | ✅ 除 ARCH-01/04 | exit_check(cf43ade)· MOD-02 钩子(1b9d114)· Watchdog(9b5a85e)· SysInfo(f3b9da3)· PLATFORMS 门控+boot_wifi 提取(aea3dbf)· fitness/pre-commit(a707511)。ARCH-01(Touch)/04(LED 按钮逻辑)**并入 P4-full**:与 ui_state 重写同一段代码,避免双轮盲改 |
+| P4 拆上帝类 | 🔶 核心完成 | ui_state+单测(17ba44e)· MaixLcdSink(3e1640f)· 结果 Slot 化(aadf621/7366a9b)· **_display_loop 删除**,主循环泵+sink 自持限流(042762d),线程预算达标。**遗留板端窗口**:①~500 行绘制迁 app/display/compositor.py + Canvas 双后端(D2,渲染正确性需实测);②set_composer 钩子正式化;③Touch→InputSource、动作走 CmdQueue(SCHED-02/ARCH-01 收尾);④统一退出函数(UI-02/DISP-04) |
+| P5 收敛治理 | ⬜ 未动 | CFG 单一事实源、分支归档、LOG/CONC/VIS 中低项(CONC-03 录制信令异步化优先级最高) |
+
+新增护栏:`scripts/check_platform_isolation.py` + `scripts/check_boot_scope.py` + `.pre-commit-config.yaml`;单测 `python -m unittest discover -s tests`(17 例)。
+
 ---
 
 ## 附二:设计决策记录(2026-08-22 复盘定案)
