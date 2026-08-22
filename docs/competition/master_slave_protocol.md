@@ -560,16 +560,18 @@ DATA_PAYLOAD_SIZES = {
     DATA_LINE_POSITION: 8,
     DATA_TARGET_POSITION: 8,
     DATA_TARGET_COUNT: 3,
-    DATA_DETECTION_STATUS: 5,
+    DATA_DETECTION_STATUS: 6,
     DATA_ALL_TARGETS: None,
+    DATA_SEGMENTATION_MASK: None,
+    DATA_PENDULUM_POSITION: 10,
 }
 
 # Supported data types for validation
 SUPPORTED_DATA_TYPES = set(DATA_PAYLOAD_SIZES.keys())
 
-# Total DATA_STREAM frame payload size = 2 (seq + data_type) + sub_payload
-# CMD_ACK.payload_size reports sub_payload size only (not including the 2-byte header)
-# so that MSPM0 buffer calculation is: total = 2 + payload_size
+# CMD_ACK.payload_size = DATA_STREAM 整帧 payload 字节数（含 seq+data_type 的 2 字节头，
+# 与 DATA_PAYLOAD_SIZES 一致）。可变长度类型返回 0。
+# 【2026-08-22 对齐源码】旧版注释"仅 sub_payload 不含头"作废，MSPM0 缓冲直接按 payload_size 分配。
 ```
 
 **新增构建器：**
