@@ -27,24 +27,24 @@ from framework.hal import Machine
 from framework.module_manager import ModuleManager
 
 
-try:
-    from maix import sys as maix_sys
-    _HAVE_MAIX_SYS = True
-except ImportError:
-    maix_sys = None
-    _HAVE_MAIX_SYS = False
+def _check_cmm_pressure(machine, skip_threshold: float = 0.80) -> bool:
+    """Skip a display frame when the CMM pool is under pressure (ARCH-07).
 
-
-def _check_cmm_pressure(skip_threshold: float = 0.80) -> bool:
-    if not _HAVE_MAIX_SYS:
+    Reads the platform-provided SysInfo snapshot; returns False (no skip) on
+    platforms without memory stats.
+    """
+    sysinfo = getattr(machine, "sys_info", None)
+    if sysinfo is None:
         return False
     try:
-        info = maix_sys.memory_info()
-        cmm_used = info.get("cmm_used", 0)
-        cmm_total = info.get("cmm_total", 256 * 1024 * 1024)
-        return cmm_used > int(cmm_total * skip_threshold)
+        info = sysinfo.memory_snapshot()
     except Exception:
         return False
+    if not info:
+        return False
+    cmm_used = info.get("cmm_used", 0)
+    cmm_total = info.get("cmm_total", 256 * 1024 * 1024)
+    return cmm_used > int(cmm_total * skip_threshold)
 
 
 def _push_coordinator_status(coordinator) -> None:
@@ -195,7 +195,7 @@ def _build_callbacks(manager, machine, coordinator, wdt_feed=None):
                         _tick += 1
                         if _tick % _DISPLAY_EVERY_N != 0:
                             continue
-                        if _check_cmm_pressure():
+                        if _check_cmm_pressure(machine):
                             continue
                         try:
                             machine.display.show(frame)
@@ -608,7 +608,7 @@ def main():
     from app.coordinator import Ti2026Coordinator
     from framework.hal.camera_hub import CameraHub
     bus = EventBus()
-    coordinator = Ti2026Coordinator(bus)
+    coordinator = Ti2026Coordinator(bus, sys_info=getattr(machine, "sys_info", None))
     coordinator.set_wdt_feed(wdt_feed)
 
     pc_heartbeat = PcHeartbeatDetector()

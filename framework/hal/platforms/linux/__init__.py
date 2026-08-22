@@ -72,6 +72,13 @@ def resolve_camera_source(raw_source):
     return CameraMiscUtil.resolve_camera_source(raw_source)
 
 
+def create_sys_info():
+    """Capability hook (ARCH-07): /proc/meminfo snapshot, None off-Linux."""
+    from .sysinfo import LinuxSysInfo
+
+    return LinuxSysInfo()
+
+
 __all__ = [
     "LinuxAI",
     "LinuxCamera",
@@ -82,4 +89,5 @@ __all__ = [
     "create_display",
     "create_uart",
     "resolve_camera_source",
+    "create_sys_info",
 ]
