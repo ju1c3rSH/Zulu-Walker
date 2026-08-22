@@ -281,8 +281,14 @@ def _init_wifi(cfg: dict):
                 e = w.disconnect()
                 if e != 0:
                     log_print(f"[WiFi] Disconnect failed, err={e}")
-            ssid = streaming.get("ap_ssid", "Zulu-Walker")
-            password = streaming.get("ap_password", "88888888")
+            # Credentials must come from project_config.yaml — no hardcoded
+            # fallback (a missing key now skips AP start instead of bringing
+            # up a well-known-password network).
+            ssid = streaming.get("ap_ssid")
+            password = streaming.get("ap_password")
+            if not ssid or not password:
+                log_print("[WiFi] ap_ssid/ap_password missing in config, skip AP start")
+                return None
             e = w.start_ap(ssid, password, ip="192.168.1.1")
             if e != 0:
                 log_print(f"[WiFi] AP start failed, err={e}")
