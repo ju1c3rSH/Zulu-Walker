@@ -25,6 +25,7 @@ class Machine:
         uart: Uart,
         ai: Optional[AIInference] = None,
         exit_check: Optional[object] = None,
+        sys_info: Optional[object] = None,
     ) -> None:
         self.camera_hub = camera_hub
         self.display = display
@@ -32,6 +33,7 @@ class Machine:
         self.ai = ai
         # Platform capability hooks (probed via getattr, never hard imports):
         self.exit_check = exit_check
+        self.sys_info = sys_info
 
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
@@ -61,10 +63,16 @@ class Machine:
         hub = CameraHub.init_instance(platform)
 
         # Optional platform capabilities: probe by name instead of branching
-        # on the platform string (ARCH-06/MOD-02).
+        # on the platform string (ARCH-06/MOD-02/ARCH-07).
         exit_factory = getattr(platform_mod, "create_exit_check", None)
         exit_check = exit_factory() if callable(exit_factory) else None
         source_resolver = getattr(platform_mod, "resolve_camera_source", None)
+        sysinfo_factory = getattr(platform_mod, "create_sys_info", None)
+        try:
+            sys_info = sysinfo_factory() if callable(sysinfo_factory) else None
+        except Exception as e:
+            logger.warning("SysInfo unavailable: %s", e)
+            sys_info = None
 
         for cam_cfg in cameras_config:
             cid = cam_cfg.get("camera_id", str(cam_cfg.get("source", "")))
@@ -129,6 +137,7 @@ class Machine:
             uart=uart,
             ai=ai,
             exit_check=exit_check,
+            sys_info=sys_info,
         )
 
     def close(self) -> None:

@@ -12,13 +12,6 @@ from typing import Optional, Callable
 from modules.zw_opencv_module.vision_manager import VisionManager
 from utils.log_util import log_print
 
-try:
-    from maix import sys as maix_sys
-    _HAVE_MAIX_SYS = True
-except ImportError:
-    maix_sys = None
-    _HAVE_MAIX_SYS = False
-
 from framework.event_bus import EventBus
 from modules.zw_uart_module.events import (
     EmergencyStopEvent,
@@ -83,8 +76,9 @@ _AB_UNLOCK_BIAS_PX = 10.0        # cumulative residual to exit LOCKED (~0.4 cm)
 
 class Ti2026Coordinator:
 
-    def __init__(self, event_bus: EventBus):
+    def __init__(self, event_bus: EventBus, sys_info=None):
         self.event_bus = event_bus
+        self._sys_info = sys_info
 
         self._vision_state = VisionState.IDLE
         self._recording_test_id: int = 0
@@ -723,20 +717,23 @@ class Ti2026Coordinator:
     # ===== memory logging =====
 
     def _log_memory(self) -> None:
-        if not _HAVE_MAIX_SYS:
+        if self._sys_info is None:
             return
         try:
-            info = maix_sys.memory_info()
-            user = info.get("used", 0) / 1048576
-            user_total = info.get("total", 0) / 1048576
-            cmm = info.get("cmm_used", 0) / 1048576
-            cmm_total = info.get("cmm_total", 0) / 1048576
-            log_print(
-                f"[MEM] user={user:.0f}/{user_total:.0f}MB "
-                f"CMM={cmm:.0f}/{cmm_total:.0f}MB"
-            )
+            info = self._sys_info.memory_snapshot()
         except Exception as e:
             log_print(f"[MEM] error: {e}")
+            return
+        if not info:
+            return
+        user = info.get("used", 0) / 1048576
+        user_total = info.get("total", 0) / 1048576
+        cmm = info.get("cmm_used", 0) / 1048576
+        cmm_total = info.get("cmm_total", 0) / 1048576
+        log_print(
+            f"[MEM] user={user:.0f}/{user_total:.0f}MB "
+            f"CMM={cmm:.0f}/{cmm_total:.0f}MB"
+        )
 
     # ===== debug =====
 
