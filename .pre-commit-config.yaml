@@ -12,6 +12,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: boot-scope
+        name: no use-before-def locals in app/main.py
+        entry: python scripts/check_boot_scope.py
+        language: system
+        types: [python]
+        pass_filenames: false
       - id: compile-all
         name: py_compile whole tree
         entry: python -m compileall -q app framework modules utils tests scripts
