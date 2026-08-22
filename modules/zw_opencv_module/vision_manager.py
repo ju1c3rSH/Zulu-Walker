@@ -5,7 +5,6 @@ import logging
 import os
 import time
 import traceback
-from collections import deque
 from threading import Thread
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
