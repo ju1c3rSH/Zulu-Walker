@@ -61,23 +61,20 @@ class Machine:
         hub = CameraHub.init_instance(platform)
 
         # Optional platform capabilities: probe by name instead of branching
-        # on the platform string (ARCH-06).
+        # on the platform string (ARCH-06/MOD-02).
         exit_factory = getattr(platform_mod, "create_exit_check", None)
         exit_check = exit_factory() if callable(exit_factory) else None
+        source_resolver = getattr(platform_mod, "resolve_camera_source", None)
 
         for cam_cfg in cameras_config:
             cid = cam_cfg.get("camera_id", str(cam_cfg.get("source", "")))
             raw_source = cam_cfg["source"]
-            source = raw_source
-            try:
-                from utils.camera_misc_util import CameraMiscUtil
-            except ImportError:
-                CameraMiscUtil = None
-            if platform == "linux" and CameraMiscUtil is not None:
-                resolved = CameraMiscUtil.resolve_camera_source(raw_source)
-                if resolved != raw_source:
-                    logger.info("Camera '%s': source %s -> %s", cid, raw_source, resolved)
-                source = resolved
+            if callable(source_resolver):
+                source = source_resolver(raw_source)
+                if source != raw_source:
+                    logger.info("Camera '%s': source %s -> %s", cid, raw_source, source)
+            else:
+                source = raw_source
             hub.open(
                 camera_id=cid,
                 source=source,
