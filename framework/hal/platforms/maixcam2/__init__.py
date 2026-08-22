@@ -21,6 +21,13 @@ def create_watchdog(timeout_s: float = 10.0):
     return MaixWatchdog(timeout_s=timeout_s)
 
 
+def create_sys_info():
+    """Memory stats capability (ARCH-07): heap + CMM snapshot."""
+    from .sysinfo import MaixSysInfo
+
+    return MaixSysInfo()
+
+
 def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> MaixCam2Camera:  # type: ignore[type-arg]
     camera_id = kwargs.pop("camera_id", str(source))
     fps = kwargs.pop("fps", None)
