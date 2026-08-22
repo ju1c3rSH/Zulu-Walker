@@ -26,9 +26,7 @@ files:
   - app\__init__.py
   - app\coordinator.py
   - app\events.py
-  - app\line_follow_sm.py
   - app\main.py
-  - app\mission_state_machine.py
   - app\pc_heartbeat.py
   - app\vision_state.py
   - assets\calibrate.png
@@ -66,7 +64,6 @@ files:
   - framework\event_bus.py
   - framework\log.py
   - framework\module_manager.py
-  - framework\visual_state_machine.py
   - logs\app.log
   - logs\performance.log
   - modules\zw_opencv_module\ai\qrcode\detect.caffemodel
@@ -207,9 +204,6 @@ files:
   - modules\zw_wifi_stream\__init__.py
   - modules\zw_wifi_stream\streamer.py
   - modules\uart_test.py
-  - utils\state_machine\__init__.py
-  - utils\state_machine\base.py
-  - utils\state_machine\visual_state_machine.py
   - utils\__init__.py
   - utils\camera_misc_util.py
   - utils\console_capture.py
