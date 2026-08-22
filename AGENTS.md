@@ -45,7 +45,7 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读参考)
 |------|------|
 | `app/main.py` | 应用入口，初始化 Machine/ModuleManager/Coordinator |
 | `app/coordinator.py` | LineFollowCoordinator，桥接视觉→UART |
-| `app/mission_state_machine.py` | 竞赛任务状态机 (34 个状态) |
+| `app/mission_state_machine.py` | ~~竞赛任务状态机~~ 已删除(2026 赛后清理) |
 | `framework/hal/machine.py` | 依赖注入容器，读取 `project_config.yaml` 创建平台实例 |
 | `framework/hal/platforms/maixcam2/` | MaixCAM2 平台实现 (camera, display, uart, ai) |
 | `modules/zw_opencv_module/vision_manager.py` | 视觉管道管理器 (Pipeline → Task → Processor) |
