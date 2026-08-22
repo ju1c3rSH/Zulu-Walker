@@ -212,51 +212,51 @@ def _build_callbacks(manager, machine, coordinator, wdt_feed=None):
 
 
 def _make_wdt_feed():
+    """Boot-sequence watchdog policy over the platform's hardware WDT.
+
+    Rate-limits hardware feeds to >=1s apart, tolerates transient failures,
+    and feeds once immediately (the WDT countdown starts at construction
+    while WiFi AP start / model load can delay the first loop feed).
+    The maix-specific implementation lives in the platform package (ARCH-02);
+    app/ may reference it directly because the dog must outlive pre-Machine
+    boot steps.
+    """
     try:
-        from maix.peripheral import wdt as _mwdt
-        _w = _mwdt.WDT(0, 10000)
-        import time
-        _last = [0.0]
-        _fail_count = [0]
+        from framework.hal.platforms.maixcam2 import create_watchdog
 
-        def _feed():
-            now = time.monotonic()
-            if now - _last[0] < 1.0:
-                return
-            _last[0] = now
-            try:
-                _w.feed()
-            except Exception as e:
-                _fail_count[0] += 1
-                if _fail_count[0] % 50 == 1:
-                    log_print(f"[WDT] feed FAIL x{_fail_count[0]}: {e}")
-
-        def _disable():
-            for name in ("disable", "stop", "close"):
-                fn = getattr(_w, name, None)
-                if callable(fn):
-                    try:
-                        fn()
-                        return
-                    except Exception:
-                        continue
-
-        # Feed immediately: the WDT countdown starts at construction and the
-        # first feed from the boot sequence may not arrive for several seconds
-        # (WiFi AP start + model load). Feeding right away closes that gap.
-        try:
-            _w.feed()
-            _last[0] = time.monotonic()
-        except Exception as e:
-            log_print(f"[WDT] initial feed FAIL: {e}")
-
-        _feed.disable = _disable
-        return _feed
+        wdt = create_watchdog()
     except Exception as e:
         log_print(f"[WDT] init FAIL: {e}")
+        wdt = None
+    if wdt is None:
         _noop = lambda: None
         _noop.disable = lambda: None
         return _noop
+
+    last = [0.0]
+    fail_count = [0]
+
+    def _feed():
+        now = time.monotonic()
+        if now - last[0] < 1.0:
+            return
+        last[0] = now
+        try:
+            wdt.feed()
+        except Exception as e:
+            fail_count[0] += 1
+            if fail_count[0] % 50 == 1:
+                log_print(f"[WDT] feed FAIL x{fail_count[0]}: {e}")
+
+    # Immediate first feed closes the construction->loop gap.
+    try:
+        wdt.feed()
+        last[0] = time.monotonic()
+    except Exception as e:
+        log_print(f"[WDT] initial feed FAIL: {e}")
+
+    _feed.disable = wdt.disable
+    return _feed
 
 
 def _init_streamer(vm) -> None:
