@@ -11,6 +11,16 @@ from utils.log_util import log_print
 logger = logging.getLogger(__name__)
 
 
+def supports_platform(module_or_cls, platform: Optional[str]) -> bool:
+    """Platform gating for optional modules (ARCH-03/05).
+
+    A module may declare ``PLATFORMS = ("maixcam2", ...)``; absent or empty
+    means "runs anywhere".
+    """
+    declared = getattr(module_or_cls, "PLATFORMS", None)
+    return not declared or platform in declared
+
+
 class ModuleManager:
     MAIN_LOOP_DELAY = 0.002
 
@@ -47,6 +57,14 @@ class ModuleManager:
         try:
             full_name = f"modules.{name}"
             mod = importlib.import_module(full_name)
+            if not supports_platform(mod, getattr(self._machine, "platform", None)):
+                logger.info(
+                    "Module '%s' skipped on platform '%s' (declares PLATFORMS=%s)",
+                    name,
+                    getattr(self._machine, "platform", None),
+                    getattr(mod, "PLATFORMS", None),
+                )
+                return True
             self.modules[name] = mod
             if hasattr(mod, "init"):
                 mod.init(machine=self._machine, event_bus=self._event_bus, **self._module_init_kwargs)
