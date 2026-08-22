@@ -3,6 +3,7 @@ from .camera import Camera
 from .display import Display
 from .sink import FrameSink, InputSource, SinkGroup
 from .uart import Uart
+from .watchdog import Watchdog
 
 __all__ = [
     "AIInference",
@@ -16,4 +17,5 @@ __all__ = [
     "SegmentResult",
     "SinkGroup",
     "Uart",
+    "Watchdog",
 ]

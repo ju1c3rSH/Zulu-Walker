@@ -14,6 +14,13 @@ def create_exit_check():
     return _app.need_exit
 
 
+def create_watchdog(timeout_s: float = 10.0):
+    """Hardware watchdog capability (ARCH-02). Raises when unavailable."""
+    from .watchdog import MaixWatchdog
+
+    return MaixWatchdog(timeout_s=timeout_s)
+
+
 def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> MaixCam2Camera:  # type: ignore[type-arg]
     camera_id = kwargs.pop("camera_id", str(source))
     fps = kwargs.pop("fps", None)
