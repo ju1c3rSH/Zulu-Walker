@@ -638,7 +638,12 @@ class Ti2026Coordinator:
         t_ns = time.perf_counter_ns()
 
         if ball is None:
-            self._on_ball_invalid()
+            # Count a miss only when a *new* AI frame reports no ball: the hit
+            # counter below ticks at AI-frame rate, so ungated counting lets
+            # the ~500Hz main loop burn _BALL_DROP_FRAMES within one frame
+            # period, disarming and resetting the filter on any single flicker.
+            if is_new_frame:
+                self._on_ball_invalid()
             if not self._ball_armed:
                 return None
             cx_f, vx, _ = self._ab_ball_filter_apply(0.0, False, t_ns)
