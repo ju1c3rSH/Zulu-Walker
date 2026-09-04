@@ -1,71 +1,11 @@
-platform: maixcam2
+platform: mock
 
 debug_console_enabled: false
 display_enabled: true
 
-display:
-  detection_list: false              # 左上角检测文字列表; 比赛置 false (省每帧 draw_string), 调试置 true
-
-fill_light:
-  start_on: false                      # 启动默认补光灯状态; 运行中点击手电筒按钮切换后持久化到 logs/fill_light.state (启动时该文件优先)
-  icon_on: "assets/flashlight_on.png"   # 48x48
-  icon_off: "assets/flashlight_off.png" # 48x48
-
 cameras:
   - camera_id: "main"
-    source: null
-    width: 1280
-    height: 352
-    fps: 60
-    camera_stream_queue_size: 3
-    exposure_us: 3000
-    gain: 200
-    aec:
-      enabled: true
-      adjust_interval_frames: 60   # 每N帧调整一次 (~1s @ 60fps)
-      target_mean: 80              # ROI目标亮度 0-255, 越低越暗
-      gain_min: 50                 # 增益下限, 避免过暗
-      gain_max: 600                # 增益上限, 避免噪点过多
-      kp: 0.5                      # PI比例系数
-      ki: 0.05                     # PI积分系数
-      max_i: 100                   # 积分器抗饱和钳位 [灰度级×帧]
-      deadband: 8                  # 死区, |err|<=此值时跳过
-      roi: [0.4, 0.7, 0.0, 1.0]   # [y0_frac, y1_frac, x0_frac, x1_frac]
-      ema_alpha: 0.1               # EMA平滑系数, 越小越平滑
-
-uart_defaults:
-  port: "/dev/ttyS4"
-  baudrate: 921600
-
-ai:
-  models:
-    - nick_name: "yolo11n"
-      model: "/root/models/steelball_1280x352.mud"
-      model_type: "auto"
-  active: "yolo11n"
-
-pendulum:
-  pixels_per_cm: 51.0           # 实测: 5cm 处虚拟刻度落后真实 0.1cm → 50+1.0
-  length_cm: 25.0
-  cm_interval: 1.0              # 轨道绘制: 模拟厘米刻度间隔 (cm), 用于验证 pixels_per_cm
-  draw_rail: false                  # 测试用: 显示帧上绘制标定轨道轴线 + 原点 + 钢球投影点 + 厘米刻度 (比赛置 false)
-  # calib_params:                  # 可选，按需解除注释
-  #   binary_threshold: 127
-  #   min_contour_area_ratio: 0.04
-  #   max_contour_area_ratio: 0.55   # contour 回退: 拒绝整帧色块(面积>帧55%), 防 angle 恒0
-  #   min_aspect_ratio: 1.0
-  #   column_threshold: 180        # 列中心线法: 首个阈值, 失败自动降级 150->120; 高度门限按帧中位数自适应
-  # rail_calibration:          # Auto-generated after Phase 2 origin calibration
-  #   origin_x: 320.0
-  #   origin_y: 320.0
-  #   angle_rad: 0.0
-  #   dir_cos: 1.0
-  #   dir_sin: 0.0
-  #   calibrated: true
-
-streaming:
-  wifi_mode: "ap"           # "ap" | "sta" | "off"
-  ap_ssid: "Zulu-Walker"
-  ap_password: ""           # 填你自己的密码;不要提交真实值(OPS-01 教训)
-  sta_ssid: ""
-  sta_password: ""
+    source: null            # 摄像头索引或视频文件路径; null 时由平台默认
+    width: 640
+    height: 480
+    fps: 30

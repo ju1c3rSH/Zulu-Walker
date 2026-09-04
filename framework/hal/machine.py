@@ -47,7 +47,7 @@ class Machine:
             uart_config = {"port": "/dev/ttyS1", "baudrate": 921600}
             ai_config = None
         else:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 cfg = yaml.safe_load(f)
             platform = cfg.get("platform", "maixcam2")
             cameras_config = cfg.get("cameras", [])

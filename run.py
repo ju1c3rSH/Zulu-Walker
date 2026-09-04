@@ -1,17 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Zulu-Walker 启动器
+考核骨架启动器
 
 使用方法:
-    python run.py main                          # 运行主程序
-    python run.py debug [detector]              # 运行调试器
-    python run.py debug cargo                   # 物料块检测调试器
-    python run.py debug circle                  # 圆靶检测调试器
-    python run.py debug ring                    # 环检测调试器
-    python run.py debug line                    # 黑线循迹调试器
-    python run.py debug pendulum_calib          # 摆杆标定调试器
-    python run.py debug cargo -c 1              # 指定摄像头
-    python run.py debug cargo -W 1280 -H 720    # 指定分辨率
+    python run.py debug circle                  # 圆形检测调试器 (教学样板)
+    python run.py debug circle -c 1             # 指定摄像头
+    python run.py debug circle -W 1280 -H 720   # 指定分辨率
 """
 import argparse
 import importlib
@@ -26,17 +20,8 @@ from utils.debug_console import DebugConsole
 
 
 _RUNNER_MAP = {
-    "cargo":  ("modules.zw_opencv_module.detectors.cargo_detector.debug.runner", "CargoDebugRunner"),
     "circle": ("modules.zw_opencv_module.detectors.circle_target_detector.debug.runner", "CircleTargetDebugRunner"),
-    "ring":   ("modules.zw_opencv_module.detectors.ring_detector.debug.runner", "RingDebugRunner"),
-    "line":   ("modules.zw_opencv_module.detectors.line_detector.debug.runner", "LineDebugRunner"),
-    "pendulum_calib": ("modules.zw_opencv_module.detectors.pendulum_calibrator.debug.runner", "PendulumCalibDebugRunner"),
 }
-
-
-def run_main():
-    from app.main import main
-    main()
 
 
 def run_debug(args):
@@ -70,18 +55,16 @@ def _cleanup():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Zulu-Walker 启动器",
+        description="考核骨架启动器",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     subparsers = parser.add_subparsers(dest="mode", required=True, help="运行模式")
 
-    subparsers.add_parser("main", help="运行主程序")
-
     debug_parser = subparsers.add_parser("debug", help="运行检测调试器")
     debug_parser.add_argument(
-        "detector", nargs="?", default="cargo",
+        "detector", nargs="?", default="circle",
         choices=list(_RUNNER_MAP.keys()),
-        help="检测器类型 (默认: cargo)"
+        help="检测器类型 (默认: circle)"
     )
     debug_parser.add_argument("-c", "--camera", type=str, default="0", help="摄像头索引或设备路径 (默认: 0)")
     debug_parser.add_argument("-W", "--width", type=int, default=640, help="画面宽度 (默认: 640)")
@@ -92,9 +75,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        if args.mode == "main":
-            run_main()
-        elif args.mode == "debug":
+        if args.mode == "debug":
             run_debug(args)
     finally:
         _cleanup()
