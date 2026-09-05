@@ -33,6 +33,7 @@ import yaml
 from .registry import register_processor
 from .base import Processor, VisionResult
 from ..detectors.eod_color import EodColorDetector, EodBlobResult
+from ..detectors.eod_color import maix_accel
 from ..detectors.eod_shape import classify_contour
 from modules.zw_uart_module.protocol import (
     DEV_FLAG_FOUND, DEV_FLAG_MATCH, DEV_FLAG_READY,
@@ -118,6 +119,7 @@ class EodAlignProcessor(Processor):
             _MODE_BUCKET:  _detector([self._cfg["bucket"]], zone_place),
             _MODE_HOME:    _detector(home_colors, zone_place),
         }
+        self._color_fast = bool(self._cfg.get("accel", {}).get("color_fast_path", True))
         self._shape_cfg = self._cfg["shape"]
         self._target_cfg = self._cfg["target"]
         self._latch_frames = int(self._cfg["latch"]["frames"])
@@ -171,25 +173,39 @@ class EodAlignProcessor(Processor):
         raw = EodBlobResult()
         shape_id, ring_id = 0, RING_NONE
 
+        # MaixPy fast path: raw maix Image via the camera HAL (C++ find_blobs,
+        # zero numpy conversion); None on PC -> pure cv2 path.
+        maix_img = maix_accel.maix_image_from_context(context) \
+            if self._color_fast else None
+
         if self._mode is not None and frame is not None:
             self._frame_shape = frame.shape[:2]   # (h, w) for ring estimation
             detector = self._detectors[self._mode]
+            need_contour = (self._mode == _MODE_HOSTAGE)
             if self._mode == _MODE_BOMB:
                 raw = detector.detect(frame, expected_id=self._expected_id,
-                                      zone_anchor="bottom")
+                                      zone_anchor="bottom", maix_img=maix_img,
+                                      need_contour=need_contour)
             elif self._mode == _MODE_TARGET:
                 raw = detector.detect(frame, expected_id=self._expected_id,
-                                      zone_anchor="center")
+                                      zone_anchor="center", maix_img=maix_img,
+                                      need_contour=need_contour)
                 ring_id = self._estimate_ring(raw)
             elif self._mode == _MODE_HOSTAGE:
-                raw = detector.detect(frame, zone_anchor="bottom")
+                raw = detector.detect(frame, zone_anchor="bottom",
+                                      maix_img=maix_img,
+                                      need_contour=need_contour)
                 if raw.contour is not None:
                     shape_id, _, self._last_features = classify_contour(
                         raw.contour, **{k: v for k, v in self._shape_cfg.items()})
             elif self._mode == _MODE_BUCKET:
-                raw = detector.detect(frame, zone_anchor="center")
+                raw = detector.detect(frame, zone_anchor="center",
+                                      maix_img=maix_img,
+                                      need_contour=need_contour)
             elif self._mode == _MODE_HOME:
-                raw = detector.detect(frame, zone_anchor="center")
+                raw = detector.detect(frame, zone_anchor="center",
+                                      maix_img=maix_img,
+                                      need_contour=need_contour)
 
         self._update_latches(raw, now_ms)
 

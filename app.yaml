@@ -116,6 +116,7 @@ files:
   - modules\zw_opencv_module\config\vision_config.yaml
   - modules\zw_opencv_module\config\eod_config.yaml
   - modules\zw_opencv_module\detectors\eod_color\__init__.py
+  - modules\zw_opencv_module\detectors\eod_color\maix_accel.py
   - modules\zw_opencv_module\detectors\eod_shape\__init__.py
   - modules\zw_opencv_module\processors\qr_task_processor.py
   - modules\zw_opencv_module\processors\eod_align_processor.py

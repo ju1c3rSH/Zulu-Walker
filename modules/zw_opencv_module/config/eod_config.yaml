@@ -4,6 +4,11 @@
 # with the competition lighting (see docs/eod/calibration.md). Keep two sets
 # per color if the venue lighting differs between areas.
 eod:
+  # MaixCAM2 hardware-accelerated paths (PC / USB-camera debug falls back to cv2)
+  accel:
+    color_fast_path: true   # maix Image.find_blobs (MaixCV C++, ~11ms@640x480)
+    qr_engine: auto         # auto | npu | zbar | cv2  (npu = image.QRCodeDetector, MaixPy>=4.7.9)
+    qr_min_valid_frames: 2
   # competition colors (bomb + target candidates); LAB [L_min,L_max,A_min,A_max,B_min,B_max]
   colors:
     - {id: 1, name: red,   lab: [0, 80, 40, 80, 10, 80]}
