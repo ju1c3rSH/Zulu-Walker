@@ -2,9 +2,18 @@ pipelines:
   - pipeline_id: "cam_main"
     camera_id: "main"
     tasks:
+      # EOD2026: subscription-gated tasks. Both ship DISABLED; the coordinator
+      # enables exactly one of them per active subscription (single-active rule).
+      - name: "qr_task"
+        type: "QrTaskProcessor"
+        enabled: false
+      - name: "eod_align"
+        type: "EodAlignProcessor"
+        enabled: false
+      # legacy / optional (kept for reuse, not part of the EOD flow)
       - name: "ai_inference"
         type: "AIInferenceProcessor"
-        enabled: true
+        enabled: false
       - name: "line_follow"
         type: "LineFollowProcessor"
         enabled: false

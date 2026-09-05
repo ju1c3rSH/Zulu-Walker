@@ -327,12 +327,12 @@ class STM32UartInterface:
             parsed = parse_cmd_request_payload(frame.payload)
             if parsed is not None:
                 dt_name = DATA_TYPE_NAMES.get(parsed[0], f"0x{parsed[0]:02X}")
-                log_print(f"[UART RX] CMD_REQUEST type={dt_name} interval={parsed[1]}ms")
+                log_print(f"[UART RX] CMD_REQUEST type={dt_name} interval={parsed[1]}ms reserved={parsed[2]}")
                 if self._event_bus:
                     try:
                         from .events import CmdRequestEvent
                         self._event_bus.publish(
-                            CmdRequestEvent(parsed[0], parsed[1]))
+                            CmdRequestEvent(parsed[0], parsed[1], parsed[2]))
                     except ImportError:
                         pass
 

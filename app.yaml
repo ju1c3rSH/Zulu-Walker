@@ -1,11 +1,11 @@
 id: zulu_walker
 name: zulu_walker
 name[zh]: 祖鲁行者
-version: 1.2.0
+version: 1.3.0
 icon: app.png
 author: Electric Competition 2026
-desc: YOLO11n steel ball detection + line following robot based on MaixCAM2
-desc[zh]: 基于 MaixCAM2 的 YOLO11n 钢珠检测 + 循迹小车
+desc: EOD2026 vision - QR task code, color/shape alignment streams for the panzer MCU (MaixCAM2)
+desc[zh]: EOD2026 视觉端——二维码任务码/颜色对准/形状识别订阅流（MaixCAM2，配合 panzer MCU）
 exclude:
   - .git
   - .gitignore
@@ -114,6 +114,11 @@ files:
   - modules\zw_opencv_module\ai\qrcode\sr.prototxt
   - modules\zw_opencv_module\config\camera_config.yaml
   - modules\zw_opencv_module\config\vision_config.yaml
+  - modules\zw_opencv_module\config\eod_config.yaml
+  - modules\zw_opencv_module\detectors\eod_color\__init__.py
+  - modules\zw_opencv_module\detectors\eod_shape\__init__.py
+  - modules\zw_opencv_module\processors\qr_task_processor.py
+  - modules\zw_opencv_module\processors\eod_align_processor.py
   - modules\zw_opencv_module\debug\__init__.py
   - modules\zw_opencv_module\debug\camera_window.py
   - modules\zw_opencv_module\debug\detector.py

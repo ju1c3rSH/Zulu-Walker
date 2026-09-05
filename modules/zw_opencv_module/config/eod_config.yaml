@@ -1,0 +1,48 @@
+# EOD2026 vision configuration — loaded by EodAlignProcessor over code defaults.
+# Every threshold here is a STARTING POINT copied from MaixPy reference docs;
+# per 2025 provincial-first-prize practice, re-calibrate ALL of them on site
+# with the competition lighting (see docs/eod/calibration.md). Keep two sets
+# per color if the venue lighting differs between areas.
+eod:
+  # competition colors (bomb + target candidates); LAB [L_min,L_max,A_min,A_max,B_min,B_max]
+  colors:
+    - {id: 1, name: red,   lab: [0, 80, 40, 80, 10, 80]}
+    - {id: 2, name: green, lab: [0, 80, -120, -10, 0, 30]}
+    - {id: 3, name: blue,  lab: [0, 80, 30, 100, -120, -60]}
+  # hostage block color; empty -> fallback to colors above (现场标定)
+  hostage_colors: []
+  # black EOD bucket (排爆桶)
+  bucket: {id: 1, name: black, lab: [0, 45, -128, 128, -128, 128]}
+  # return-zone marker color; empty -> fallback to colors above (现场标定)
+  home_colors: []
+
+  blob:
+    min_area_px: 400
+    max_area_px: 300000
+    edge_margin_px: 4
+    morph_open: 3
+    morph_close: 7
+
+  # normalized zones (x0, y0, x1, y1) in frame fractions — 现场标定
+  zones:
+    grab:  [0.35, 0.45, 0.65, 0.85]   # bomb/hostage gripper reach zone
+    place: [0.35, 0.40, 0.65, 0.85]   # bucket/home placement zone
+
+  latch:
+    frames: 5            # N consecutive stable frames to latch FOUND/MATCH/READY
+    lost_hold_ms: 300    # continuous dropout longer than this clears FOUND latch
+
+  shape:                 # contour-geometry classifier (eod_shape)
+    waist_ratio_max: 0.88
+    cone_small_end_max: 0.70
+    cone_slope_min: 0.30
+    cylinder_end_min: 0.82
+    min_confidence: 0.25
+
+  target:
+    ref_target_width_px: 200        # target bbox width at calibration distance
+    ring_radii_px: {r10: 220, r9: 150, r8: 85}   # ring radii at same distance
+    hit_detect_enabled: false       # enable ONLY after on-site validation
+    lock_frames: 15                 # stable frames before hit-arming
+    hit_lost_frames: 12             # lost frames after lock that count as a fall
+    hit_area_ratio: 0.45            # area collapse ratio that counts as a fall

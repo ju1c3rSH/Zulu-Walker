@@ -1,13 +1,28 @@
 """
-Line-following mission coordinator (v3.0 master-slave protocol).
+EOD2026 vision coordinator (v3.0 master-slave subscription protocol).
 
-Bridges vision results -> UART data streaming for MSPM0 master.
-Slave role: waits for CMD_REQUEST/CMD_STOP from master, streams data when active.
+Slave role. The MCU owns the mission state machine and drives vision through
+single-active-subscription semantics (panzer docs/design.md §2.7):
+  CMD_REQUEST(type, min_interval, reserved=expected_id) -> ACK -> stream
+  CMD_STOP -> ACK(0x00) -> idle (processors disabled, no model burns CPU)
+  master silence > 5s -> auto-idle.
+
+Data types are the EOD2026 table (protocol.py); payloads:
+  0x01 QR_TASK     one-shot event stream: push once per new decode, else silent
+  0x02-0x04 device streams: error_x/error_y (±5000) + id + latched flags
+  0x05/0x06 zone streams:   error_x/error_y (±5000) + flags
+All latching/debounce lives in EodAlignProcessor; this class never interprets
+pixels (rule: coordinator consumes VisionResult dicts only).
+
+Threading: UART RX callbacks publish events on the RX thread; subscription
+gating (task enable/disable, processor.set_mode) is enqueued to the main loop
+via _sm_queue — the vision thread only ever sees atomic bool flips and a
+single-writer set_mode call between frames.
 """
 import threading
 import time
 from collections import deque
-from typing import Optional, Callable, Deque
+from typing import Callable, Deque, Optional
 
 from modules.zw_opencv_module.vision_manager import VisionManager
 from utils.log_util import log_print
@@ -25,78 +40,90 @@ from modules.zw_uart_module.events import (
     CmdRequestEvent,
     CmdStopEvent,
 )
-from app.line_follow_sm import Ti2026StateMachine
 from modules.zw_uart_module.protocol import (
     build_cmd_ack_frame,
     build_cmd_nack_frame,
     build_data_stream_frame,
+    build_qr_task_sub_payload,
+    build_device_sub_payload,
+    build_zone_sub_payload,
     DATA_PAYLOAD_SIZES,
     SUPPORTED_DATA_TYPES,
-    DATA_TYPE_NAMES, NACK_REASON_NAMES,
-    DATA_LINE_POSITION,
-    DATA_TARGET_POSITION,
-    DATA_TARGET_COUNT,
-    DATA_DETECTION_STATUS,
-    DATA_ALL_TARGETS,
-    DATA_SEGMENTATION_MASK,
-    DATA_PENDULUM_POSITION,
+    DATA_TYPE_NAMES,
+    DATA_TYPE_MODES,
+    DATA_QR_TASK,
+    DATA_BOMB_DEV,
+    DATA_TARGET_DEV,
+    DATA_HOSTAGE_DEV,
+    DATA_BUCKET_DEV,
+    DATA_HOME_DEV,
     NACK_UNSUPPORTED_TYPE,
     NACK_NOT_READY,
 )
 from modules.zw_opencv_module.processors.base import VisionResult
 
-
 _CMD_TIMEOUT = 5.0
+_PIPELINE_ID = "cam_main"
+_TASK_QR = "qr_task"
+_TASK_ALIGN = "eod_align"
 
-_DATA_TYPE_MODEL = {
-    DATA_TARGET_POSITION:   "yolo11n",
-    DATA_TARGET_COUNT:      "yolo11n",
-    DATA_ALL_TARGETS:       "yolo11n",
-    DATA_SEGMENTATION_MASK: "plate_seg",
+# data_type -> (optional) AI model nickname to hot-switch before ACKing
+_DATA_TYPE_MODEL: dict[int, str] = {
+    # DATA_TARGET_DEV: "eod_target",   # enable when a custom YOLO model exists
+    # DATA_HOSTAGE_DEV: "eod_hostage",
 }
 
 
-class Ti2026Coordinator:
+class EodCoordinator:
 
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
-        self.state_machine = Ti2026StateMachine()
 
-        self._uart_sender: Optional[callable] = None
+        self._uart_sender: Optional[Callable[[bytes], bool]] = None
         self._vision_manager: Optional[VisionManager] = None
         self._ai = None
 
+        # gating mutations from the RX thread are applied in the main loop
         self._sm_queue: Deque[Callable] = deque()
         self._sm_lock = threading.Lock()
 
-        # Master-slave streaming state
+        # master-slave streaming state
         self._streaming_type = 0
+        self._stream_min_interval_ms = 0
         self._stream_seq = 0
         self._last_cmd_time = 0.0
+        self._last_send_time = 0.0
         self._master_linked = False
         self._cmd_lock = threading.Lock()
+
+        # QR one-shot event state (§3 rule 1: push on new decode, dedup content)
+        self._qr_pending = False
+        self._qr_last_sent = ""
 
         self._stream_log_count = 0
         self._last_streamed_type = 0
 
+        # task gating cache (avoid redundant TaskManager calls)
+        self._task_enabled: dict[str, bool] = {_TASK_QR: False, _TASK_ALIGN: False}
+
         self._running = False
-        self._wdt_feed = lambda: None
+        self._wdt_feed: Callable[[], None] = lambda: None
         self._wdt_count = 0
         self._last_fps: float = 0.0
         self._last_fps_time: float = 0.0
         self._mem_log_counter: int = 0
 
-        # Vision result cache
-        self._latest_line: dict = {}
-        self._latest_ai: dict = {}
-        self._pixels_per_cm: float = 25.6
+        # vision result caches (written in loop(), read in loop())
+        self._latest_qr: dict = {}
+        self._latest_eod: dict = {}
         self._frame_width: int = 640
         self._frame_height: int = 640
 
-    def set_pendulum_calibration(self, pixels_per_cm: float, frame_width: int = 640, frame_height: int = 640) -> None:
-        self._pixels_per_cm = pixels_per_cm
-        self._frame_width = frame_width
-        self._frame_height = frame_height
+    # ===== wiring =====
+
+    def set_frame_size(self, width: int, height: int) -> None:
+        self._frame_width = width
+        self._frame_height = height
 
     def set_wdt_feed(self, feed_fn) -> None:
         self._wdt_feed = feed_fn
@@ -104,7 +131,7 @@ class Ti2026Coordinator:
     def connect_vision(self, vision_manager: VisionManager) -> None:
         self._vision_manager = vision_manager
 
-    def set_uart_sender(self, sender: callable) -> None:
+    def set_uart_sender(self, sender: Callable[[bytes], bool]) -> None:
         self._uart_sender = sender
 
     def set_ai(self, ai) -> None:
@@ -118,9 +145,11 @@ class Ti2026Coordinator:
                 return False
         return False
 
-    def _enqueue_sm(self, fn: Callable) -> None:
+    def _enqueue(self, fn: Callable) -> None:
         with self._sm_lock:
             self._sm_queue.append(fn)
+
+    # ===== main loop =====
 
     def loop(self) -> None:
         if self._vision_manager:
@@ -129,13 +158,12 @@ class Ti2026Coordinator:
 
             now = time.monotonic()
             if now - self._last_fps_time >= 1.0:
-                self._last_fps = self._vision_manager.get_pipeline_fps("cam_main")
+                self._last_fps = self._vision_manager.get_pipeline_fps(_PIPELINE_ID)
                 self._last_fps_time = now
 
         with self._sm_lock:
             while self._sm_queue:
                 self._sm_queue.popleft()()
-        self.state_machine.run_to_completion()
 
         self._wdt_feed()
         self._wdt_count += 1
@@ -147,31 +175,39 @@ class Ti2026Coordinator:
             streaming = self._streaming_type
             if streaming != 0:
                 if now - self._last_cmd_time > _CMD_TIMEOUT:
+                    log_print("[UART] master silent > 5s -> auto idle")
                     self._streaming_type = 0
                     self._master_linked = False
                     streaming = 0
-                else:
-                    payload = self._build_stream_payload(streaming)
-                    if payload:
-                        current_seq = self._stream_seq
-                        frame = build_data_stream_frame(
-                            current_seq, streaming, payload)
-                        self._send(frame)
-                        self._stream_seq = (current_seq + 1) & 0xFF
+                    self._enqueue(self._gate_idle)
 
+        if streaming != 0:
+            payload = self._build_stream_payload(streaming)
+            if payload is not None:
+                if self._send_allowed(streaming, now):
+                    current_seq = self._stream_seq
+                    frame = build_data_stream_frame(current_seq, streaming, payload)
+                    if self._send(frame):
+                        self._stream_seq = (current_seq + 1) & 0xFF
+                        self._last_send_time = now
                         self._stream_log_count += 1
-                        type_changed = (streaming != self._last_streamed_type)
-                        if type_changed or self._stream_log_count >= 30:
+                        if streaming != self._last_streamed_type or self._stream_log_count >= 30:
                             self._stream_log_count = 0
                             self._last_streamed_type = streaming
                             type_name = DATA_TYPE_NAMES.get(streaming, f"0x{streaming:02X}")
-                            desc = self._stream_payload_desc(streaming)
-                            log_print(f"[UART TX] DATA_STREAM seq={current_seq} type={type_name} {desc}")
+                            log_print(f"[UART TX] DATA_STREAM seq={current_seq} "
+                                      f"type={type_name} {self._stream_payload_desc(streaming)}")
 
         self._mem_log_counter += 1
         if self._mem_log_counter >= 300:
             self._mem_log_counter = 0
             self._log_memory()
+
+    def _send_allowed(self, data_type: int, now: float) -> bool:
+        """min_interval throttling; interval 0 = event-driven (no throttle)."""
+        if self._stream_min_interval_ms <= 0:
+            return True
+        return (now - self._last_send_time) * 1000.0 >= self._stream_min_interval_ms
 
     def start(self) -> None:
         self._running = True
@@ -189,17 +225,17 @@ class Ti2026Coordinator:
     # ===== vision results =====
 
     def _process_vision_results(self, all_results: dict) -> None:
-        for pipeline_id, results in all_results.items():
+        for _pipeline_id, results in all_results.items():
             for task_name, vision_result in results.items():
                 if not isinstance(vision_result, VisionResult):
                     continue
                 data = vision_result.result_data if vision_result.success else {}
-                if task_name == "line_follow":
-                    self._latest_line = data
-                elif task_name == "ai_inference":
-                    self._latest_ai = data
+                if task_name == _TASK_QR:
+                    self._latest_qr = data or {}
+                elif task_name == _TASK_ALIGN:
+                    self._latest_eod = data or {}
 
-    # ===== Master events =====
+    # ===== master events =====
 
     def _on_cmd_request(self, event: CmdRequestEvent) -> None:
         data_type = event.data_type
@@ -211,28 +247,35 @@ class Ti2026Coordinator:
 
         if data_type not in SUPPORTED_DATA_TYPES:
             log_print(f"[UART TX] CMD_NACK type={dt_name} reason=UNSUPPORTED_TYPE")
-            frame = build_cmd_nack_frame(data_type, NACK_UNSUPPORTED_TYPE)
-            self._send(frame)
+            self._send(build_cmd_nack_frame(data_type, NACK_UNSUPPORTED_TYPE))
             return
 
         if self._ai:
             nick = _DATA_TYPE_MODEL.get(data_type)
-            if nick and self._ai.active_model != nick:
+            if nick and getattr(self._ai, "active_model", None) != nick:
                 if not self._ai.switch(nick):
                     log_print(f"[UART TX] CMD_NACK type={dt_name} reason=NOT_READY")
-                    frame = build_cmd_nack_frame(data_type, NACK_NOT_READY)
-                    self._send(frame)
+                    self._send(build_cmd_nack_frame(data_type, NACK_NOT_READY))
                     return
+
+        mode = DATA_TYPE_MODES.get(data_type)
+        if mode is not None:
+            self._enqueue(lambda m=mode, e=event: self._gate_align(m, e))
+        else:   # QR
+            self._enqueue(lambda: self._gate_qr())
 
         with self._cmd_lock:
             self._streaming_type = data_type
             self._stream_seq = 0
+            self._stream_min_interval_ms = event.min_interval_ms
+            self._last_send_time = 0.0
+            if data_type == DATA_QR_TASK:
+                self._qr_pending = True
         payload_size = DATA_PAYLOAD_SIZES.get(data_type, 0)
-        if payload_size is None:
-            payload_size = 0
-        log_print(f"[UART TX] CMD_ACK type={dt_name} freq=60fps size={payload_size}B")
-        frame = build_cmd_ack_frame(data_type, 60, payload_size)
-        self._send(frame)
+        ack_freq = self._ack_freq_hz(event.min_interval_ms)
+        log_print(f"[UART TX] CMD_ACK type={dt_name} freq={ack_freq}Hz size={payload_size}B "
+                  f"interval={event.min_interval_ms}ms expected_id={event.reserved}")
+        self._send(build_cmd_ack_frame(data_type, ack_freq, payload_size))
 
     def _on_cmd_stop(self, event: CmdStopEvent) -> None:
         now = time.monotonic()
@@ -240,175 +283,100 @@ class Ti2026Coordinator:
             self._last_cmd_time = now
             self._streaming_type = 0
             self._stream_seq = 0
+            self._qr_pending = False
+            self._qr_last_sent = ""
         log_print("[UART TX] CMD_ACK type=STOP")
-        frame = build_cmd_ack_frame(0x00, 0, 0)
-        self._send(frame)
+        self._send(build_cmd_ack_frame(0x00, 0, 0))
+        self._enqueue(self._gate_idle)
 
     def _on_emergency(self, event: EmergencyStopEvent) -> None:
-        captured_reason = event.reason
         with self._cmd_lock:
             self._streaming_type = 0
-        self._enqueue_sm(
-            lambda: self.state_machine.set_error(99, f"Emergency stop: reason={captured_reason}")
-        )
+            self._qr_pending = False
+        log_print(f"[UART] EMERGENCY_STOP reason={event.reason} -> idle")
+        self._enqueue(self._gate_idle)
+
+    # ===== subscription gating (runs in main loop) =====
+
+    def _get_align_processor(self):
+        if not self._vision_manager:
+            return None
+        pipe = self._vision_manager.get_pipeline(_PIPELINE_ID)
+        if pipe is None:
+            return None
+        task = pipe.task_manager.get_task(_TASK_ALIGN)
+        return task.processor if task else None
+
+    def _set_task_enabled(self, task_name: str, enabled: bool) -> None:
+        if not self._vision_manager or self._task_enabled.get(task_name) == enabled:
+            return
+        if enabled:
+            self._vision_manager.enable_task(_PIPELINE_ID, task_name)
+        else:
+            self._vision_manager.disable_task(_PIPELINE_ID, task_name)
+        self._task_enabled[task_name] = enabled
+
+    def _gate_align(self, mode: str, event: CmdRequestEvent) -> None:
+        self._set_task_enabled(_TASK_QR, False)
+        self._set_task_enabled(_TASK_ALIGN, True)
+        processor = self._get_align_processor()
+        if processor is not None:
+            processor.set_mode(mode, event.reserved)
+
+    def _gate_qr(self) -> None:
+        self._set_task_enabled(_TASK_ALIGN, False)
+        self._set_task_enabled(_TASK_QR, True)
+
+    def _gate_idle(self) -> None:
+        self._set_task_enabled(_TASK_QR, False)
+        self._set_task_enabled(_TASK_ALIGN, False)
+        processor = self._get_align_processor()
+        if processor is not None:
+            processor.reset()
 
     # ===== streaming payload builders =====
 
     def _build_stream_payload(self, data_type: int) -> Optional[bytes]:
-        if data_type == DATA_LINE_POSITION:
-            return self._build_line_position_payload()
-        elif data_type == DATA_TARGET_POSITION:
-            return self._build_target_position_payload()
-        elif data_type == DATA_TARGET_COUNT:
-            return self._build_target_count_payload()
-        elif data_type == DATA_DETECTION_STATUS:
-            return self._build_detection_status_payload()
-        elif data_type == DATA_ALL_TARGETS:
-            return self._build_all_targets_payload()
-        elif data_type == DATA_SEGMENTATION_MASK:
-            return self._build_seg_mask_payload()
-        elif data_type == DATA_PENDULUM_POSITION:
-            return self._build_pendulum_position_payload()
+        if data_type == DATA_QR_TASK:
+            return self._build_qr_payload()
+        eod = self._latest_eod
+        if data_type in (DATA_BOMB_DEV, DATA_TARGET_DEV, DATA_HOSTAGE_DEV):
+            return build_device_sub_payload(
+                int(eod.get("error_x", 0)), int(eod.get("error_y", 0)),
+                int(eod.get("id", 0)), int(eod.get("flags", 0)))
+        if data_type in (DATA_BUCKET_DEV, DATA_HOME_DEV):
+            return build_zone_sub_payload(
+                int(eod.get("error_x", 0)), int(eod.get("error_y", 0)),
+                int(eod.get("flags", 0)))
+        return None
+
+    def _build_qr_payload(self) -> Optional[bytes]:
+        """One-shot semantics: None (silence) until a fresh valid decode."""
+        data = self._latest_qr
+        code = str(data.get("code", ""))
+        if (self._qr_pending and data.get("latched")
+                and data.get("code_domain_valid") and code != self._qr_last_sent):
+            self._qr_pending = False
+            self._qr_last_sent = code
+            log_print(f"[QR] pushing task code {code!r}")
+            return build_qr_task_sub_payload(True, code)
+        if data.get("changed") and data.get("latched") and data.get("code_domain_valid"):
+            # a different code appeared mid-subscription: re-arm (still content-deduped)
+            self._qr_pending = True
         return None
 
     def _stream_payload_desc(self, data_type: int) -> str:
-        ai = self._latest_ai
-        line = self._latest_line
-        detections = ai.get("detections", [])
+        if data_type == DATA_QR_TASK:
+            return f"code={self._latest_qr.get('code', '')!r}"
+        eod = self._latest_eod
+        return (f"mode={eod.get('mode', '-')} ex={eod.get('error_x', 0):+d} "
+                f"ey={eod.get('error_y', 0):+d} id={eod.get('id', 0)} "
+                f"flags={eod.get('flags', 0):02b} raw_found={eod.get('raw_found', False)}")
 
-        if data_type == DATA_LINE_POSITION:
-            pe_x = line.get("percent_error_x", 0)
-            pe_y = line.get("percent_error_y", 0)
-            found = 1 if line.get("target_found", False) else 0
-            state = self.state_machine.current_state_id
-            return f"pe_x={pe_x} pe_y={pe_y} found={found} state={state}"
-
-        if data_type == DATA_TARGET_POSITION:
-            if detections:
-                best = max(detections, key=lambda d: d.score)
-                return f"x={int(best.x)} y={int(best.y)} conf={int(best.score * 255)} found=1"
-            return "x=0 y=0 conf=0 found=0"
-
-        if data_type == DATA_TARGET_COUNT:
-            return f"count={len(detections)}"
-
-        if data_type == DATA_DETECTION_STATUS:
-            return f"vstate=0 vflags=0 count={len(detections)}"
-
-        if data_type == DATA_ALL_TARGETS:
-            count = min(len(detections), 16)
-            items = " ".join(
-                f"[{i}:cls={d.class_id} x={int(d.x)} y={int(d.y)}]"
-                for i, d in enumerate(detections[:count])
-            )
-            return f"count={count} {items}"
-
-        if data_type == DATA_SEGMENTATION_MASK:
-            segments = ai.get("segments", [])
-            count = min(len(segments), 4)
-            items = " ".join(
-                f"[{i}:cls={s['class_id']} cx={s['center_x']} cy={s['center_y']} area={s['area_px']}]"
-                for i, s in enumerate(segments[:count])
-            )
-            return f"count={count} {items}"
-
-        if data_type == DATA_PENDULUM_POSITION:
-            ball = max((d for d in detections if d.class_id == 0), key=lambda d: d.score, default=None)
-            if ball is not None:
-                cx = ball.x + ball.w / 2
-                half = max(self._frame_width, self._frame_height) / 2.0
-                pe_x = int(((cx - self._frame_width / 2.0) / half) * 5000.0)
-                ball_cm = (cx - self._frame_width / 2.0) / self._pixels_per_cm
-                return f"pe_x={pe_x} ball_cm={ball_cm:.1f} found=1"
-            return "pe_x=0 ball_cm=0 found=0"
-
-        return ""
-
-    def _build_line_position_payload(self) -> bytes:
-        data = self._latest_line
-        pe_x = data.get("percent_error_x", 0)
-        pe_y = data.get("percent_error_y", 0)
-        target_found = data.get("target_found", False)
-        flags = 1 if target_found else 0
-        state = self.state_machine.current_state_id
-        return (pe_x.to_bytes(2, 'little', signed=True) +
-                pe_y.to_bytes(2, 'little', signed=True) +
-                bytes([flags, state]))
-
-    def _build_target_position_payload(self) -> bytes:
-        data = self._latest_ai
-        detections = data.get("detections", [])
-        if detections:
-            best = max(detections, key=lambda d: d.score)
-            x = int(best.x)
-            y = int(best.y)
-            conf = max(0, min(255, int(best.score * 255)))
-            flags = 0x01
-        else:
-            x, y, conf = 0, 0, 0
-            flags = 0x00
-        return (x.to_bytes(2, 'little', signed=True) +
-                y.to_bytes(2, 'little', signed=True) +
-                bytes([conf, flags]))
-
-    def _build_target_count_payload(self) -> bytes:
-        data = self._latest_ai
-        detections = data.get("detections", [])
-        return bytes([len(detections)])
-
-    def _build_detection_status_payload(self) -> bytes:
-        data = self._latest_ai
-        detections = data.get("detections", [])
-        count = len(detections)
-        visual_state = 0
-        visual_flags = 0
-        return (bytes([visual_state, visual_flags]) +
-                count.to_bytes(2, 'little'))
-
-    def _build_all_targets_payload(self) -> bytes:
-        data = self._latest_ai
-        detections = data.get("detections", [])
-        count = min(len(detections), 16)
-        payload = bytes([count])
-        for d in detections[:count]:
-            payload += (int(d.x).to_bytes(2, 'little', signed=True) +
-                        int(d.y).to_bytes(2, 'little', signed=True) +
-                        bytes([d.class_id]))
-        return payload
-
-    def _build_seg_mask_payload(self) -> bytes:
-        data = self._latest_ai
-        segments = data.get("segments", [])
-        count = min(len(segments), 4)
-        payload = bytes([count])
-        for s in segments[:count]:
-            payload += (
-                bytes([s["class_id"]]) +
-                int(s["center_x"]).to_bytes(2, 'little') +
-                int(s["center_y"]).to_bytes(2, 'little') +
-                min(s["area_px"], 65535).to_bytes(2, 'little')
-            )
-        return payload
-
-    def _build_pendulum_position_payload(self) -> bytes:
-        data = self._latest_ai
-        detections = data.get("detections", [])
-        ball = max((d for d in detections if d.class_id == 0), key=lambda d: d.score, default=None)
-        if ball is not None:
-            cx = ball.x + ball.w / 2
-            frame_w = self._frame_width
-            half = max(frame_w, self._frame_height) / 2.0
-            pe_x = int(((cx - frame_w / 2.0) / half) * 5000.0)
-            ball_cm = (cx - frame_w / 2.0) / self._pixels_per_cm
-            ball_cm_scaled = int(ball_cm * 100)
-            flags = 0x01
-        else:
-            pe_x = 0
-            ball_cm_scaled = 0
-            flags = 0x00
-        return (pe_x.to_bytes(2, 'little', signed=True) +
-                ball_cm_scaled.to_bytes(2, 'little', signed=True) +
-                bytes([flags, 0x00]))
+    def _ack_freq_hz(self, min_interval_ms: int) -> int:
+        if min_interval_ms <= 0:
+            return 60
+        return max(1, min(60, int(1000 / min_interval_ms)))
 
     # ===== memory logging =====
 
@@ -433,11 +401,12 @@ class Ti2026Coordinator:
     def get_info(self) -> dict:
         with self._cmd_lock:
             linked = self._master_linked
-        detections = self._latest_ai.get("detections", [])
+            mode = DATA_TYPE_NAMES.get(self._streaming_type, "IDLE") \
+                if self._streaming_type else "IDLE"
         return {
-            "state": self.state_machine.current_state,
-            "state_id": self.state_machine.current_state_id,
+            "state": mode,
+            "state_id": self._streaming_type,
             "link_active": linked,
-            "det_count": len(detections),
+            "det_count": 1 if self._latest_eod.get("raw_found") else 0,
             "fps": self._last_fps,
         }
