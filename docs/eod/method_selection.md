@@ -27,7 +27,25 @@
 3. **相机**：OS04D10 1280×720@60 / 2560×1440@30；本项目 640×640@60。曝光锁定：`cam.exp_mode(Manual)`/设 exposure/gain 即转手动；`cam.awb_mode(AwbMode.Manual)` + `set_wb_gain([R,Gr,Gb,B])`。>720p 强制 30fps；`maix_npu_ai_isp=1` 占一半 NPU 换画质，色块方案不需要，建议 0。
 4. **性能余量**：YOLO11n 640×640 前向 ≈113fps（NPU 3.2TOPS）；find_blobs 640×480 ≈11ms；`dual_buff=True` 提吞吐但引入一帧延迟——**对准/打靶阶段建议关**。
 
-## 3. 本仓库的落地架构（EOD2026-Spacial 分支）
+## 2.5 已接入的 MaixPy 优化路径（v1.2）
+
+MaixPy v4 对我们的三个检测环节都有专门优化，已封装在
+`modules/zw_opencv_module/detectors/eod_color/maix_accel.py`，设备上自动启用、
+PC（pytest / USB 相机调试）自动回退 cv2，**同一套代码两边跑**：
+
+| 环节 | cv2 路径（PC/兜底） | MaixPy 优化路径（MaixCAM2） | 收益 |
+|---|---|---|---|
+| 颜色色块 | cvtColor+inRange+morphology+findContours | `img.find_blobs()`（MaixCV C++ 单趟，直接吃原始 maix Image，零 numpy 拷贝） | 官方 benchmark ≈11ms@640×480；省掉 image2cv 全帧拷贝与 Python 层轮廓循环 |
+| QR 解码 | cv2.QRCodeDetector+CLAHE | `image.QRCodeDetector`（**NPU**，60+fps@320，MaixPy≥4.7.9）→ ZBAR → cv2 三级回退 | NPU 解码比 CPU cv2 快数倍；与 YOLO 无冲突（单活跃订阅时分复用） |
+| 形状识别 | 全帧轮廓提取 | 快速路径出 bbox 后，**ROI 裁剪小图**再提轮廓（供宽度剖面分类），避免全帧 cv2 | 全帧→局部，形状分类开销降到可忽略 |
+
+- 开关在 `eod_config.yaml` 的 `accel:` 段（`color_fast_path` / `qr_engine: auto|npu|zbar|cv2`）。
+- 阈值零转换直通：maix find_blobs 与 yaml 同用 OpenMV 风格 LAB（cv2 路径内部才做编码转换），现场用 MaixVision 阈值编辑器标定后两边通用。
+- 回退契约由 `tests/test_maix_accel.py` 钉死：无 maix 模块时所有 helper 返回 None/False，调用方无感降级。
+- YOLO 本就经 `MaixCam2AI` 走 NPU（`dual_buff=True` 提吞吐；对准/打靶若换 YOLO 判据可关掉换一帧延迟）。
+- 后续可再挖：`camera buff_num=1` 降延迟（电赛 demo 做法）、`maix_npu_ai_isp=0` 释放一半 NPU、`image2cv(copy=True)` 后的 `[:, :, ::-1]` 负 strides 视图改为单次 copy（cv2 各算子内部隐性拷贝）。
+
+## 3. 本仓库的落地架构（EOD2026-Spacial 分支)
 
 ```
 MCU(panzer) ──UART4 115200──  FrameParser(AA55+CRC16-CCITT, 高字节在前)

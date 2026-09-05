@@ -26,7 +26,8 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读参考)
   编码转换在 `_blobs_for_color`）、`detectors/eod_shape/`（竖直宽度剖面轮廓分类）
 - 文档：`docs/eod/method_selection.md`（选型+调研）、`docs/eod/laser_aim.md`（对准方程）、
   `docs/eod/calibration.md`（现场标定）
-- 测试（PC 端 pytest，42 用例含两边对拍金向量）：`python -m pytest tests/`
+- MaixPy 加速层：`detectors/eod_color/maix_accel.py`（设备走 C++ find_blobs / NPU QRCodeDetector，PC 自动回退 cv2；开关在 eod_config.yaml `accel:` 段）
+- 测试（PC 端 pytest，48 用例含两边对拍金向量与加速层回退契约）：`python -m pytest tests/`
 - AI: `maix.nn` YOLO11 模型（`/root/models/`，经 `MaixCam2AI` nick 热切换）
 - 迁移自 Orange Pi 5B，详见 `docs/migration_plan.md`
 
