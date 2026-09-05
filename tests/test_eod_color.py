@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """EodColorDetector tests on synthetic frames."""
-import cv2
 import numpy as np
 import pytest
 

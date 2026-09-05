@@ -90,6 +90,7 @@ def load_eod_config(config_path: Optional[str] = None) -> dict:
     return cfg
 
 
+@register_processor("EodAlignProcessor")
 class EodAlignProcessor(Processor):
 
     def __init__(self, name: str = "eod_align", config: Optional[dict] = None,
@@ -165,6 +166,7 @@ class EodAlignProcessor(Processor):
         self._hit_latched = False
         self._last_features: dict = {}
         self._frame_shape = None   # (h, w) of the last processed frame
+        self._last_shape_id = 0
 
     # ---- processing ----
 
@@ -172,6 +174,7 @@ class EodAlignProcessor(Processor):
         now_ms = self._now() * 1000.0
         raw = EodBlobResult()
         shape_id, ring_id = 0, RING_NONE
+        self._last_shape_id = 0
 
         # MaixPy fast path: raw maix Image via the camera HAL (C++ find_blobs,
         # zero numpy conversion); None on PC -> pure cv2 path.
@@ -198,6 +201,7 @@ class EodAlignProcessor(Processor):
                 if raw.contour is not None:
                     shape_id, _, self._last_features = classify_contour(
                         raw.contour, **{k: v for k, v in self._shape_cfg.items()})
+                    self._last_shape_id = shape_id
             elif self._mode == _MODE_BUCKET:
                 raw = detector.detect(frame, zone_anchor="center",
                                       maix_img=maix_img,
@@ -292,8 +296,8 @@ class EodAlignProcessor(Processor):
         if self._mode in (_MODE_BOMB, _MODE_TARGET):
             return (raw.dev_id == self._expected_id) if self._expected_id else True
         if self._mode == _MODE_HOSTAGE:
-            sid = classify_contour(raw.contour, **dict(self._shape_cfg))[0] \
-                if raw.contour is not None else 0
+            # reuse the shape classified earlier this frame (single classify)
+            sid = self._last_shape_id
             return (sid == self._expected_id) if self._expected_id else sid != 0
         return False
 

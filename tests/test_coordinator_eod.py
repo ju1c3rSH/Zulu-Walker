@@ -3,10 +3,7 @@
 import time
 
 from app.coordinator import EodCoordinator
-from modules.zw_uart_module.protocol import (
-    build_data_stream_frame, parse_frame,
-    DEV_FLAG_FOUND,
-)
+from modules.zw_uart_module.protocol import parse_frame, DEV_FLAG_FOUND
 
 
 def make_coordinator():
@@ -51,6 +48,31 @@ def test_qr_pending_arms_on_request_and_sends_once():
     sent.clear()
     _drain(coordinator, sent)
     assert sent == []
+
+
+def test_qr_resubscribe_resends_cached_code():
+    """MCU READ_QR retry re-REQUESTs after 20s; the cached code must be
+    pushed again in the new subscription cycle (per-cycle content dedup)."""
+    coordinator = make_coordinator()
+    coordinator._latest_qr = {"decoded": True, "code": "312",
+                              "code_domain_valid": True, "latched": True,
+                              "changed": False}
+
+    class _Evt:
+        data_type = 0x01
+        min_interval_ms = 0
+        reserved = 0
+
+    coordinator._on_cmd_request(_Evt())
+    sent = []
+    _drain(coordinator, sent)
+    assert len(sent) == 1
+
+    coordinator._on_cmd_request(_Evt())   # re-subscribe (same code)
+    sent.clear()
+    _drain(coordinator, sent)
+    assert len(sent) == 1, "re-subscribe must re-push the cached code"
+    assert parse_frame(sent[0]).payload[4:7] == b"312"  # seq+type+flags+len
 
 
 def test_qr_silent_without_latched_decode():

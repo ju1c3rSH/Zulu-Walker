@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """EodAlignProcessor latch semantics — the §3 edge rules as executable tests."""
-import cv2
 import numpy as np
 import pytest
 
