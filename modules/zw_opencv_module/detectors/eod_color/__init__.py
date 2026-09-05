@@ -11,7 +11,7 @@ Error convention (must match panzer docs/design.md §2.5):
   normalized to ±5000 at frame half-width/half-height, 0 = centered.
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np

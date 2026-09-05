@@ -271,6 +271,7 @@ class EodCoordinator:
             self._last_send_time = 0.0
             if data_type == DATA_QR_TASK:
                 self._qr_pending = True
+                self._qr_last_sent = ""   # new subscription -> new dedup cycle
         payload_size = DATA_PAYLOAD_SIZES.get(data_type, 0)
         ack_freq = self._ack_freq_hz(event.min_interval_ms)
         log_print(f"[UART TX] CMD_ACK type={dt_name} freq={ack_freq}Hz size={payload_size}B "
