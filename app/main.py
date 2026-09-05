@@ -217,9 +217,9 @@ def main():
     wdt_feed = _make_wdt_feed()
 
     from framework.event_bus import EventBus
-    from app.coordinator import Ti2026Coordinator
+    from app.coordinator import EodCoordinator
     bus = EventBus()
-    coordinator = Ti2026Coordinator(bus)
+    coordinator = EodCoordinator(bus)
     coordinator.set_wdt_feed(wdt_feed)
 
     machine = Machine.create("project_config.yaml")
@@ -252,12 +252,11 @@ def main():
     if exit_icon is not None and vm is not None:
         vm.set_exit_icon(exit_icon, _ICON_SIZE, _ICON_MARGIN)
 
-    pixels_per_cm = _cfg.get("pendulum", {}).get("pixels_per_cm", 25.6)
     cam_cfg = _cfg.get("cameras", [{}])[0]
     cam_w = cam_cfg.get("width", 640)
     cam_h = cam_cfg.get("height", 640)
-    log_print(f"ppc:{pixels_per_cm} w:{cam_w} h:{cam_h}")
-    coordinator.set_pendulum_calibration(pixels_per_cm, cam_w, cam_h)
+    log_print(f"cam w:{cam_w} h:{cam_h}")
+    coordinator.set_frame_size(cam_w, cam_h)
 
     main_callback, start_display_thread = _build_callbacks(manager, machine)
 

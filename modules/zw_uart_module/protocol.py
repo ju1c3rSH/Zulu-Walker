@@ -5,8 +5,8 @@ zw_uart_module - Protocol definitions
 Defines protocol constants, frame building, and parsing functions for
 UART communication between Orange Pi and STM32.
 
-Protocol Frame Structure (v2.1):
-| SOF1 | SOF2 | Length | Type | Payload | CRC16_LO | CRC16_HI |
+Protocol Frame Structure (v3.0, EOD2026):
+| SOF1 | SOF2 | Length | Type | Payload | CRC16_HI | CRC16_LO |
 |  1   |  1   |   1    |  1   |  0~252  |    1     |    1     |
 
 - SOF1: Start of Frame byte 1, fixed 0xAA
@@ -14,7 +14,23 @@ Protocol Frame Structure (v2.1):
 - Length: Bytes from Type to CRC16 (Type + Payload + CRC16)
 - Type: Frame type identifier
 - Payload: Variable length data
-- CRC16: CRC16-CCITT (poly 0x1021, init 0xFFFF) of Type to Payload bytes, big-endian
+- CRC16: CRC16-CCITT (poly 0x1021, init 0xFFFF) of Type to Payload bytes,
+  transmitted HIGH byte first (big-endian). Multi-byte payload fields are
+  little-endian signed int16 unless noted.
+
+EOD2026 data-type table (must stay in sync with panzer MCU docs/design.md §2.4):
+| data_type | name        | sub_payload                                        |
+|-----------|-------------|----------------------------------------------------|
+| 0x01      | QR_TASK     | flags(1) + len(1) + ascii(18)                      |
+| 0x02      | BOMB_DEV    | error_x(2) + error_y(2) + color_id(1) + flags(1)   |
+| 0x03      | TARGET_DEV  | error_x(2) + error_y(2) + ring_id(1) + flags(1)    |
+| 0x04      | HOSTAGE_DEV | error_x(2) + error_y(2) + shape_id(1) + flags(1)   |
+| 0x05      | BUCKET_DEV  | error_x(2) + error_y(2) + flags(1)                 |
+| 0x06      | HOME_DEV    | error_x(2) + error_y(2) + flags(1)                 |
+
+CMD_REQUEST reserved byte (3rd payload byte) carries the expected task-code id:
+digit1 for BOMB_DEV, digit2 for TARGET_DEV, digit3 for HOSTAGE_DEV, 0 otherwise.
+Vision latches DEV_FLAG_MATCH only when detected id == expected id.
 """
 
 from dataclasses import dataclass
@@ -47,38 +63,58 @@ NACK_UNSUPPORTED_TYPE = 0x01
 NACK_NOT_READY        = 0x02
 NACK_BUSY             = 0x03
 
-# Data stream types (for CMD_REQUEST.data_type)
-DATA_LINE_POSITION    = 0x01
-DATA_TARGET_POSITION  = 0x02
-DATA_TARGET_COUNT     = 0x03
-DATA_DETECTION_STATUS = 0x04
-DATA_ALL_TARGETS           = 0x05
-DATA_SEGMENTATION_MASK    = 0x06
-DATA_PENDULUM_POSITION    = 0x07
+# === EOD2026 data stream types (for CMD_REQUEST.data_type) ===
+DATA_QR_TASK     = 0x01   # QR task code: flags + len + ascii(18)
+DATA_BOMB_DEV    = 0x02   # bomb block alignment (color per digit1)
+DATA_TARGET_DEV  = 0x03   # laser target alignment (rings 8/9/10, HIT_CONFIRMED)
+DATA_HOSTAGE_DEV = 0x04   # hostage alignment (shape per digit3)
+DATA_BUCKET_DEV  = 0x05   # black EOD bucket alignment (bomb placement)
+DATA_HOME_DEV    = 0x06   # return-zone alignment (hostage placement)
+
+# Device flags bitmask (bit layout shared by all device streams)
+DEV_FLAG_FOUND = 0x01   # bit0 TARGET_FOUND — vision-side latch; error/id fields are 0 when clear
+DEV_FLAG_MATCH = 0x02   # bit1 COLOR_MATCH / SHAPE_MATCH — detected id == task-code id
+DEV_FLAG_READY = 0x04   # bit2 READY_TO_PICK(0x02) / HIT_CONFIRMED(0x03) / READY_TO_PLACE(0x05/0x06)
+
+# color_id / shape_id encodings (match the QR task-code digits)
+ID_NONE = 0
+COLOR_RED, COLOR_GREEN, COLOR_BLUE = 1, 2, 3
+SHAPE_CYLINDER, SHAPE_CONE, SHAPE_WAIST_DRUM = 1, 2, 3
+RING_NONE = 0   # ring_id: 0=no target, else 8/9/10
 
 # Payload sizes for each data type (None = variable length)
 # Total TYPE_DATA_STREAM payload size (seq + data_type + sub_payload)
 DATA_PAYLOAD_SIZES = {
-    DATA_LINE_POSITION: 8,
-    DATA_TARGET_POSITION: 8,
-    DATA_TARGET_COUNT: 3,
-    DATA_DETECTION_STATUS: 6,
-    DATA_ALL_TARGETS: None,
-    DATA_SEGMENTATION_MASK: None,
-    DATA_PENDULUM_POSITION: 8,
+    DATA_QR_TASK:     20,
+    DATA_BOMB_DEV:    6,
+    DATA_TARGET_DEV:  6,
+    DATA_HOSTAGE_DEV: 6,
+    DATA_BUCKET_DEV:  5,
+    DATA_HOME_DEV:    5,
 }
 
 SUPPORTED_DATA_TYPES = set(DATA_PAYLOAD_SIZES.keys())
 
 DATA_TYPE_NAMES: dict[int, str] = {
-    DATA_LINE_POSITION:     "LINE_POS",
-    DATA_TARGET_POSITION:   "TARGET_POS",
-    DATA_TARGET_COUNT:      "TARGET_CNT",
-    DATA_DETECTION_STATUS:  "DET_STAT",
-    DATA_ALL_TARGETS:       "ALL_TAR",
-    DATA_SEGMENTATION_MASK: "SEG_MASK",
-    DATA_PENDULUM_POSITION: "PEND_POS",
+    DATA_QR_TASK:     "QR_TASK",
+    DATA_BOMB_DEV:    "BOMB_DEV",
+    DATA_TARGET_DEV:  "TARGET_DEV",
+    DATA_HOSTAGE_DEV: "HOSTAGE_DEV",
+    DATA_BUCKET_DEV:  "BUCKET_DEV",
+    DATA_HOME_DEV:    "HOME_DEV",
 }
+
+# Subscription -> align processor mode (coordinator gating)
+DATA_TYPE_MODES: dict[int, str] = {
+    DATA_BOMB_DEV:    "BOMB",
+    DATA_TARGET_DEV:  "TARGET",
+    DATA_HOSTAGE_DEV: "HOSTAGE",
+    DATA_BUCKET_DEV:  "BUCKET",
+    DATA_HOME_DEV:    "HOME",
+}
+
+ERROR_MIN = -5000
+ERROR_MAX = 5000
 
 NACK_REASON_NAMES: dict[int, str] = {
     NACK_UNSUPPORTED_TYPE: "UNSUPPORTED_TYPE",
@@ -334,3 +370,99 @@ def parse_ping_payload(payload: bytes) -> Optional[int]:
 
 
 parse_pong_payload = parse_ping_payload  # same format
+
+
+# === EOD2026 sub-payload builders/parsers ===
+# sub_payload = DATA_STREAM payload minus the seq(1)+data_type(1) header.
+
+def clamp_error(value: int) -> int:
+    """Clamp a normalized pixel error to the ±5000 protocol range."""
+    return max(ERROR_MIN, min(ERROR_MAX, int(value)))
+
+
+def build_qr_task_sub_payload(decoded: bool, code: str) -> bytes:
+    """QR_TASK sub_payload (20B): flags(1) + len(1) + ascii(18, zero-padded).
+
+    flags bit0 = DECODED_VALID. When not decoded, code is ignored and the
+    ascii field is all zeros (no-target frame semantics).
+    """
+    if not decoded or not code:
+        return bytes([0, 0]) + b"\x00" * 18
+    raw = code.encode("ascii")[:18]
+    return bytes([DEV_FLAG_FOUND, len(raw)]) + raw.ljust(18, b"\x00")
+
+
+def parse_qr_task_sub_payload(data: bytes) -> Optional[dict]:
+    """Parse QR_TASK sub_payload -> {'decoded', 'code'}; None on bad length."""
+    if len(data) != 20:
+        return None
+    flags, length = data[0], data[1]
+    decoded = bool(flags & DEV_FLAG_FOUND)
+    if not decoded or length == 0:
+        return {"decoded": False, "code": ""}
+    length = min(length, 18)
+    return {"decoded": True, "code": data[2:2 + length].decode("ascii", errors="replace")}
+
+
+def build_device_sub_payload(error_x: int, error_y: int, dev_id: int, flags: int) -> bytes:
+    """BOMB/TARGET/HOSTAGE sub_payload (6B).
+
+    error_x/error_y: normalized ±5000 int16 LE (0 when DEV_FLAG_FOUND clear).
+    dev_id: color_id / ring_id / shape_id (0 = no target).
+    flags: DEV_FLAG_* bitmask.
+    """
+    if not (flags & DEV_FLAG_FOUND):
+        error_x = error_y = dev_id = 0
+    return (
+        clamp_error(error_x).to_bytes(2, "little", signed=True)
+        + clamp_error(error_y).to_bytes(2, "little", signed=True)
+        + bytes([dev_id & 0xFF, flags & 0xFF])
+    )
+
+
+def parse_device_sub_payload(data: bytes) -> Optional[dict]:
+    """Parse device sub_payload (6B) -> {'error_x','error_y','id','flags'}."""
+    if len(data) != 6:
+        return None
+    return {
+        "error_x": int.from_bytes(data[0:2], "little", signed=True),
+        "error_y": int.from_bytes(data[2:4], "little", signed=True),
+        "id": data[4],
+        "flags": data[5],
+    }
+
+
+def build_zone_sub_payload(error_x: int, error_y: int, flags: int) -> bytes:
+    """BUCKET/HOME sub_payload (5B): error_x(2) + error_y(2) + flags(1)."""
+    if not (flags & DEV_FLAG_FOUND):
+        error_x = error_y = 0
+    return (
+        clamp_error(error_x).to_bytes(2, "little", signed=True)
+        + clamp_error(error_y).to_bytes(2, "little", signed=True)
+        + bytes([flags & 0xFF])
+    )
+
+
+def parse_zone_sub_payload(data: bytes) -> Optional[dict]:
+    """Parse zone sub_payload (5B) -> {'error_x','error_y','flags'}."""
+    if len(data) != 5:
+        return None
+    return {
+        "error_x": int.from_bytes(data[0:2], "little", signed=True),
+        "error_y": int.from_bytes(data[2:4], "little", signed=True),
+        "flags": data[4],
+    }
+
+
+def build_device_stream_frame(seq: int, data_type: int, error_x: int, error_y: int,
+                              dev_id: int, flags: int) -> bytes:
+    """Convenience: full DATA_STREAM frame for a 6B device type."""
+    return build_data_stream_frame(seq, data_type,
+                                   build_device_sub_payload(error_x, error_y, dev_id, flags))
+
+
+def build_zone_stream_frame(seq: int, data_type: int, error_x: int, error_y: int,
+                            flags: int) -> bytes:
+    """Convenience: full DATA_STREAM frame for a 5B zone type."""
+    return build_data_stream_frame(seq, data_type,
+                                   build_zone_sub_payload(error_x, error_y, flags))

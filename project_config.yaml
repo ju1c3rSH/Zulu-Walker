@@ -12,19 +12,19 @@ cameras:
     camera_stream_queue_size: 3
 
 uart_defaults:
-  port: "/dev/ttyS4"
-  baudrate: 115200
+  port: "/dev/ttyS4"   # MaixCAM2 UART4 pins A21(TX)/A22(RX) -> panzer UART4
+  baudrate: 115200     # keep 115200: official docs warn other baud rates are unreliable
 
 ai:
   models:
     - nick_name: "yolo11n"
       model: "/root/models/steelball_640_v4.mud"
       model_type: "auto"
+    # EOD custom models go here once trained (see docs/eod/method_selection.md):
+    # - nick_name: "eod_hostage"
+    #   model: "/root/models/eod_hostage_320.mud"
+    #   model_type: "auto"
   active: "yolo11n"
-
-pendulum:
-  pixels_per_cm: 25.6
-  length_cm: 25.0
 
 streaming:
   wifi_ssid: ""

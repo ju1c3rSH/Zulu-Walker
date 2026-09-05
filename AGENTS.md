@@ -2,21 +2,32 @@
 
 ## 项目概述
 
-基于 MaixCAM2 (Axera AX630C) 的 YOLO11n 钢珠检测小车，预留视觉循迹能力，面向 2026 全国大学生电子设计竞赛（赛题未发布，目前按通用机器人平台预研）。
+基于 MaixCAM2 (Axera AX630C) 的视觉模块。**当前分支 `EOD2026-Spacial`**：2026 广东省工科大学生实验综合技能竞赛「反恐排爆救援机器人」视觉端，作为 panzer MCU（STM32F405，`F:\Engineering-competition-code-2026`）的订阅制视觉从站——MCU 发 REQUEST 切换检测任务，本端回 DATA_STREAM（颜色对准误差/二维码任务码/形状识别/HIT_CONFIRMED）。
 
 ## 核心架构
 
 ```
-app/            应用层 — Coordinator + StateMachine (赛题逻辑)
+app/            应用层 — EodCoordinator (订阅门控/流控) + StateMachine 引擎
 framework/      框架层 — HAL, EventBus, ModuleManager, StateMachine 引擎
-modules/        功能模块 — zw_opencv_module (视觉), zw_uart_module (UART)
+modules/        功能模块 — zw_opencv_module (视觉), zw_uart_module (UART 协议)
 utils/          工具库 — 日志, TUI调试台, CPU亲和性, 焦距计算
 F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读参考)
 ```
 
 - `platform: maixcam2` — 通过 HAL 抽象层注入，实现见 `framework/hal/platforms/maixcam2/`
-- 通信: UART `/dev/ttyS3` @ 115200, 协议 v2.1 (SOF+CRC16)
-- AI: `maix.nn` YOLO11 模型 (`/root/models/steelball_640.mud`)
+- 通信: UART **`/dev/ttyS4`** @ **115200**（官方警告其他波特率不可靠，勿改），协议 v3.0
+  主从订阅（AA55 + CRC16-CCITT **高字节在前**，REQUEST/ACK/NACK/STOP/DATA_STREAM）
+- 数据类型表 = EOD2026（0x01 QR_TASK / 0x02 BOMB_DEV / 0x03 TARGET_DEV / 0x04
+  HOSTAGE_DEV / 0x05 BUCKET_DEV / 0x06 HOME_DEV），与 MCU 侧
+  `F:\Engineering-competition-code-2026\docs\design.md` §2.4 逐字段对齐；
+  CMD_REQUEST 的 reserved 字节承载任务码期望 id（digit1/2/3）
+- EOD 视觉核心：`processors/eod_align_processor.py`（按订阅切模式 + 锁存语义）、
+  `processors/qr_task_processor.py`、`detectors/eod_color/`（LAB，注意 OpenMV→OpenCV
+  编码转换在 `_blobs_for_color`）、`detectors/eod_shape/`（竖直宽度剖面轮廓分类）
+- 文档：`docs/eod/method_selection.md`（选型+调研）、`docs/eod/laser_aim.md`（对准方程）、
+  `docs/eod/calibration.md`（现场标定）
+- 测试（PC 端 pytest，42 用例含两边对拍金向量）：`python -m pytest tests/`
+- AI: `maix.nn` YOLO11 模型（`/root/models/`，经 `MaixCam2AI` nick 热切换）
 - 迁移自 Orange Pi 5B，详见 `docs/migration_plan.md`
 
 ## MaixPy-main — maixcam API 参考
