@@ -217,9 +217,10 @@ def main():
     wdt_feed = _make_wdt_feed()
 
     from framework.event_bus import EventBus
-    from app.coordinator import EodCoordinator
+    from app.coordinator import GksCoordinator
+    from modules.zw_opencv_module.display import DisplayHUD
     bus = EventBus()
-    coordinator = EodCoordinator(bus)
+    coordinator = GksCoordinator(bus)
     coordinator.set_wdt_feed(wdt_feed)
 
     machine = Machine.create("project_config.yaml")
@@ -239,6 +240,7 @@ def main():
     vm = get_vision_manager()
     if vm:
         coordinator.connect_vision(vm)
+        vm.set_hud(DisplayHUD(status_fn=coordinator.get_info))
 
     uart = get_interface()
     if uart:

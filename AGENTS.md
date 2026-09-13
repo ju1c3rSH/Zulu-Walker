@@ -2,110 +2,78 @@
 
 ## 项目概述
 
-基于 MaixCAM2 (Axera AX630C) 的视觉模块。**当前分支 `EOD2026-Spacial`**：2026 广东省工科大学生实验综合技能竞赛「反恐排爆救援机器人」视觉端，作为 panzer MCU（STM32F405，`F:\Engineering-competition-code-2026`）的订阅制视觉从站——MCU 发 REQUEST 切换检测任务，本端回 DATA_STREAM（颜色对准误差/二维码任务码/形状识别/HIT_CONFIRMED）。
+基于 MaixCAM2 (Axera AX630C) 的视觉模块。**当前分支 `EOD2026-NearCam`**：2026 工科赛「反恐排爆救援机器人」**近端视觉从站**——爆炸物/靶标/人质识别，对接 **panzer_Brain**（机械臂大脑 MCU，主站）USART1 订阅制链路，协议 **panzer_links_protocol.md v2.1**（`docs/competition/gks_panzer_links_protocol_v2.1.md`，四源核对记录 `docs/competition/gks_protocol_crosscheck.md`）。
+
+> 旧 EOD2026 v3.0 协议（0x01 QR_TASK…0x06 HOME_DEV）分支已不再使用，代码保留在 `EOD2026-Spacial` 分支。
 
 ## 核心架构
 
 ```
-app/            应用层 — EodCoordinator (订阅门控/流控) + StateMachine 引擎
+app/            应用层 — GksCoordinator (v2.1 订阅门控/流控/零值心跳) 
 framework/      框架层 — HAL, EventBus, ModuleManager, StateMachine 引擎
 modules/        功能模块 — zw_opencv_module (视觉), zw_uart_module (UART 协议)
-utils/          工具库 — 日志, TUI调试台, CPU亲和性, 焦距计算
-F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读参考)
+utils/          工具库 — 日志, TUI调试台, CPU亲和性
+F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读 API 参考; 不确定的 maix API 优先查这里)
 ```
 
 - `platform: maixcam2` — 通过 HAL 抽象层注入，实现见 `framework/hal/platforms/maixcam2/`
-- 通信: UART **`/dev/ttyS4`** @ **115200**（官方警告其他波特率不可靠，勿改），协议 v3.0
-  主从订阅（AA55 + CRC16-CCITT **高字节在前**，REQUEST/ACK/NACK/STOP/DATA_STREAM）
-- 数据类型表 = EOD2026（0x01 QR_TASK / 0x02 BOMB_DEV / 0x03 TARGET_DEV / 0x04
-  HOSTAGE_DEV / 0x05 BUCKET_DEV / 0x06 HOME_DEV），与 MCU 侧
-  `F:\Engineering-competition-code-2026\docs\design.md` §2.4 逐字段对齐；
-  CMD_REQUEST 的 reserved 字节承载任务码期望 id（digit1/2/3）
-- EOD 视觉核心：`processors/eod_align_processor.py`（按订阅切模式 + 锁存语义）、
-  `processors/qr_task_processor.py`、`detectors/eod_color/`（LAB，注意 OpenMV→OpenCV
-  编码转换在 `_blobs_for_color`）、`detectors/eod_shape/`（竖直宽度剖面轮廓分类）
-- 文档：`docs/eod/method_selection.md`（选型+调研）、`docs/eod/laser_aim.md`（对准方程）、
-  `docs/eod/calibration.md`（现场标定）
-- MaixPy 加速层：`detectors/eod_color/maix_accel.py`（设备走 C++ find_blobs / NPU QRCodeDetector，PC 自动回退 cv2；开关在 eod_config.yaml `accel:` 段）
-- 测试（PC 端 pytest，48 用例含两边对拍金向量与加速层回退契约）：`python -m pytest tests/`
-- AI: `maix.nn` YOLO11 模型（`/root/models/`，经 `MaixCam2AI` nick 热切换）
-- 迁移自 Orange Pi 5B，详见 `docs/migration_plan.md`
-
-## MaixPy-main — maixcam API 参考
-
-`F:\MaixPy-main\` 是 Sipeed/MaixPy 上游固件的完整源码克隆。**任何关于 maixcam 内部 API、固件行为、编译问题，优先在此目录查找答案：**
-
-| 路径 | 内容 |
-|------|------|
-| `F:\MaixPy-main\maix/` | Python 层：`maix.__init__` (模块导出)、`maix.v1/` (v1 兼容层)、`maix.sensevoice.py` 等 |
-| `F:\MaixPy-main\components/maix/include/` | C++ 头文件：`maixpy.hpp`, `maixpy_bytes.hpp`, `convert_image.hpp`, `convert_tensor.hpp` |
-| `F:\MaixPy-main\components/maix/src/` | C++ 源码：`maixpy.cpp` (Python 绑定生成入口) |
-| `F:\MaixPy-main\components/maix/gen_api*.py` | API 绑定代码生成器 (`gen_api.py`, `gen_api_cpp.py`) |
-| `F:\MaixPy-main\main/` | 固件主入口点 (`main.cpp`, `main.h`, `CMakeLists.txt`, `Kconfig`) |
-| `F:\MaixPy-main\projects/` | 官方示例工程：`usb_video_camera`, `demo_xiaozhi_ai`, `app_vlm`, `app_rtsp`, `app_yolo_obb` 等 |
-| `F:\MaixPy-main\configs/` | 平台编译配置：`config_platform_maixcam.mk`, `config_platform_maixcam2.mk` |
-| `F:\MaixPy-main\examples/` | 使用示例：`maixpy_v1/sensor.py`, `maixpy_v1/lcd.py`, `vision/video/` |
-| `F:\MaixPy-main\maix/v1/` | MaixPy v1 兼容 API：`sensor.py`, `lcd.py`, `image.py`, `video.py`, `audio.py`, `machine/` |
-| `F:\MaixPy-main\docs/` | 官方文档：中文 API 文档 (`docs/doc/zh/vision/`, `docs/doc/zh/video/` 等) |
-| `F:\MaixPy-main\.github/workflows/` | CI 构建脚本 (`build_maixcam.yml`, `release_maixcam.yml`) |
-
-> 本项目使用的 `maix.*` 模块（`maix.camera`, `maix.display`, `maix.nn`, `maix.peripheral.uart`, `maix.image`, `maix.sys` 等）均定义在 MaixPy 固件的 C++ 层，通过 `pybind11` 绑定导出。若在官方文档找不到某个 API 的用法，可以直接搜索 `F:\MaixPy-main\` 源码中的调用示例。
+- 通信: UART **`/dev/ttyS4`** @ **115200**（官方警告其他波特率不可靠，勿改），UART4 引脚 A21(TX)/A22(RX) → Brain USART1
+- 协议 v2.1（帧格式与 serial_protocol C 库逐字节一致）:
+  - 帧型 0x20 REQUEST / 0x21 ACK / 0x22 NACK / 0x23 STOP / 0x24 DATA_STREAM；
+    CRC16-CCITT 高字节在前；payload 恒 10B = seq + data_id + 8B 子载荷
+  - data_id: 0x01 EXPLOSIVE / 0x02 TARGET / 0x03 RESCUE（0x10 QR 属远端，回 NACK）
+  - 5B 订阅帧携带任务码（爆色/靶色/形状）；短帧 = 幂等重订阅不清锁存
+  - 订阅期**零值心跳不断流**（Brain 1s stale 判定硬要求）
+  - 解析器 = C `Protocol_ParserFeed` 四态状态机 1:1 移植（`zw_uart_module/parser.py`），
+    含 AA-AA-55 重同步与坏帧整帧丢弃
+- 近端视觉核心: `processors/gks_task_processor.py`（EXPLOSIVE/TARGET/RESCUE 单激活,
+  识别逻辑照搬 `F:\2026工科赛\maixcam\工科赛上端\main.py` task1/2/3: 三色同帧排序 +
+  两帧同序锁存 + `pit_left_is_1` 镜像开关 + 归一化误差定点 ×10000）
+- 显示 HUD: `modules/zw_opencv_module/display/hud.py`（状态栏/检测叠加/锁存进度,
+  不依赖 AI 模型加载）
+- MaixPy 加速层: `detectors/eod_color/maix_accel.py`（设备走 C++ find_blobs, PC 自动回退
+  cv2; 开关在 eod_config.yaml `accel:` 段）
+- AI: `nn.YOLO11` 人质模型 `eod_hostage`（/root/models/eod_hostage_320.mud, 仓库副本
+  `assets/models/hostage_yolo11n/`, 源自 人质yolo11n pulsar2 AX620E 转换链）,
+  经 `MaixCam2AI` nick 热切换; 缺失时 RESCUE 回 NACK NOT_READY 不崩溃
+- 阈值: `eod_config.yaml` `gks:` 段 + 运行时覆盖文件 `/my-threshold/my_64threshold.txt`
+  （mtime 变化热重载不清锁存）; 设备端调参器 `python run.py debug color`（触屏 GUI）
+- 测试（PC 端 pytest, 74 用例）: `python -m pytest tests/`
+  - `test_protocol_gks.py`: C 自测向量移植 + md §6 业务向量 + Brain interrupt.c 消费偏移对拍
+  - `test_gks_task_processor.py` / `test_coordinator_gks.py`: 照搬逻辑行为等价 + 订阅语义
 
 ## 关键文件
 
 | 文件 | 作用 |
 |------|------|
-| `app/main.py` | 应用入口，初始化 Machine/ModuleManager/Coordinator |
-| `app/coordinator.py` | LineFollowCoordinator，桥接视觉→UART |
-| `app/mission_state_machine.py` | 竞赛任务状态机 (34 个状态) |
+| `app/main.py` | 应用入口，初始化 Machine/ModuleManager/Coordinator/HUD |
+| `app/coordinator.py` | GksCoordinator，v2.1 订阅门控 + 流控 + 零值心跳 |
+| `modules/zw_uart_module/protocol.py` | v2.1 协议定义（帧型/data_id/子载荷 builders） |
+| `modules/zw_uart_module/parser.py` | C 协议解析器 1:1 移植（四态状态机 + 统计） |
+| `modules/zw_uart_module/uart_driver.py` | UART 收发 + 从站帧分发 |
+| `modules/zw_opencv_module/processors/gks_task_processor.py` | 三任务处理器（照搬 main.py 逻辑） |
+| `modules/zw_opencv_module/debug/threshold_tuner.py` | 设备端 LAB 阈值调参器（触屏） |
+| `modules/zw_opencv_module/display/hud.py` | 显示 HUD |
 | `framework/hal/machine.py` | 依赖注入容器，读取 `project_config.yaml` 创建平台实例 |
-| `framework/hal/platforms/maixcam2/` | MaixCAM2 平台实现 (camera, display, uart, ai) |
 | `modules/zw_opencv_module/vision_manager.py` | 视觉管道管理器 (Pipeline → Task → Processor) |
-| `modules/zw_uart_module/uart_driver.py` | UART FrameParser 状态机 (CRC16) |
-| `modules/zw_uart_module/protocol.py` | 协议 v2.1 定义 (帧类型, VisualFlags) |
-| `run.py` | 启动器 (main / debug 模式) |
-| `project_config.yaml` | 平台/摄像头/AI 模型配置 |
-
-## 已知待改善
-
-- `vision_manager.py` `_update_display_frame` 已改为复用 `pipe.last_results` 缓存的检测结果（commit 5909600），NPU 推理从 2 次/帧降至 1 次/帧。有效推理结果已走 pipeline cv2 帧，而 `detect()` 内部的 `draw_seg_mask`（MaixPy Image 上画 seg mask 叠加）只在 pipeline 的 display 帧输出中绘制，LCD 端 `_update_display_frame` 不会再调 `draw_seg_mask`。LCD 仅显示 bbox + 标签 + mask 中心红点。
-- `segmentation.py` SegmentationHandler 注册 key 为 `"yolo_seg"`，但 `project_config.yaml` 中 seg 模型用 `model_type: "auto"` → handler 查找 fallback 到 DefaultHandler，cv2 离线帧不会叠加 seg mask 彩色填充。若需离线流 mask 叠加，可将 `project_config.yaml` 中 `plate_seg` 条目的 `model_type` 改为 `"yolo_seg"`，或修改 handler 注册/查找逻辑。
-
-## 赛题文档（2026 电子设计竞赛 H 题）
-
-`docs/competition/extracted/H题_车载平衡滚球运动控制系统.md` — 2026 年全国大学生电子设计竞赛 H 题（车载平衡滚球运动控制系统）的完整题目文档，提取自官方 DOCX + PDF，含所有文字要求、评分标准和嵌入图片。**Agent 在实现赛题逻辑前应先读取此文档**，理解任务要求（循迹、摆杆控球、图传等）。
-
-提取脚本：`docs/competition/extract_docs.py`，可复用解析同类文档。
-
-## 已过时/需注意的信息
-
-- TODO 中多项已标记 ✅ 修复: `cargo_confirmed` 死锁、`build_visual_servo_data_frame` float 问题、OpenCL 分散调用、未使用 VisualFlags
-- `docs/migration_plan.md` 描述的迁移方案已基本完成，部分细节可能滞后于实际代码
-- `modules/zw_opencv_module/processors/` 中多个处理器（`cargo_processor`, `circle_target_processor`, `ring_discovery_processor`, `qr_processor`, `ai_inference_processor`）已被 `app.yaml` exclude，但代码仍保留在仓库中
 
 ## 开发命令
 
 ```bash
 python run.py main                    # 运行主程序
-python run.py debug cargo             # 物料块检测调试
-python run.py debug circle            # 圆靶检测调试
-python run.py debug ring              # 环检测调试
-python run.py debug line              # 黑线循迹调试
-## 完整项目上下文
-
-`PROJECT_CONTEXT.md` 包含完整的项目上下文（目录结构、架构细节、线程模型、数据流、配置、已知陷阱、关键技术细节等），**其他 Agent 应优先读取该文件**以避免重复探索。
-
-## 开发命令
-
-```bash
-python run.py main                    # 运行主程序
-python run.py debug cargo             # 物料块检测调试
-python run.py debug circle            # 圆靶检测调试
-python run.py debug ring              # 环检测调试
-python run.py debug line              # 黑线循迹调试
+python run.py debug color             # 设备端 LAB 阈值调参（触屏, 写 /my-threshold）
+python -m pytest tests/               # PC 端测试
 # 编译检查 (Windows)
-python -c "import py_compile; py_compile.compile('app/main.py', doraise=True)"
-python -c "import py_compile; py_compile.compile('framework/hal/machine.py', doraise=True)"
-# 导入检查
-python -c "from framework.hal import Machine; print('OK')"
+python -c "import py_compile; py_compile.compile('app/coordinator.py', doraise=True)"
 ```
+
+## 已知边界 / 注意事项
+
+- 相机 640×480（与旧上端 main.py 标定几何一致）; `gks.target.roi` 等像素常量全部
+  进配置，现场标定后覆盖。
+- 旧版 `obj.x>240` 人质右 1/4 裁切（审查 P1-4）默认关闭（`gks.rescue.x_crop_px: 0`），
+  台架复现旧行为可设像素值。
+- 主站静默 >5s 自动 idle（`GksCoordinator._CMD_TIMEOUT`）; Brain 活跃时 1s 重订阅不会触发。
+- `app/line_follow_sm.py`、`processors/cargo_processor.py` 等遗留文件未删除但不参与
+  流水线（vision_config.yaml 只注册 GksTaskProcessor）。
+- 台架部署/验证清单: `docs/competition/gks_bench_checklist.md`。

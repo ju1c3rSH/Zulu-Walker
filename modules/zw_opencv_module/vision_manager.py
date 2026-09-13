@@ -26,9 +26,6 @@ _module_dir = os.path.dirname(__file__)
 
 
 class VisionManager:
-    _DISPLAY_TEXT_SCALE = 3.0
-    _DISPLAY_TEXT_THICKNESS = 2
-
     def __init__(self, camera_hub: CameraHub, config_path: str = None, ai: Optional[AIInference] = None) -> None:
         self._hub = camera_hub
         self._config_path = config_path or os.path.join(
@@ -36,6 +33,7 @@ class VisionManager:
         )
         self._pipelines: Dict[str, PipelineCamera] = {}
         self._ai = ai
+        self._hud = None
         self._running = False
         self._process_thread: Optional[Thread] = None
         self._result_callbacks: List[Callable[[Dict], None]] = []
@@ -188,19 +186,14 @@ class VisionManager:
         return self._display_frame
 
     def _update_display_frame(self) -> None:
-        if not self._ai or not self._ai.loaded:
-            return
+        # 显示不依赖 AI 模型加载（色块任务无模型也须可显示）
         for pid, pipe in list(self._pipelines.items()):
             raw_img = getattr(pipe.camera, "last_raw", None)
             if raw_img is None:
                 continue
             fps = self.get_pipeline_fps(pid)
-            ai_result = pipe.last_results.get("ai_inference")
-            detections = []
-            if ai_result is not None and ai_result.success:
-                detections = ai_result.result_data.get("detections", [])
-
-            self._draw_overlays(raw_img, pid, fps, detections)
+            if self._hud is not None:
+                self._hud.draw(raw_img, fps, pipe.last_results)
             self._draw_exit_icon(raw_img)
             self._display_frame = raw_img
             self._capture_seq += 1
@@ -208,103 +201,9 @@ class VisionManager:
                 self._capture_sink(raw_img)
             return
 
-    def _draw_overlays(self, img, pipeline_id: str, fps: float, detections) -> None:
-        try:
-            import maix.image
-        except ImportError:
-            return
-
-        self._draw_header(img, pipeline_id, fps)
-        self._draw_detections(img, detections, maix.image)
-
-    def _draw_header(self, img, pipeline_id: str, fps: float) -> None:
-        try:
-            import maix.image
-        except ImportError:
-            return
-        hdr_line = f"{pipeline_id}  FPS:{fps:.1f}"
-        bar_h = 28
-        try:
-            img.draw_rect(0, 0, img.width(), bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
-        except Exception:
-            pass
-        try:
-            img.draw_string(6, 4, hdr_line, color=maix.image.COLOR_WHITE, scale=2.0, thickness=2)
-        except Exception:
-            pass
-
-    def _draw_detections(self, img, detections, maix_image) -> None:
-        labels = self._ai.labels if hasattr(self._ai, "labels") and self._ai.labels else []
-
-        for det in detections:
-            x1, y1 = det.x, det.y
-            x2 = x1 + det.w
-            y2 = y1 + det.h
-
-            label_text = (
-                labels[det.class_id]
-                if det.class_id < len(labels)
-                else str(det.class_id)
-            )
-            text = f"{label_text}:{det.score:.2f}"
-
-            try:
-                size = maix_image.string_size(text, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
-                tw, th = size[0], size[1]
-            except Exception:
-                tw, th = 80, 24 * 3
-
-            bar_h = th + 6
-            label_y = y1 - bar_h
-            if label_y < 0:
-                label_y = y1
-
-            try:
-                img.draw_rect(x1, label_y, tw + 8, bar_h, color=maix_image.COLOR_BLACK, thickness=-1)
-            except Exception:
-                pass
-            try:
-                img.draw_rect(x1, y1, det.w, det.h, color=maix_image.COLOR_GREEN, thickness=3)
-            except Exception:
-                pass
-            try:
-                img.draw_string(x1 + 4, label_y + 2, text, color=maix_image.COLOR_WHITE, scale=self._DISPLAY_TEXT_SCALE, thickness=3)
-            except Exception:
-                pass
-
-            if det.mask_stats is not None:
-                self._draw_mask_center(img, det)
-                self._draw_area_text(img, det, y2, maix_image)
-
-    @staticmethod
-    def _draw_area_text(img, det, y_below, maix_image) -> None:
-        stats = det.mask_stats
-        if stats is None or stats.area_px == 0:
-            return
-        text = f"area:{stats.area_px}px"
-        try:
-            img.draw_string(det.x, y_below + 4, text, color=maix_image.COLOR_YELLOW, scale=1.5, thickness=2)
-        except Exception:
-            pass
-
-    @staticmethod
-    def _draw_mask_center(img, det) -> None:
-        try:
-            import maix.image
-        except ImportError:
-            return
-        stats = det.mask_stats
-        if stats is None or stats.area_px == 0:
-            return
-        cx = int(stats.center_x)
-        cy = int(stats.center_y)
-        try:
-            img.draw_circle(cx, cy, 3, color=maix.image.COLOR_RED, thickness=-1)
-        except Exception:
-            try:
-                img.draw_rect(cx - 2, cy - 2, 5, 5, color=maix.image.COLOR_RED, thickness=-1)
-            except Exception:
-                pass
+    def set_hud(self, hud) -> None:
+        """注入显示 HUD（状态栏 + 检测叠加）; None = 只画退出图标。"""
+        self._hud = hud
 
     def _draw_exit_icon(self, img) -> None:
         if self._exit_icon is None:

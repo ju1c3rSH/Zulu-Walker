@@ -56,23 +56,35 @@ def maix_image_from_context(context: Optional[dict]):
 
 def find_blobs_maix(img, thresholds: list, roi=None,
                     area_threshold: int = 400,
-                    pixels_threshold: int = 100) -> Optional[list]:
+                    pixels_threshold: int = 100,
+                    merge: bool = False) -> Optional[list]:
     """C++ find_blobs on a raw maix Image.
 
     Returns plain dicts {x, y, w, h, cx, cy, pixels} (device-safe across
     maix versions) or None when maix/img unavailable (caller falls back
     to the cv2 path).
+
+    `merge` (merge overlapping blobs, OpenMV convention) is attempted first
+    and dropped gracefully when the firmware build does not accept the kwarg
+    (official docs only pin thresholds/invert/roi/area_threshold/pixels_threshold).
     """
     if not _HAVE_MAIX or img is None:
         return None
     try:
-        blobs = img.find_blobs(
-            thresholds=[list(thresholds)],
+        kwargs = dict(
             invert=False,
             roi=list(roi) if roi else None,
             area_threshold=area_threshold,
             pixels_threshold=pixels_threshold,
         )
+        if merge:
+            try:
+                blobs = img.find_blobs(thresholds=[list(thresholds)],
+                                       merge=True, margin=1, **kwargs)
+            except TypeError:
+                blobs = img.find_blobs(thresholds=[list(thresholds)], **kwargs)
+        else:
+            blobs = img.find_blobs(thresholds=[list(thresholds)], **kwargs)
     except Exception as e:
         logger.warning("find_blobs_maix failed, falling back to cv2: %s", e)
         return None

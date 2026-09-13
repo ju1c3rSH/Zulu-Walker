@@ -7,24 +7,23 @@ cameras:
   - camera_id: "main"
     source: null
     width: 640
-    height: 640
+    height: 480   # 与旧上端 main.py 标定几何一致（坑位 ROI/误差中心按 640 宽标定）
     fps: 60
     camera_stream_queue_size: 3
 
 uart_defaults:
-  port: "/dev/ttyS4"   # MaixCAM2 UART4 pins A21(TX)/A22(RX) -> panzer UART4
+  port: "/dev/ttyS4"   # MaixCAM2 UART4 pins A21(TX)/A22(RX) -> Brain USART1
   baudrate: 115200     # keep 115200: official docs warn other baud rates are unreliable
 
 ai:
   models:
-    - nick_name: "yolo11n"
-      model: "/root/models/steelball_640_v4.mud"
+    # 人质形状 YOLO11n (yao_gu/yuan_zhu/yuan_tai @320, pulsar2 AX620E)
+    # 仓库副本: assets/models/hostage_yolo11n/ -> 部署时拷到 /root/models/
+    # （台架: cp /maixapp/apps/gks_nearcam/assets/models/hostage_yolo11n/* /root/models/）
+    - nick_name: "eod_hostage"
+      model: "/root/models/eod_hostage_320.mud"
       model_type: "auto"
-    # EOD custom models go here once trained (see docs/eod/method_selection.md):
-    # - nick_name: "eod_hostage"
-    #   model: "/root/models/eod_hostage_320.mud"
-    #   model_type: "auto"
-  active: "yolo11n"
+  active: "eod_hostage"
 
 streaming:
   wifi_ssid: ""

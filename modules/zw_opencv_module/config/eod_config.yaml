@@ -51,3 +51,37 @@ eod:
     lock_frames: 15                 # stable frames before hit-arming
     hit_lost_frames: 12             # lost frames after lock that count as a fall
     hit_area_ratio: 0.45            # area collapse ratio that counts as a fall
+
+  # =====================================================================
+  # 工科赛近端三任务（GksTaskProcessor）— 识别逻辑照搬 工科赛上端 main.py
+  # =====================================================================
+  gks:
+    pit_left_is_1: true   # True=画面左(小x)=坑1; 摄像头镜像/背装导致左右相反时改 false
+    pit_latch_frames: 2   # 连续 N 帧左右序一致才锁存坑位（main.py 硬编码 2）
+    # 脱机调阈值工具产出的运行时阈值文件（组序: 0..2 爆红/爆绿/爆蓝, 3..5 靶红/靶绿/靶蓝）;
+    # 文件 mtime 变化自动重载且不清锁存。置空 "" 可禁用文件覆盖。
+    thresholds_file: /my-threshold/my_64threshold.txt
+    explosive:            # 0x01 爆炸物: 三色 find_blobs（main.py 像素阈值原值）
+      pixels_threshold: 10000
+      area_threshold: 10000
+      lab:                # 兜底阈值（阈值文件缺失时用; 现场标定后覆盖）
+        red:   [0, 80, 40, 80, 10, 80]
+        green: [0, 80, -120, -10, 0, 30]
+        blue:  [0, 80, 30, 100, -120, -60]
+    target:               # 0x02 靶标: ROI 内最大色块 -> 归一化误差
+      pixels_threshold: 1000
+      area_threshold: 1000
+      merge: true
+      roi: [0.0, 0.352, 1.0, 0.763]   # 帧比例 (x0,y0,x1,y1) = main.py [0,169,640,197] @640x480
+      lab:
+        red:   [0, 80, 40, 80, 10, 80]
+        green: [0, 80, -120, -10, 0, 30]
+        blue:  [0, 80, 30, 100, -120, -60]
+    rescue:               # 0x03 人质: YOLO11n(axmodel) 三形状坑位
+      conf_th: 0.7        # main.py 原值
+      iou_th: 0.45        # main.py 原值
+      x_crop_px: 0        # 旧版 obj.x>240(cam1 320宽) 过滤; 0=关闭; 台架复现旧行为可设像素值
+      labels:             # model.mud labels: yao_gu, yuan_zhu, yuan_tai -> 形状号
+        yuan_zhu: 1
+        yuan_tai: 2
+        yao_gu: 3

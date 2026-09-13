@@ -9,7 +9,6 @@ import pytest
 
 from modules.zw_opencv_module.detectors.eod_color import maix_accel
 from modules.zw_opencv_module.detectors.eod_color import EodColorDetector
-from modules.zw_opencv_module.processors.qr_task_processor import QrTaskProcessor
 
 pytest.importorskip("cv2")
 
@@ -18,6 +17,11 @@ def test_find_blobs_maix_unavailable_on_pc():
     assert maix_accel.find_blobs_maix(None, [0, 80, 40, 80, 10, 80]) is None
     # even with an img argument, no maix module -> None (caller falls back)
     assert maix_accel.find_blobs_maix(object(), [0, 80, 40, 80, 10, 80]) is None
+
+
+def test_find_blobs_maix_merge_kwarg_unavailable_on_pc():
+    # merge 路径同样优雅降级（v2.1 工科赛分支新增参数）
+    assert maix_accel.find_blobs_maix(None, [0, 80, 40, 80, 10, 80], merge=True) is None
 
 
 def test_qr_helpers_unavailable_on_pc():
@@ -42,21 +46,3 @@ def test_detector_with_maix_img_none_uses_cv2_path():
         min_area_px=100)
     result = det.detect(frame, maix_img=None)
     assert result.target_found and result.dev_id == 1
-
-
-def test_qr_processor_npu_engine_falls_back_to_cv2_on_pc(tmp_path=None):
-    """engine='npu' with no maix available must still decode via cv2."""
-    proc = QrTaskProcessor(name="qr_task", engine="npu")
-    assert proc._engine == "npu"
-    frame = np.zeros((240, 240, 3), dtype=np.uint8)
-    result = proc.process(frame, context=None)   # no camera in context
-    assert result.result_data["decoded"] is False   # no QR in a blank frame
-    assert result.result_data["engine"] == "npu"
-
-
-def test_qr_processor_cv2_engine_never_touches_maix():
-    proc = QrTaskProcessor(name="qr_task", engine="cv2")
-    frame = np.zeros((240, 240, 3), dtype=np.uint8)
-    result = proc.process(frame, context=None)
-    assert result.result_data["decoded"] is False
-    assert result.result_data["engine"] == "cv2"

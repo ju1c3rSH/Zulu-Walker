@@ -1,138 +1,100 @@
 # -*- coding: utf-8 -*-
 """
-zw_uart_module - Protocol definitions
+zw_uart_module - 2026 工科赛协议定义 (panzer_links_protocol.md v2.1)
 
-Defines protocol constants, frame building, and parsing functions for
-UART communication between Orange Pi and STM32.
+本分支 = 近端 MaixCAM 视觉从站（USART1，Brain 主站订阅制）。
 
-Protocol Frame Structure (v3.0, EOD2026):
+帧结构（与 F:\\2026工科赛\\serial_protocol\\protocol.c 逐字节一致）:
 | SOF1 | SOF2 | Length | Type | Payload | CRC16_HI | CRC16_LO |
 |  1   |  1   |   1    |  1   |  0~252  |    1     |    1     |
 
-- SOF1: Start of Frame byte 1, fixed 0xAA
-- SOF2: Start of Frame byte 2, fixed 0x55
-- Length: Bytes from Type to CRC16 (Type + Payload + CRC16)
-- Type: Frame type identifier
-- Payload: Variable length data
-- CRC16: CRC16-CCITT (poly 0x1021, init 0xFFFF) of Type to Payload bytes,
-  transmitted HIGH byte first (big-endian). Multi-byte payload fields are
-  little-endian signed int16 unless noted.
+- SOF1/SOF2: 0xAA / 0x55
+- Length = Type + Payload + CRC16 = n + 3，有效范围 3~255
+- CRC16-CCITT: poly 0x1021, init 0xFFFF, 不反射, 无终异或,
+  计算 Type..Payload 末字节, 高字节在前（大端）发送
+- Payload 内多字节字段一律小端（有符号为补码）
 
-EOD2026 data-type table (must stay in sync with panzer MCU docs/design.md §2.4):
-| data_type | name        | sub_payload                                        |
-|-----------|-------------|----------------------------------------------------|
-| 0x01      | QR_TASK     | flags(1) + len(1) + ascii(18)                      |
-| 0x02      | BOMB_DEV    | error_x(2) + error_y(2) + color_id(1) + flags(1)   |
-| 0x03      | TARGET_DEV  | error_x(2) + error_y(2) + ring_id(1) + flags(1)    |
-| 0x04      | HOSTAGE_DEV | error_x(2) + error_y(2) + shape_id(1) + flags(1)   |
-| 0x05      | BUCKET_DEV  | error_x(2) + error_y(2) + flags(1)                 |
-| 0x06      | HOME_DEV    | error_x(2) + error_y(2) + flags(1)                 |
+帧类型（四源核对：md v2.1 ↔ serial_protocol/protocol.c ↔ panzer/GetData
+↔ panzer_Brain/Middlewares/serial_protocol + interrupt.c 实际用法）:
+| 0x20 | CMD_REQUEST | 主→从 | [data_id, min_interval_ms, 爆色, 靶色, 形状] |
+| 0x21 | CMD_ACK     | 从→主 | [data_id, max_freq_hz, payload_size]        |
+| 0x22 | CMD_NACK    | 从→主 | [data_id, reason]                           |
+| 0x23 | CMD_STOP    | 主→从 | 空                                          |
+| 0x24 | DATA_STREAM | 从→主 | [seq, data_id, sub_payload(8B)]             |
 
-CMD_REQUEST reserved byte (3rd payload byte) carries the expected task-code id:
-digit1 for BOMB_DEV, digit2 for TARGET_DEV, digit3 for HOSTAGE_DEV, 0 otherwise.
-Vision latches DEV_FLAG_MATCH only when detected id == expected id.
+订阅语义（USART1 v1.3 扩展）:
+- 5B 完整订阅帧携带任务码（爆色/靶色/形状 随订阅下发）;
+- 短帧(1~4B) = 重订阅，沿用上次任务码（幂等，不得清视觉锁存）;
+- 换 data_id 或换任务码才允许清锁存（reset_task_latch）。
+- ACK 字面 [data_id, 60, 10]（Brain on_cam1 不消费 ACK，照发保协议一致性）。
+
+data_id 表（USART1 近端只支持 0x01~0x03，其余回 NACK [did, 0x01]）:
+| 0x01 | DATA_EXPLOSIVE | [cx u16LE, pit 0~3, flags bit0=found, rsv x4]     |
+| 0x02 | DATA_TARGET    | [err i16LE, flags bit0=found, rsv x5]             |
+| 0x03 | DATA_RESCUE    | [pos 0~3, flags bit0=found, rsv x6]               |
+
+0x02 err = horizontal_error_normalized_fixed = int((cx - w/2)/(w/2) * 10000)，
+clamp ±1 后定点化（ Brain TRACKING_ERROR_FIXED_SCALE = 10000 透传底盘闭环）。
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 
 # Protocol constants
 SOF1 = 0xAA
 SOF2 = 0x55
 
-# Frame types
-TYPE_ERROR = 0x01               # Bidirectional: error_type(1B) + error_value(2B, int16 LE)
-TYPE_HEARTBEAT = 0x15           # [DEPRECATED] Bidirectional: seq + mission_state + visual_state
-TYPE_VISUAL_SERVO_DATA = 0x17   # [DEPRECATED] Orange Pi -> MCU: error_x(2B) + error_y(2B) + flags(1B) + state(1B)
-TYPE_EMERGENCY_STOP = 0x18      # Bidirectional: reason(1B)
-
-# === Master-Slave protocol v3.0 ===
-TYPE_CMD_REQUEST     = 0x20  # Master -> Slave: request data stream subscription
-TYPE_CMD_ACK         = 0x21  # Slave -> Master: acknowledge subscription
-TYPE_CMD_NACK        = 0x22  # Slave -> Master: reject subscription
-TYPE_CMD_STOP        = 0x23  # Master -> Slave: stop data stream
-TYPE_DATA_STREAM     = 0x24  # Slave -> Master: streaming data frame
-
-# === Ping-Pong (link heartbeat) ===
-TYPE_PING            = 0x25  # Master -> Slave: 保活探测
-TYPE_PONG            = 0x26  # Slave -> Master: 保活应答
+# === Frame types (v2.1, 无 PING/PONG) ===
+TYPE_CMD_REQUEST  = 0x20  # Master -> Slave: 订阅/切任务
+TYPE_CMD_ACK      = 0x21  # Slave -> Master: 订阅应答
+TYPE_CMD_NACK     = 0x22  # Slave -> Master: 拒绝
+TYPE_CMD_STOP     = 0x23  # Master -> Slave: 停止推送
+TYPE_DATA_STREAM  = 0x24  # Slave -> Master: 数据流
 
 # NACK reasons
 NACK_UNSUPPORTED_TYPE = 0x01
 NACK_NOT_READY        = 0x02
-NACK_BUSY             = 0x03
 
-# === EOD2026 data stream types (for CMD_REQUEST.data_type) ===
-DATA_QR_TASK     = 0x01   # QR task code: flags + len + ascii(18)
-DATA_BOMB_DEV    = 0x02   # bomb block alignment (color per digit1)
-DATA_TARGET_DEV  = 0x03   # laser target alignment (rings 8/9/10, HIT_CONFIRMED)
-DATA_HOSTAGE_DEV = 0x04   # hostage alignment (shape per digit3)
-DATA_BUCKET_DEV  = 0x05   # black EOD bucket alignment (bomb placement)
-DATA_HOME_DEV    = 0x06   # return-zone alignment (hostage placement)
+# === data_id 表（本端支持的三个视觉任务）===
+DATA_EXPLOSIVE = 0x01   # 爆炸物坑位识别
+DATA_TARGET    = 0x02   # 靶标横向误差
+DATA_RESCUE    = 0x03   # 人质坑位识别
 
-# Device flags bitmask (bit layout shared by all device streams)
-DEV_FLAG_FOUND = 0x01   # bit0 TARGET_FOUND — vision-side latch; error/id fields are 0 when clear
-DEV_FLAG_MATCH = 0x02   # bit1 COLOR_MATCH / SHAPE_MATCH — detected id == task-code id
-DEV_FLAG_READY = 0x04   # bit2 READY_TO_PICK(0x02) / HIT_CONFIRMED(0x03) / READY_TO_PLACE(0x05/0x06)
+SUPPORTED_DATA_IDS = (DATA_EXPLOSIVE, DATA_TARGET, DATA_RESCUE)
 
-# color_id / shape_id encodings (match the QR task-code digits)
-ID_NONE = 0
+DATA_ID_NAMES: dict[int, str] = {
+    DATA_EXPLOSIVE: "EXPLOSIVE",
+    DATA_TARGET:    "TARGET",
+    DATA_RESCUE:    "RESCUE",
+}
+
+# data_id -> sub_payload 恒 8B; DATA_STREAM payload 恒 10B = seq + data_id + 8B
+SUB_PAYLOAD_SIZE = 8
+DATA_STREAM_PAYLOAD_LENGTH = 10
+
+# ACK 字面值（main.py / 协议文档 §2: [did, 60, 10]）
+ACK_MAX_FREQ_HZ = 60
+ACK_PAYLOAD_SIZE = DATA_STREAM_PAYLOAD_LENGTH
+
+# 0x02 误差定点系数（Brain interrupt.h TRACKING_ERROR_FIXED_SCALE）
+TARGET_ERROR_SCALE = 10000
+TARGET_ERROR_LIMIT = TARGET_ERROR_SCALE   # 归一化 clamp ±1
+
+# 任务码编码（二维码任务码数字域）
+COLOR_NONE = 0
 COLOR_RED, COLOR_GREEN, COLOR_BLUE = 1, 2, 3
-SHAPE_CYLINDER, SHAPE_CONE, SHAPE_WAIST_DRUM = 1, 2, 3
-RING_NONE = 0   # ring_id: 0=no target, else 8/9/10
+SHAPE_NONE = 0
+SHAPE_CYLINDER, SHAPE_CONE, SHAPE_WAIST_DRUM = 1, 2, 3   # yuan_zhu / yuan_tai / yao_gu
 
-# Payload sizes for each data type (None = variable length)
-# Total TYPE_DATA_STREAM payload size (seq + data_type + sub_payload)
-DATA_PAYLOAD_SIZES = {
-    DATA_QR_TASK:     20,
-    DATA_BOMB_DEV:    6,
-    DATA_TARGET_DEV:  6,
-    DATA_HOSTAGE_DEV: 6,
-    DATA_BUCKET_DEV:  5,
-    DATA_HOME_DEV:    5,
-}
+# 订阅帧长度: 5 = 完整(带任务码), 1~4 = 重订阅(沿用旧任务码)
+SUBSCRIBE_FULL_LEN = 5
+MIN_INTERVAL_MS = 30   # push_ok 下限（main.py: max(interval, 30)）
 
-SUPPORTED_DATA_TYPES = set(DATA_PAYLOAD_SIZES.keys())
-
-DATA_TYPE_NAMES: dict[int, str] = {
-    DATA_QR_TASK:     "QR_TASK",
-    DATA_BOMB_DEV:    "BOMB_DEV",
-    DATA_TARGET_DEV:  "TARGET_DEV",
-    DATA_HOSTAGE_DEV: "HOSTAGE_DEV",
-    DATA_BUCKET_DEV:  "BUCKET_DEV",
-    DATA_HOME_DEV:    "HOME_DEV",
-}
-
-# Subscription -> align processor mode (coordinator gating)
-DATA_TYPE_MODES: dict[int, str] = {
-    DATA_BOMB_DEV:    "BOMB",
-    DATA_TARGET_DEV:  "TARGET",
-    DATA_HOSTAGE_DEV: "HOSTAGE",
-    DATA_BUCKET_DEV:  "BUCKET",
-    DATA_HOME_DEV:    "HOME",
-}
-
-ERROR_MIN = -5000
-ERROR_MAX = 5000
-
-NACK_REASON_NAMES: dict[int, str] = {
-    NACK_UNSUPPORTED_TYPE: "UNSUPPORTED_TYPE",
-    NACK_NOT_READY:        "NOT_READY",
-    NACK_BUSY:             "BUSY",
-}
-
-
-# Error types for TYPE_ERROR
-ERROR_TYPE_X = 0            # X direction error
-ERROR_TYPE_Y = 1            # Y direction error
-ERROR_TYPE_Z = 2            # Z direction error
-ERROR_TYPE_OTHER = 3        # Other error
-
-# Frame size limits
-MIN_FRAME_SIZE = 6          # SOF1 + SOF2 + Length + Type + CRC16 (no payload)
-MAX_FRAME_SIZE = 258        # SOF1 + SOF2 + Length + Type + 252 payload + CRC16
-MAX_PAYLOAD_SIZE = 252      # Limited by Length field: Length(1+252+2) ≤ 255
+# Frame size limits (protocol.h: PROTOCOL_MIN_LEN/MAX_PAYLOAD/MAX_FRAME)
+MIN_FRAME_SIZE = 6          # SOF1 + SOF2 + Length + Type + CRC16 (空 Payload)
+MAX_FRAME_SIZE = 258        # SOF(2) + Length(1) + Body(255)
+MAX_PAYLOAD_SIZE = 252      # Length 上限 255: Type + Payload + CRC16
 
 
 @dataclass
@@ -154,6 +116,7 @@ def _build_crc16_table() -> list[int]:
         table.append(crc)
     return table
 
+
 _CRC16_TABLE = _build_crc16_table()
 
 def crc16_ccitt(data: bytes, init: int = 0xFFFF) -> int:
@@ -165,7 +128,10 @@ def crc16_ccitt(data: bytes, init: int = 0xFFFF) -> int:
 
 
 def _build_frame(frame_type: int, payload: bytes) -> bytes:
-    """Build a standard SOF1/SOF2/Length/Type/Payload/CRC16 frame."""
+    """Build a standard SOF1/SOF2/Length/Type/Payload/CRC16 frame.
+
+    Length = Type + Payload + CRC16 = n + 3 (protocol.c Protocol_EncodeFrame).
+    """
     content = bytes([frame_type]) + payload
     checksum = crc16_ccitt(content)
     length = len(content) + 2  # Type + Payload + CRC16(2 bytes)
@@ -197,151 +163,58 @@ def parse_frame(data: bytes) -> Optional[FrameData]:
     return FrameData(frame_type=frame_type, payload=payload)
 
 
-def build_error_frame(error_type: int, error_value: int) -> bytes:
-    """
-    Build an error frame for sending to STM32.
+# === Frame builders (slave -> master) ===
 
-    Args:
-        error_type: Error type (0=X, 1=Y, 2=Z, 3=Other)
-        error_value: Error value (int16, -32768~32767)
-
-    Returns:
-        Complete frame bytes ready to send
-
-    Raises:
-        ValueError: If parameters are out of range
-    """
-    if not 0 <= error_type <= 3:
-        raise ValueError(f"error_type must be 0-3, got {error_type}")
-    if not -32768 <= error_value <= 32767:
-        raise ValueError(f"error_value must be -32768~32767, got {error_value}")
-
-    payload = bytes([error_type]) + error_value.to_bytes(2, byteorder='little', signed=True)
-    return _build_frame(TYPE_ERROR, payload)
-
-
-def build_heartbeat_frame(seq: int, mission_state: int, visual_state: int) -> bytes:
-    """Build TYPE_HEARTBEAT frame."""
-    return _build_frame(TYPE_HEARTBEAT, bytes([seq, mission_state, visual_state]))
-
-
-def parse_heartbeat_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_HEARTBEAT payload -> (seq, mission_state, visual_state)."""
-    if len(payload) != 3:
-        return None
-    return payload[0], payload[1], payload[2]
-
-
-def build_visual_servo_data_frame(
-    error_x: int, error_y: int, flags: int, state: int
-) -> bytes:
-    """
-    Build TYPE_VISUAL_SERVO_DATA frame (每帧必发).
-    error_x/error_y: signed int16 LE.
-    flags: bitmask.
-    state: visual_state (0=IDLE, 1=SEARCH, 2=TRACKING, 3=RECOVERY, 4=FAIL).
-    """
-    payload = (
-        error_x.to_bytes(2, byteorder='little', signed=True)
-        + error_y.to_bytes(2, byteorder='little', signed=True)
-        + bytes([flags, state])
-    )
-    return _build_frame(TYPE_VISUAL_SERVO_DATA, payload)
-
-
-def parse_visual_servo_data_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_VISUAL_SERVO_DATA payload -> (error_x, error_y, flags, state)."""
-    if len(payload) != 6:
-        return None
-    error_x = int.from_bytes(payload[0:2], byteorder='little', signed=True)
-    error_y = int.from_bytes(payload[2:4], byteorder='little', signed=True)
-    flags = payload[4]
-    state = payload[5]
-    return error_x, error_y, flags, state
-
-
-def build_emergency_stop_frame(reason: int) -> bytes:
-    """Build TYPE_EMERGENCY_STOP frame."""
-    return _build_frame(TYPE_EMERGENCY_STOP, bytes([reason]))
-
-
-def parse_emergency_stop_payload(payload: bytes) -> Optional[int]:
-    """Parse TYPE_EMERGENCY_STOP payload -> reason."""
-    if len(payload) != 1:
-        return None
-    return payload[0]
-
-
-# === Master-Slave protocol v3.0 builders ===
-
-def build_cmd_request_frame(data_type: int, min_interval_ms: int = 0) -> bytes:
-    """Build TYPE_CMD_REQUEST frame."""
-    payload = bytes([data_type, min_interval_ms, 0x00])
-    return _build_frame(TYPE_CMD_REQUEST, payload)
-
-
-def build_cmd_ack_frame(data_type: int, max_freq_hz: int = 60, payload_size: int = 0) -> bytes:
-    """Build TYPE_CMD_ACK frame."""
-    payload = bytes([data_type, max_freq_hz, payload_size])
+def build_cmd_ack_frame(data_id: int, max_freq_hz: int = ACK_MAX_FREQ_HZ,
+                        payload_size: int = ACK_PAYLOAD_SIZE) -> bytes:
+    """Build TYPE_CMD_ACK frame — v2.1 近端字面值 [did, 60, 10]。"""
+    payload = bytes([data_id, max_freq_hz, payload_size])
     return _build_frame(TYPE_CMD_ACK, payload)
 
 
-def build_cmd_nack_frame(data_type: int, reason: int) -> bytes:
-    """Build TYPE_CMD_NACK frame."""
-    payload = bytes([data_type, reason])
+def build_cmd_nack_frame(data_id: int, reason: int) -> bytes:
+    """Build TYPE_CMD_NACK frame [did, reason]。"""
+    payload = bytes([data_id, reason])
     return _build_frame(TYPE_CMD_NACK, payload)
 
 
 def build_cmd_stop_frame() -> bytes:
-    """Build TYPE_CMD_STOP frame (empty payload)."""
-    return _build_frame(TYPE_CMD_STOP, b'')
+    """Build TYPE_CMD_STOP frame（空载荷; Brain Cam1_Stop 下发, 本端只收）。"""
+    return _build_frame(TYPE_CMD_STOP, b"")
 
 
-def build_data_stream_frame(seq: int, data_type: int, sub_payload: bytes) -> bytes:
+def build_data_stream_frame(seq: int, data_id: int, sub_payload: bytes) -> bytes:
     """Build TYPE_DATA_STREAM frame.
 
     Args:
         seq: Sequence counter (0-255, wraps)
-        data_type: The data stream type being sent
-        sub_payload: Type-specific payload bytes (excludes seq + data_type header)
+        data_id: The data stream id being sent (0x01/0x02/0x03)
+        sub_payload: Type-specific payload bytes (excludes seq + data_id header),
+                     不足 8B 补零、超出截断（协议恒 8B 子载荷）。
     """
-    inner = bytes([seq, data_type]) + sub_payload
+    sub = bytes(sub_payload)[:SUB_PAYLOAD_SIZE].ljust(SUB_PAYLOAD_SIZE, b"\x00")
+    inner = bytes([seq & 0xFF, data_id]) + sub
     return _build_frame(TYPE_DATA_STREAM, inner)
 
 
-# === Ping-Pong builders ===
+# === Subscription frame parsing (master -> slave) ===
 
-def build_ping_frame(seq: int) -> bytes:
-    """Build TYPE_PING frame. Payload = seq(1B)."""
-    return _build_frame(TYPE_PING, bytes([seq & 0xFF]))
+def parse_cmd_request_payload(payload: bytes) -> Optional[Tuple[int, int, Optional[Tuple[int, int, int]]]]:
+    """Parse TYPE_CMD_REQUEST payload -> (data_id, min_interval_ms, codes|None).
 
-
-def build_pong_frame(seq: int) -> bytes:
-    """Build TYPE_PONG frame. Payload = seq(1B)，原样回传 MCU。"""
-    return _build_frame(TYPE_PONG, bytes([seq & 0xFF]))
-
-
-# === Master-Slave protocol v3.0 parsers ===
-
-def parse_cmd_request_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_CMD_REQUEST payload -> (data_type, min_interval_ms, reserved)."""
-    if len(payload) != 3:
+    codes 为 (爆色, 靶色, 形状) 三元组，仅完整 5B 订阅帧携带；
+    短帧(1~4B) 返回 codes=None 表示重订阅沿用旧任务码。
+    空 payload 返回 None。
+    """
+    if not payload:
         return None
-    return payload[0], payload[1], payload[2]
-
-
-def parse_cmd_ack_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_CMD_ACK payload -> (data_type, max_freq_hz, payload_size)."""
-    if len(payload) != 3:
-        return None
-    return payload[0], payload[1], payload[2]
-
-
-def parse_cmd_nack_payload(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_CMD_NACK payload -> (data_type, reason)."""
-    if len(payload) != 2:
-        return None
-    return payload[0], payload[1]
+    data_id = payload[0]
+    min_interval_ms = payload[1] if len(payload) >= 2 else 0
+    if len(payload) >= SUBSCRIBE_FULL_LEN:
+        codes = (payload[2], payload[3], payload[4])
+    else:
+        codes = None
+    return data_id, min_interval_ms, codes
 
 
 def parse_cmd_stop_payload(payload: bytes) -> bool:
@@ -349,120 +222,91 @@ def parse_cmd_stop_payload(payload: bytes) -> bool:
     return len(payload) == 0
 
 
-def parse_data_stream_header(payload: bytes) -> Optional[tuple]:
-    """Parse TYPE_DATA_STREAM header -> (seq, data_type, sub_payload).
-
-    Only extracts the header; the caller must interpret sub_payload
-    based on data_type.
-    """
+def parse_data_stream_header(payload: bytes) -> Optional[Tuple[int, int, bytes]]:
+    """Parse TYPE_DATA_STREAM header -> (seq, data_id, sub_payload)."""
     if len(payload) < 2:
         return None
     return payload[0], payload[1], payload[2:]
 
 
-# === Ping-Pong parsers ===
+# === Sub-payload builders (8B each, 与 Brain interrupt.c 消费偏移逐字段对齐) ===
 
-def parse_ping_payload(payload: bytes) -> Optional[int]:
-    """Parse TYPE_PING payload -> seq.  Returns None on invalid length."""
-    if len(payload) != 1:
-        return None
-    return payload[0]
+def clamp_error_fixed(value: int) -> int:
+    """Clamp a fixed-point normalized error to ±10000 (归一化 clamp ±1)。"""
+    return max(-TARGET_ERROR_LIMIT, min(TARGET_ERROR_LIMIT, int(value)))
 
 
-parse_pong_payload = parse_ping_payload  # same format
+def _int16_le_bytes(value: int) -> bytes:
+    """int16 两字节补码小端（main.py pack_signed16_le 等价实现）。"""
+    return (value & 0xFFFF).to_bytes(2, byteorder="little")
 
 
-# === EOD2026 sub-payload builders/parsers ===
-# sub_payload = DATA_STREAM payload minus the seq(1)+data_type(1) header.
+def build_explosive_sub_payload(cx: int, pit: int, found: bool) -> bytes:
+    """0x01 DATA_EXPLOSIVE sub_payload (8B)。
 
-def clamp_error(value: int) -> int:
-    """Clamp a normalized pixel error to the ±5000 protocol range."""
-    return max(ERROR_MIN, min(ERROR_MAX, int(value)))
-
-
-def build_qr_task_sub_payload(decoded: bool, code: str) -> bytes:
-    """QR_TASK sub_payload (20B): flags(1) + len(1) + ascii(18, zero-padded).
-
-    flags bit0 = DECODED_VALID. When not decoded, code is ignored and the
-    ascii field is all zeros (no-target frame semantics).
+    cx: 爆炸物像素 x（Brain 仅监控不使用）; pit: 坑位 1~3, 0=未定位;
+    found: bit0 TARGET_FOUND。未 found 时 cx/pit 归零（不透传假值）。
     """
-    if not decoded or not code:
-        return bytes([0, 0]) + b"\x00" * 18
-    raw = code.encode("ascii")[:18]
-    return bytes([DEV_FLAG_FOUND, len(raw)]) + raw.ljust(18, b"\x00")
+    if not found:
+        cx = 0
+        pit = 0
+    cx = max(0, min(0xFFFF, int(cx)))
+    return _int16_le_bytes(cx) + bytes([pit & 0xFF, 0x01 if found else 0x00]) + b"\x00" * 4
 
 
-def parse_qr_task_sub_payload(data: bytes) -> Optional[dict]:
-    """Parse QR_TASK sub_payload -> {'decoded', 'code'}; None on bad length."""
-    if len(data) != 20:
-        return None
-    flags, length = data[0], data[1]
-    decoded = bool(flags & DEV_FLAG_FOUND)
-    if not decoded or length == 0:
-        return {"decoded": False, "code": ""}
-    length = min(length, 18)
-    return {"decoded": True, "code": data[2:2 + length].decode("ascii", errors="replace")}
+def build_target_sub_payload(error_fixed: int, found: bool) -> bytes:
+    """0x02 DATA_TARGET sub_payload (8B)。
 
-
-def build_device_sub_payload(error_x: int, error_y: int, dev_id: int, flags: int) -> bytes:
-    """BOMB/TARGET/HOSTAGE sub_payload (6B).
-
-    error_x/error_y: normalized ±5000 int16 LE (0 when DEV_FLAG_FOUND clear).
-    dev_id: color_id / ring_id / shape_id (0 = no target).
-    flags: DEV_FLAG_* bitmask.
+    error_fixed: i16 LE = 归一化横向误差 × 10000（clamp ±1）;
+    found=0 时误差字节为 0 占位（Brain 不透传假误差）。
     """
-    if not (flags & DEV_FLAG_FOUND):
-        error_x = error_y = dev_id = 0
-    return (
-        clamp_error(error_x).to_bytes(2, "little", signed=True)
-        + clamp_error(error_y).to_bytes(2, "little", signed=True)
-        + bytes([dev_id & 0xFF, flags & 0xFF])
-    )
+    if not found:
+        error_fixed = 0
+    error_fixed = clamp_error_fixed(error_fixed)
+    return _int16_le_bytes(error_fixed) + bytes([0x01 if found else 0x00]) + b"\x00" * 5
 
 
-def parse_device_sub_payload(data: bytes) -> Optional[dict]:
-    """Parse device sub_payload (6B) -> {'error_x','error_y','id','flags'}."""
-    if len(data) != 6:
+def build_rescue_sub_payload(pos: int, found: bool) -> bytes:
+    """0x03 DATA_RESCUE sub_payload (8B): pos 1~3, 0=未定位。"""
+    if not found:
+        pos = 0
+    return bytes([pos & 0xFF, 0x01 if found else 0x00]) + b"\x00" * 6
+
+
+# === Sub-payload parsers (PC 测试/对拍用) ===
+
+def parse_explosive_sub_payload(data: bytes) -> Optional[dict]:
+    """0x01 sub_payload -> {'cx', 'pit', 'found'}; Brain 取 pit@2, flags@3。"""
+    if len(data) != SUB_PAYLOAD_SIZE:
         return None
     return {
-        "error_x": int.from_bytes(data[0:2], "little", signed=True),
-        "error_y": int.from_bytes(data[2:4], "little", signed=True),
-        "id": data[4],
-        "flags": data[5],
+        "cx": int.from_bytes(data[0:2], "little"),
+        "pit": data[2],
+        "found": bool(data[3] & 0x01),
     }
 
 
-def build_zone_sub_payload(error_x: int, error_y: int, flags: int) -> bytes:
-    """BUCKET/HOME sub_payload (5B): error_x(2) + error_y(2) + flags(1)."""
-    if not (flags & DEV_FLAG_FOUND):
-        error_x = error_y = 0
-    return (
-        clamp_error(error_x).to_bytes(2, "little", signed=True)
-        + clamp_error(error_y).to_bytes(2, "little", signed=True)
-        + bytes([flags & 0xFF])
-    )
-
-
-def parse_zone_sub_payload(data: bytes) -> Optional[dict]:
-    """Parse zone sub_payload (5B) -> {'error_x','error_y','flags'}."""
-    if len(data) != 5:
+def parse_target_sub_payload(data: bytes) -> Optional[dict]:
+    """0x02 sub_payload -> {'error_fixed', 'found'}; Brain 取 err@0-1 i16LE, flags@2。"""
+    if len(data) != SUB_PAYLOAD_SIZE:
         return None
     return {
-        "error_x": int.from_bytes(data[0:2], "little", signed=True),
-        "error_y": int.from_bytes(data[2:4], "little", signed=True),
-        "flags": data[4],
+        "error_fixed": int.from_bytes(data[0:2], "little", signed=True),
+        "found": bool(data[2] & 0x01),
     }
 
 
-def build_device_stream_frame(seq: int, data_type: int, error_x: int, error_y: int,
-                              dev_id: int, flags: int) -> bytes:
-    """Convenience: full DATA_STREAM frame for a 6B device type."""
-    return build_data_stream_frame(seq, data_type,
-                                   build_device_sub_payload(error_x, error_y, dev_id, flags))
+def parse_rescue_sub_payload(data: bytes) -> Optional[dict]:
+    """0x03 sub_payload -> {'pos', 'found'}; Brain 取 pos@0, flags@1。"""
+    if len(data) != SUB_PAYLOAD_SIZE:
+        return None
+    return {
+        "pos": data[0],
+        "found": bool(data[1] & 0x01),
+    }
 
 
-def build_zone_stream_frame(seq: int, data_type: int, error_x: int, error_y: int,
-                            flags: int) -> bytes:
-    """Convenience: full DATA_STREAM frame for a 5B zone type."""
-    return build_data_stream_frame(seq, data_type,
-                                   build_zone_sub_payload(error_x, error_y, flags))
+NACK_REASON_NAMES: dict[int, str] = {
+    NACK_UNSUPPORTED_TYPE: "UNSUPPORTED_TYPE",
+    NACK_NOT_READY:        "NOT_READY",
+}

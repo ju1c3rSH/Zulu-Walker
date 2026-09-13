@@ -1,168 +1,52 @@
 # zw_uart_module
 
-用于香橙派与STM32单片机通信的UART通信模块。
+2026 工科赛近端 MaixCAM 视觉从站的 UART 协议模块（**panzer_links_protocol v2.1**，对接 panzer_Brain USART1 主站）。
 
-## 用途
+> 协议四源核对记录: `docs/competition/gks_protocol_crosscheck.md`；
+> 完整规范: `docs/competition/gks_panzer_links_protocol_v2.1.md`。
 
-提供基于二进制帧的UART通信功能：
-- 接收来自STM32的区域事件（ARRIVED、PICK、SET）
-- 向STM32发送视觉误差反馈
-
-## 设计原则
-
-**被动状态维护**：模块通过状态机解析STM32事件来维护内部状态。其他模块通过查询接口获取状态——不主动回调其他模块，实现松耦合。
-
-## 依赖
-
-- `pyserial` - 串口通信
-- `logging` - 标准库
-- `threading` - 标准库
-
-## 使用方法
-
-### 作为模块（通过ModuleManager调用）
-
-在 `main.py` 的 `AUTO_START_MODULES` 中添加：
-
-```python
-AUTO_START_MODULES = [
-    'zw_uart_module',
-    # ... 其他模块
-]
-```
-
-从其他模块查询状态：
-
-```python
-from modules.zw_uart_module import get_current_zone, get_last_arrived_zone, send_error
-
-# 获取当前区域
-zone = get_current_zone()
-
-# 发送视觉误差
-send_error(0, -3)  # X方向误差，值-3
-```
-
-### 直接使用
-
-```python
-from zw_uart_module import STM32UartInterface
-
-with STM32UartInterface("/dev/ttyS4", baudrate=921600) as uart:
-    uart.send_error(0, -3)  # 发送误差帧
-
-    # 在主循环中查询状态
-    while True:
-        current = uart.get_current_zone()
-        arrived = uart.get_last_arrived_zone()
-        pick = uart.get_last_pick_zone()
-        print(f"区域: 当前={current}, 到达={arrived}, 抓取={pick}")
-        time.sleep(0.1)
-```
-
-## 通信协议
-
-### 帧结构
-
-| 字段 | 大小 | 描述 |
-|------|------|------|
-| SOF | 1 | 帧起始标志，固定 0xAA |
-| Length | 1 | 从Type到Checksum的字节数 |
-| Type | 1 | 帧类型标识 |
-| Payload | 0~252 | 数据负载 |
-| Checksum | 1 | Type到Payload所有字节的异或和 |
-
-### 帧类型
-
-| Type | 名称 | 方向 | 负载结构 |
-|------|------|------|----------|
-| 0x01 | EVENT_ERROR | 香橙派 → STM32 | error_type(1B) + error_value(2B, int16小端) |
-| 0x02 | EVENT_ARRIVED_AT_ZONE | STM32 → 香橙派 | zone_id(1B) |
-| 0x03 | EVENT_PICK_AT_ZONE | STM32 → 香橙派 | zone_id(1B) |
-| 0x04 | EVENT_SET_ZONE | STM32 → 香橙派 | zone_id(1B) |
-
-### 误差类型
-
-| 值 | 描述 |
-|----|------|
-| 0 | X方向误差 |
-| 1 | Y方向误差 |
-| 2 | Z方向误差 |
-| 3 | 其他误差 |
-
-### 示例帧
+## 帧结构（与 serial_protocol C 库逐字节一致）
 
 ```
-# SET_ZONE 帧，区域ID为5
-AA 03 04 05 01
-# SOF=AA, Len=03, Type=04, Payload=05, Checksum=01
-# Length = Type(1) + Payload(1) + Checksum(1) = 3
-
-# ERROR 帧：类型=0(X方向)，值=-3
-AA 05 01 00 FD FF 03
-# SOF=AA, Len=05, Type=01, error_type=00, error_value=FDFF(-3), Checksum=03
-# Length = Type(1) + Payload(3) + Checksum(1) = 5
+| AA | 55 | Length | Type | Payload[0..252] | CRC16_HI | CRC16_LO |
+Length = Type + Payload + CRC16 = n + 3（有效 3~255）
+CRC16-CCITT: poly 0x1021, init 0xFFFF, 不反射, 无终异或, 高字节在前
+Payload 内多字节一律小端（补码）
 ```
 
-## API参考
+## 帧型与 data_id
 
-### STM32UartInterface类
+| Type | 名称 | 方向 | Payload |
+|---|---|---|---|
+| 0x20 | CMD_REQUEST | 主→从 | `[data_id, min_interval_ms, 爆色, 靶色, 形状]`（5B 完整订阅; 1~4B = 幂等重订阅沿用旧码） |
+| 0x21 | CMD_ACK | 从→主 | `[data_id, 60, 10]` |
+| 0x22 | CMD_NACK | 从→主 | `[data_id, reason]`（0x01 不支持 / 0x02 未就绪） |
+| 0x23 | CMD_STOP | 主→从 | 空 |
+| 0x24 | DATA_STREAM | 从→主 | `[seq, data_id, sub_payload(8B)]`，payload 恒 10B |
 
-| 方法 | 描述 |
-|------|------|
-| `start() -> bool` | 连接串口并启动接收线程 |
-| `stop()` | 断开连接并清理资源 |
-| `get_current_zone() -> int` | 获取当前区域ID |
-| `get_last_arrived_zone() -> int` | 获取最近到达的区域ID |
-| `get_last_pick_zone() -> int` | 获取最近抓取的区域ID |
-| `send_error(type, value) -> bool` | 发送误差帧 |
-| `set_log_level(level)` | 设置日志级别 |
-| `set_debug_hex(enabled)` | 启用十六进制帧打印 |
+| data_id | 名称 | 子载荷（8B） |
+|---|---|---|
+| 0x01 | DATA_EXPLOSIVE | `[cx u16LE, pit 0~3, flags bit0=found, rsv×4]` |
+| 0x02 | DATA_TARGET | `[err i16LE = norm×10000 clamp±1, flags bit0, rsv×5]` |
+| 0x03 | DATA_RESCUE | `[pos 0~3, flags bit0, rsv×6]` |
 
-### 模块函数
+## 模块结构
 
-| 函数 | 描述 |
-|------|------|
-| `init()` | 模块初始化 |
-| `start() -> bool` | 模块启动 |
-| `loop()` | 模块主循环（空操作） |
-| `stop()` | 模块停止 |
-| `get_interface() -> STM32UartInterface` | 获取接口实例 |
-| `get_current_zone() -> int` | 便捷函数 |
-| `get_last_arrived_zone() -> int` | 便捷函数 |
-| `get_last_pick_zone() -> int` | 便捷函数 |
-| `send_error(type, value) -> bool` | 便捷函数 |
+| 文件 | 职责 |
+|---|---|
+| `protocol.py` | 帧编解码（CRC 查表）、v2.1 语义（订阅解析/子载荷 builders/parsers） |
+| `parser.py` | C `Protocol_ParserFeed` 四态状态机 1:1 移植：AA-AA-55 重同步、坏 CRC 整帧丢弃、Length 校验、统计计数（rx_bytes/valid_frames/crc_errors/length_errors） |
+| `uart_driver.py` | HAL UART 包装 + 从站帧分发（CMD_REQUEST/STOP → EventBus） |
+| `events.py` | `CmdRequestEvent`（含任务码）/ `CmdStopEvent` |
 
-## 文件结构
+## 关键语义（对照 Brain interrupt.c 实际消费逻辑）
 
-```
-zw_uart_module/
-├── __init__.py      # 模块接口
-├── uart_driver.py   # STM32UartInterface、FrameParser
-├── protocol.py      # 协议常量、帧构造与解析
-├── exceptions.py    # 自定义异常
-├── README.md        # 英文文档
-└── README_CN.md     # 中文文档
-```
+- 订阅期**零值心跳不断流**：缺阈值/无结果也按 `min_interval`（下限 30ms）推全零帧，
+  否则 Brain 1s stale 判定 + 1s 看门狗重订阅。
+- 同 data_id 同任务码的重订阅**不清视觉锁存**；换 id / 换码才清（`GksTaskProcessor.set_task` 判重）。
+- ACK/NACK 照发保协议一致性（Brain 只消费 0x24）。
+- 未知 data_id（如远端的 0x10）回 NACK `[did, 0x01]`。
 
-## 实现说明
+## 测试
 
-### 状态机
-
-帧解析器使用状态机逐字节处理数据：
-
-```
-WAITING_SOF → GOT_SOF → GOT_LEN → READING_DATA → (完成帧)
-     ↑                                      |
-     └──────────── 解析失败/无效帧 ──────────┘
-```
-
-### 缓冲区设计
-
-Linux内核TTY子系统已在驱动层实现环形缓冲区。`SerialController.receive_all()`直接从内核缓冲区读取数据，无需在Python层额外实现缓冲区。
-
-### 线程安全
-
-- 状态变量使用 `threading.RLock` 保护
-- 发送操作使用 `threading.Lock` 保护串口写入
-- 接收线程持续运行，内部错误不会导致线程退出
+`python -m pytest tests/test_protocol_gks.py` — C 库自测向量移植（CRC/编码/重同步/错误/满载）+ md §6 USART1 业务向量逐字节断言 + Brain 字段偏移对拍。
