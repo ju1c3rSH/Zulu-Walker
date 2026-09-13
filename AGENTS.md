@@ -73,7 +73,9 @@ python -c "import py_compile; py_compile.compile('app/coordinator.py', doraise=T
   进配置，现场标定后覆盖。
 - 旧版 `obj.x>240` 人质右 1/4 裁切（审查 P1-4）默认关闭（`gks.rescue.x_crop_px: 0`），
   台架复现旧行为可设像素值。
-- 主站静默 >5s 自动 idle（`GksCoordinator._CMD_TIMEOUT`）; Brain 活跃时 1s 重订阅不会触发。
+- **不设主机静默自动 idle**（与旧上端一致）: Brain 看门狗是"收不到 CAM 数据 >1s 才
+  重订阅"，健康推流期间主站本就静默; Brain 侧异常由 STOP/超时兜底。视觉结果陈旧
+  >1s（相机停帧/处理器异常）自动归零心跳，不透传陈旧 found=1。
 - `app/line_follow_sm.py`、`processors/cargo_processor.py` 等遗留文件未删除但不参与
   流水线（vision_config.yaml 只注册 GksTaskProcessor）。
 - 台架部署/验证清单: `docs/competition/gks_bench_checklist.md`。

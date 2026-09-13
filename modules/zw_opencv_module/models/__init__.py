@@ -1,12 +1,5 @@
-from .circle import CircleTargetItem, CircleTargets, ShapeType
+# -*- coding: utf-8 -*-
+"""Models 包导出（最小集: 打包白名单只含 color.py）。"""
 from .color import Color
-from .cargo import CargoItem, CargoSet, CargoZone, SLOT_COUNT, SLOT_COLOR_MAP, COLOR_SLOT_MAP
-from .ring import RingTarget
 
-__all__ = [
-    "CircleTargetItem", "CircleTargets", "ShapeType",
-    "Color",
-    "CargoItem", "CargoSet", "CargoZone",
-    "SLOT_COUNT", "SLOT_COLOR_MAP", "COLOR_SLOT_MAP",
-    "RingTarget",
-]
+__all__ = ["Color"]

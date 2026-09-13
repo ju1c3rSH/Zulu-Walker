@@ -1,12 +1,5 @@
-from .circle_target_detector import CircleTargetDetector
-from .circle_target_detector.detection import DetectMethod as CircleDetectMethod
-from .cargo_detector import CargoDetector
-from .cargo_detector.detection import DetectMethod as CargoDetectMethod
-from .ring_detector import RingDetector
-from .ring_detector.detection import RingDetectMethod
+# -*- coding: utf-8 -*-
+"""Detectors 包（显式置空: 打包白名单只含 eod_color/eod_shape）。
 
-__all__ = [
-    "CircleTargetDetector", "CircleDetectMethod",
-    "CargoDetector", "CargoDetectMethod",
-    "RingDetector", "RingDetectMethod",
-]
+遗留检测器（cargo/circle_target/ring/line）为 PC-only, 不在打包清单内。
+"""

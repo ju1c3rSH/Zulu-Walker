@@ -73,6 +73,11 @@ class PipelineCamera:
             try:
                 processor_cls = get_processor(task_type)
             except ValueError:
+                # 注册表缺失该处理器 = 流水线静默空转（全零输出）, 必须显性暴露
+                import logging
+                logging.getLogger(__name__).error(
+                    "Task '%s': unknown processor type '%s' (module not imported?)",
+                    task_name, task_type)
                 continue
             processor = processor_cls(task_name)
             if self._ai is not None and hasattr(processor, "set_ai"):

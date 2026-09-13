@@ -238,14 +238,35 @@ def test_stop_disables_and_resets():
     assert len(sent) == 2                       # ACK + 订阅期一帧; STOP 后不再推流
 
 
-def test_master_silence_auto_idle():
+def test_master_silence_does_not_idle():
+    """Brain 健康推流期间主站本就静默（看门狗只在收不到 CAM 数据时发 REQUEST）,
+    从站不得按主站静默自动 idle —— 否则每 5s 周期性断流 + 清锁存。"""
     coord, vm, proc, sent = make_coordinator()
     subscribe(coord, DATA_EXPLOSIVE, 50, codes=(1, 0, 0))
-    coord._last_cmd_time = time.monotonic() - 10.0
-    coord.loop()   # 本拍: 判定静默, sub_id -> 0, 入队 idle
-    assert coord.get_info()["state"] == "IDLE"
-    coord.loop()   # 下拍: 门控 idle 应用
-    assert not vm.enabled
+    coord.loop()
+    proc._pos_flag = 1
+    coord._last_cmd_time = time.monotonic() - 600.0   # 主站长时间无指令
+    coord._last_send_time = 0.0
+    coord.loop()
+    assert vm.enabled                                  # 订阅保持
+    assert proc._pos_flag == 1                         # 锁存保持
+    assert coord.get_info()["state"] == "EXPLOSIVE"
+    assert sent[-1][3] == 0x24                         # 持续推流
+
+
+def test_stale_vision_result_streams_zero():
+    """相机停帧/处理器异常陈旧化后: 不透传陈旧 found=1, 回零值心跳。"""
+    coord, vm, proc, sent = make_coordinator()
+    subscribe(coord, DATA_EXPLOSIVE, 50, codes=(1, 0, 0))
+    coord.loop()
+    vm.queue_result({"cx": 1234, "pit": 2, "found": True})
+    coord._last_send_time = 0.0
+    coord.loop()
+    assert sent[-1][6:8] == b"\xD2\x04"                # 新鲜结果正常透传
+    coord._latest_task_ts = time.monotonic() - 2.0     # 结果陈旧 >1s
+    coord._last_send_time = 0.0
+    coord.loop()
+    assert sent[-1][6:14] == b"\x00" * 8               # 归零心跳不断流
 
 
 def test_latch_preserved_across_resubscribe():

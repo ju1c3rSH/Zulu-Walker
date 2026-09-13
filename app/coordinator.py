@@ -4,11 +4,15 @@
 Brain (panzer_Brain, 主站) 通过 USART1 驱动本端:
   CMD_REQUEST [data_id, min_interval_ms, 爆色, 靶色, 形状] -> ACK [did,60,10] -> 流
   CMD_STOP -> 停推（门控 idle, 处理器清锁存）
-  主站静默 > cmd_timeout -> 自动 idle（Brain 掉线保护; Brain 活跃时 1s 重订阅, 不会触发）
+
+不设主机静默自动 idle（与旧上端 main.py 一致）: Brain 的 Comm_Task 看门狗是
+"收不到 CAM 数据 >1s 才重订阅", 健康推流期间主站本就静默——若从站按静默判
+掉线, 会在每个任务阶段周期性断流并清锁存。Brain 侧异常退出由 STOP 缺失 +
+人质/视觉超时兜底, 本端持续推流无害。
 
 v2.1 关键语义（对照 Brain interrupt.c 实际消费逻辑）:
 - 订阅期**零值心跳不断流**: 阈值缺失/无结果也按 interval 推全零帧,
-  否则 Brain 1s 帧龄 stale 判定 + 1s 看门狗重订阅。
+  否则 Brain 1s 帧龄 stale 判定 + 1s 看门狗重订阅; 结果陈旧 >1s 同样归零。
 - 同 data_id 同任务码的重订阅幂等, 不清视觉锁存（set_task 内部判重）;
   换 data_id / 换任务码才清（对应审查报告 §5.3 锁存语义）。
 - ACK [did,60,10] / NACK [did,reason] 照发保协议一致性
@@ -59,7 +63,7 @@ from modules.zw_uart_module.protocol import (
 )
 from modules.zw_opencv_module.processors.base import VisionResult
 
-_CMD_TIMEOUT = 5.0
+_TASK_STREAM_STALE_S = 1.0   # 视觉结果陈旧阈值: 超过按零值心跳推送
 _PIPELINE_ID = "cam_main"
 _TASK_GKS = "gks_task"
 
@@ -79,9 +83,8 @@ _DATA_ID_MODEL = {
 class GksCoordinator:
     """订阅门控 + 流控推送 + v2.1 协议应答。"""
 
-    def __init__(self, event_bus: EventBus, cmd_timeout: float = _CMD_TIMEOUT):
+    def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
-        self._cmd_timeout = cmd_timeout
 
         self._uart_sender: Optional[Callable[[bytes], bool]] = None
         self._vision_manager: Optional[VisionManager] = None
@@ -116,6 +119,7 @@ class GksCoordinator:
 
         # vision result cache (written in loop(), read in loop())
         self._latest_task: dict = {}
+        self._latest_task_ts: float = 0.0
         self._frame_width: int = 640
         self._frame_height: int = 480
 
@@ -173,16 +177,9 @@ class GksCoordinator:
         now = time.monotonic()
         with self._cmd_lock:
             sub_id = self._sub_id
-            if sub_id != 0:
-                if now - self._last_cmd_time > self._cmd_timeout:
-                    log_print("[UART] master silent -> auto idle")
-                    self._sub_id = 0
-                    self._master_linked = False
-                    sub_id = 0
-                    self._enqueue(self._gate_idle)
 
         if sub_id != 0:
-            payload = self._build_stream_payload(sub_id)   # 恒非 None: 零值心跳
+            payload = self._build_stream_payload(sub_id, now)   # 恒非 None: 零值心跳
             if self._send_allowed(now):
                 current_seq = self._stream_seq
                 frame = build_data_stream_frame(current_seq, sub_id, payload)
@@ -226,6 +223,7 @@ class GksCoordinator:
             for task_name, vision_result in results.items():
                 if task_name == _TASK_GKS and isinstance(vision_result, VisionResult):
                     self._latest_task = vision_result.result_data or {}
+                    self._latest_task_ts = time.monotonic()
 
     # ===== master events =====
 
@@ -257,8 +255,8 @@ class GksCoordinator:
                 self._codes = event.codes
             self._sub_id = data_id
             self._stream_seq = 0
-            if event.min_interval_ms > 0:
-                self._interval_ms = event.min_interval_ms
+            # main.py 语义: 任何 len>=2 订阅帧都刷新 interval, 下限 30ms
+            self._interval_ms = max(event.min_interval_ms, MIN_INTERVAL_MS)
             self._last_send_time = 0.0   # 新订阅立即推一帧
             codes_snapshot = self._codes
 
@@ -315,9 +313,11 @@ class GksCoordinator:
 
     # ===== streaming payload builders =====
 
-    def _build_stream_payload(self, data_id: int) -> bytes:
-        """恒返回 8B 子载荷: 无结果/缺阈值也推零值心跳（Brain 1s stale 判定）。"""
+    def _build_stream_payload(self, data_id: int, now: Optional[float] = None) -> bytes:
+        """恒返回 8B 子载荷: 无结果/缺阈值/结果陈旧都推零值心跳（Brain 1s stale 判定）。"""
         data = self._latest_task if self._task_enabled else {}
+        if now is not None and (now - self._latest_task_ts) > _TASK_STREAM_STALE_S:
+            data = {}   # 相机停帧/处理器异常: 不透传陈旧 found=1
         if data_id == DATA_EXPLOSIVE:
             return build_explosive_sub_payload(
                 int(data.get("cx", 0)), int(data.get("pit", 0)),

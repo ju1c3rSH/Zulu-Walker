@@ -230,6 +230,15 @@ def test_rescue_model_missing_zero_heartbeat(cfg):
     assert not r.result_data["found"] and r.result_data["pos"] == 0
 
 
+def test_rescue_zero_shape_code_never_self_matches(cfg, rescue_ai):
+    """守卫: 形状码未下发(0)时不得与未锁存的 0 自匹配报 pos=1（审查 P2）。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_ai(rescue_ai)
+    proc.set_task(MODE_RESCUE, (0, 0, 0))
+    r = proc.process(np.zeros((480, 640, 3), dtype=np.uint8))
+    assert not r.result_data["found"] and r.result_data["pos"] == 0
+
+
 def test_rescue_x_crop_filter(cfg):
     cfg["rescue"]["x_crop_px"] = 240            # 旧行为复现: obj.x>240 丢弃
     ai = StubAI([Det(60, 100, 80, 120, class_id=1),

@@ -1,10 +1,7 @@
-from .window import DebugWindow
-from .uv_window import UVDebugWindow
-from .camera_window import CameraDebugWindow
-from .detector import DebugDetector
-from .param_panel import ParamPanel, METHOD_PARAMS, ParamDef
+# -*- coding: utf-8 -*-
+"""Debug 工具包。
 
-__all__ = [
-    "DebugWindow", "UVDebugWindow", "CameraDebugWindow",
-    "DebugDetector", "ParamPanel", "METHOD_PARAMS", "ParamDef",
-]
+本分支打包白名单只含 threshold_tuner.py（run.py debug color）。
+遗留调试窗口（window/uv_window/camera_window/detector/param_panel）为
+PC-only, 不在打包清单内, 需要时按子模块路径导入。
+"""

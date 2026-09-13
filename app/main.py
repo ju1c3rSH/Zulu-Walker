@@ -50,7 +50,8 @@ def _push_coordinator_status(coordinator) -> None:
     info = coordinator.get_info()
     dc.set("state", info.get("state", "-"))
     dc.set("link_active", str(info.get("link_active", False)))
-    dc.set("det_count", str(info.get("det_count", 0)))
+    dc.set("codes", str(info.get("codes", [0, 0, 0])))
+    dc.set("pending", str(info.get("pending_count", 0)))
     dc.set("fps", f"{info.get('fps', 0.0):.1f}")
 
 
@@ -256,7 +257,7 @@ def main():
 
     cam_cfg = _cfg.get("cameras", [{}])[0]
     cam_w = cam_cfg.get("width", 640)
-    cam_h = cam_cfg.get("height", 640)
+    cam_h = cam_cfg.get("height", 480)
     log_print(f"cam w:{cam_w} h:{cam_h}")
     coordinator.set_frame_size(cam_w, cam_h)
 

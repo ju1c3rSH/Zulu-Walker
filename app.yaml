@@ -74,6 +74,7 @@ files:
   - modules\zw_opencv_module\config\eod_config.yaml
   - modules\zw_opencv_module\debug\__init__.py
   - modules\zw_opencv_module\debug\threshold_tuner.py
+  - modules\zw_opencv_module\detectors\__init__.py
   - modules\zw_opencv_module\detectors\eod_color\__init__.py
   - modules\zw_opencv_module\detectors\eod_color\maix_accel.py
   - modules\zw_opencv_module\detectors\eod_shape\__init__.py

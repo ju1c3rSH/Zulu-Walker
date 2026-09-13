@@ -71,12 +71,15 @@ def find_blobs_maix(img, thresholds: list, roi=None,
     if not _HAVE_MAIX or img is None:
         return None
     try:
+        # roi 是 list[int] 参数, 传 None 会被 pybind11 拒绝(TypeError) —— 全帧
+        # 检测必须整体省略该 kwargs（EXPLOSIVE 三色扫描即此形态）
         kwargs = dict(
             invert=False,
-            roi=list(roi) if roi else None,
             area_threshold=area_threshold,
             pixels_threshold=pixels_threshold,
         )
+        if roi:
+            kwargs["roi"] = list(roi)
         if merge:
             try:
                 blobs = img.find_blobs(thresholds=[list(thresholds)],
@@ -91,9 +94,11 @@ def find_blobs_maix(img, thresholds: list, roi=None,
     out = []
     for b in blobs or []:
         x, y, w, h = b.x(), b.y(), b.w(), b.h()
+        # cxf(): 浮点中心(v4); 老固件回退 cx() 整数 —— 与 cv2 路径的 x+w/2 语义对齐
+        cx = b.cxf() if hasattr(b, "cxf") else b.cx()
         out.append({
             "x": x, "y": y, "w": w, "h": h,
-            "cx": b.cx(), "cy": b.cy(),
+            "cx": cx, "cy": b.cy(),
             "pixels": b.pixels(),
         })
     return out

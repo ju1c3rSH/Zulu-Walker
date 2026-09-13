@@ -37,12 +37,19 @@ class Task:
             context: 上下文，可包含前置任务结果
 
         Returns:
-            VisionResult 或 None（如果任务被禁用）
+            VisionResult 或 None（如果任务被禁用）;
+            处理器抛异常时返回 success=False 的结果（单任务故障不拖垮流水线）
         """
         if not self.enabled:
             return None
 
-        result = self.processor.process(frame, context)
+        try:
+            result = self.processor.process(frame, context)
+        except Exception as e:   # noqa: BLE001 — 设备端必须兜底（审查 P1-2）
+            from utils.log_util import log_print
+            log_print(f"[TASK] '{self.name}' process error: {e}")
+            result = VisionResult(self.name, result_data=None,
+                                  success=False, error_message=str(e))
         self._last_result = result
         self._execution_count += 1
         return result

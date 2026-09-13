@@ -425,7 +425,7 @@ class GksTaskProcessor(Processor):
             cx = largest["cx"]
             hits.append({"x": int(largest["x"]), "y": int(largest["y"]),
                          "w": int(largest["w"]), "h": int(largest["h"]),
-                         "text": "TGT", "color": (0, 0, 255)})
+                         "text": "TGT", "color": (255, 0, 0)})
             # 归一化横向误差 (cx - w/2)/(w/2), clamp ±1, 定点 ×10000
             # (640 宽帧下与旧版 (cx-320)/320 逐位一致)
             half = w / 2.0
@@ -456,7 +456,7 @@ class GksTaskProcessor(Processor):
             hits.append({"x": int(obj.x), "y": int(obj.y),
                          "w": int(obj.w), "h": int(obj.h),
                          "text": f"{label}:{obj.score:.2f}",
-                         "color": (255, 0, 0)})
+                         "color": (0, 160, 255)})
             if shape_num == 0:
                 continue
             self._shape_seen[shape_num] = obj.x + obj.w / 2.0   # 形状中心 x, 跨帧刷新
@@ -474,10 +474,11 @@ class GksTaskProcessor(Processor):
                 for j, shape_num in enumerate(ordered):
                     self._position2[j] = shape_num
         pos2 = 0
-        for j in range(3):
-            if self._codes[2] == self._position2[j]:
-                pos2 = j + 1
-                break
+        if self._codes[2] != 0:     # 守卫: 形状码未下发(0)时不得与未锁存 0 自匹配
+            for j in range(3):
+                if self._codes[2] == self._position2[j]:
+                    pos2 = j + 1
+                    break
         return ({"pos": pos2, "found": bool(pos2)},
                 hits, list(self._position2), self._pending_count2)
 
@@ -489,10 +490,11 @@ class GksTaskProcessor(Processor):
         data = result.result_data
         for hit in data.get("hits", []):
             x, y, w, h = hit["x"], hit["y"], hit["w"], hit["h"]
-            cv2.rectangle(frame, (x, y), (x + w, y + h), hit["color"], 2)
+            bgr = hit["color"][::-1]              # hits 约定 RGB, cv2 需 BGR
+            cv2.rectangle(frame, (x, y), (x + w, y + h), bgr, 2)
             if hit.get("text"):
                 cv2.putText(frame, hit["text"], (x, max(12, y - 4)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, hit["color"], 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, bgr, 1)
         tag = (f"{data.get('mode') or '-'} "
                f"pit={data.get('pit', 0)} pos={data.get('pos', 0)} "
                f"err={data.get('err_fixed', 0):+d} f={int(bool(data.get('found')))}")
