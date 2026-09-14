@@ -22,6 +22,7 @@ except Exception:
 
 
 def _writer_loop() -> None:
+    global _DROP_COUNT
     while True:
         item = _LOG_QUEUE.get()
         if item is _SENTINEL:
