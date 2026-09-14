@@ -57,6 +57,7 @@ from modules.zw_uart_module.protocol import (
     DATA_RESCUE,
     NACK_UNSUPPORTED_TYPE,
     NACK_NOT_READY,
+    NACK_REASON_NAMES,
     MIN_INTERVAL_MS,
     ACK_MAX_FREQ_HZ,
     ACK_PAYLOAD_SIZE,
@@ -237,7 +238,8 @@ class GksCoordinator:
             self._master_linked = True
 
         if data_id not in SUPPORTED_DATA_IDS:
-            log_print(f"[UART TX] CMD_NACK type={dt_name} reason=UNSUPPORTED_TYPE")
+            log_print(f"[UART TX] CMD_NACK type={dt_name} "
+                      f"reason={NACK_REASON_NAMES.get(NACK_UNSUPPORTED_TYPE)}")
             self._send(build_cmd_nack_frame(data_id, NACK_UNSUPPORTED_TYPE))
             return
 
@@ -253,7 +255,8 @@ class GksCoordinator:
                 self._ai is not None and self._ai.switch(nick)
             )
             if not ai_ready:
-                log_print(f"[UART TX] CMD_NACK type={dt_name} reason=NOT_READY")
+                log_print(f"[UART TX] CMD_NACK type={dt_name} "
+                          f"reason={NACK_REASON_NAMES.get(NACK_NOT_READY)}")
                 self._send(build_cmd_nack_frame(data_id, NACK_NOT_READY))
                 return
 
