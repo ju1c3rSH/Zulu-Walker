@@ -195,6 +195,8 @@ def test_stream_payload_target_and_rescue():
     assert sent[-1] == build_data_stream_frame(0, DATA_TARGET,
                                                build_target_sub_payload(-2500, True))
 
+    coord.set_ai(SimpleNamespace(active_model="eod_hostage",
+                                 switch=lambda nick: True))
     subscribe(coord, DATA_RESCUE, 50, codes=(0, 0, 2))
     vm.queue_result({"pos": 2, "found": True})
     _pump(coord)

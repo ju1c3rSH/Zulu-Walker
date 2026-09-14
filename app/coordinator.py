@@ -241,14 +241,21 @@ class GksCoordinator:
             self._send(build_cmd_nack_frame(data_id, NACK_UNSUPPORTED_TYPE))
             return
 
-        # RESCUE 需要 YOLO 模型: 热切换失败回 NACK NOT_READY（不订阅不推流）
+        # RESCUE 需要 YOLO 模型: 热切换失败（含 AI 未初始化）回 NACK NOT_READY
+        # （不订阅不推流；Brain 收到 NACK 才知道本端不可用，否则 ACK 成功
+        #  却永远零值会误导主站时序）
         nick = _DATA_ID_MODEL.get(data_id)
-        if nick and self._ai is not None:
-            if getattr(self._ai, "active_model", None) != nick:
-                if not self._ai.switch(nick):
-                    log_print(f"[UART TX] CMD_NACK type={dt_name} reason=NOT_READY")
-                    self._send(build_cmd_nack_frame(data_id, NACK_NOT_READY))
-                    return
+        if nick:
+            ai_ready = (
+                self._ai is not None
+                and getattr(self._ai, "active_model", None) == nick
+            ) or (
+                self._ai is not None and self._ai.switch(nick)
+            )
+            if not ai_ready:
+                log_print(f"[UART TX] CMD_NACK type={dt_name} reason=NOT_READY")
+                self._send(build_cmd_nack_frame(data_id, NACK_NOT_READY))
+                return
 
         mode = _DATA_ID_MODES[data_id]
         with self._cmd_lock:
