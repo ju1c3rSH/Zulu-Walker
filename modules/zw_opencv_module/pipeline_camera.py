@@ -121,7 +121,15 @@ class PipelineCamera:
         return processed_frame, task_results
 
     def enable_task(self, task_name: str) -> bool:
-        return self.task_manager.enable_task(task_name)
+        ok = self.task_manager.enable_task(task_name)
+        if ok and self._ai is not None:
+            # Task.disable() 会调 processor.release()（GksTaskProcessor 会清空
+            # 借用的 AI 句柄）；重启用时把共享 AI 重新注入，否则 RESCUE 在
+            # 一次 STOP 后永久走“模型缺失零值”分支。
+            task = self.task_manager.get_task(task_name)
+            if task is not None and hasattr(task.processor, "set_ai"):
+                task.processor.set_ai(self._ai)
+        return ok
 
     def disable_task(self, task_name: str) -> bool:
         return self.task_manager.disable_task(task_name)
