@@ -20,8 +20,8 @@
 | Type | 名称 | 方向 | Payload |
 |---|---|---|---|
 | 0x20 | CMD_REQUEST | 主→从 | [data_id, min_interval_ms, reserved] |
-| 0x21 | CMD_ACK | 从→主 | [data_id, max_freq_hz, payload_size] |
-| 0x22 | CMD_NACK | 从→主 | [data_id, reason] |
+| 0x21 | CMD_ACK | 从→主 | [data_id, max_freq_hz, payload_size]（底盘链路含子命令回显：[0x21, sub_cmd_echo, status]） |
+| 0x22 | CMD_NACK | 从→主 | [data_id, reason]（相机链路 2B，v2.2 起不变）；底盘链路 v2.2 升级为 [0x21, sub_cmd_echo, reason]（3B，legacy 2B 仍须被接受，按 payload 长度判别） |
 | 0x23 | CMD_STOP | 主→从 | 空 |
 | 0x24 | DATA_STREAM | 从→主 | [seq, data_id, sub_payload(8B)] |
 
@@ -43,6 +43,21 @@ DATA_STREAM 的 payload **统一 10 字节**：`seq(1) + data_id(1) + sub_payloa
 
 CRC16-CCITT：poly `0x1021`，init `0xFFFF`，无反射、无终异或，
 计算范围 `Type..Payload 末字节`，高字节在前。与 [`protocol.md`](protocol.md) 一致。
+
+### 1.4 NACK 原因码枚举（v2.2，三条链路统一编号空间）
+
+| 值 | 底盘/ZW 宏名 | 相机端宏名（语义别名） | 适用链路 | 语义 |
+|---|---|---|---|---|
+| 0x01 | NACK_FORMAT | NACK_UNSUPPORTED_TYPE | 相机+底盘 | 格式不受支持：payload 长度不足 / 帧类型不是 CMD_REQUEST / data_id 未知或不支持（相机侧 0x01 语义维持不变） |
+| 0x02 | NACK_BUSY | NACK_NOT_READY | 相机+底盘 | 从端忙或状态未就绪（对齐相机与 Zulu-Walker 现有 0x02=NOT_READY） |
+| 0x03 | NACK_PARAM | —（底盘专属） | 底盘 | 参数越界：子命令存在但 arg 非法（nav_id≥8、gear>3、turn_code>7、tracking_speed_level/stop_mode>1 等） |
+| 0x04 | NACK_UNKNOWNSUB | —（底盘专属） | 底盘 | data_id=0x21 合法但 sub_cmd 不在 §4.2 定义表（底盘回显收到的原 sub 值供定位） |
+
+- 相机链路 2B 帧 `[data_id, reason]` 只占 0x01/0x02 两档，沿用 v1.x 语义，不改格式。
+- 底盘链路 v2.2 起 3B 帧 `[0x21, sub_cmd_echo, reason]`：`sub_cmd_echo` =
+  被拒请求的 sub_cmd 原值（帧类型/data_id 层面被拒时填 0x00），中控据此精确定位是哪条请求失败。
+- master（panzer_Brain）解析规则：NACK payload 3B → 取 `sub_cmd_echo` 联动；
+  2B（legacy/相机）→ 只计数观测，不联动。
 
 ---
 
@@ -206,8 +221,24 @@ CAM → 中控:  DATA_STREAM [seq, 0x10, sub_payload]   ← 有缓存立刻发�
 | 0x05 TRACKING_DONE | 段内跟瞄收敛已刹停（|horizontal_error_normalized|<0.05 维持 500ms），可发射 | 0 | 0x00 |
 | 0x06 TRACKING_FAULT | 跟瞄异常（预留未实现：当前丢帧/未收敛为悬停等待，不上报） | 0 | — |
 
-建议底盘对每条命令回 `CMD_ACK [0x21, sub_cmd_echo, status]`（3B payload），
-联调期打开便于排障，稳定后可省略。
+底盘对每条命令回 `CMD_ACK [0x21, sub_cmd_echo, status=0x01]`（3B payload）；
+参数/格式不合规回 `CMD_NACK [0x21, sub_cmd_echo, reason]`（3B，原因码见 §1.4），
+legacy v1.x 的 2B `[data_id, reason]` NACK 帧 master 仍须接受（按长度判别，仅观测不联动）。
+
+**底盘逐请求拒绝对照表（v2.2）**
+
+| 被拒对象 | sub_cmd_echo | reason |
+|---|---|---|
+| 帧类型不是 CMD_REQUEST / payload<2B | 0x00 | 0x01 FORMAT |
+| CMD_REQUEST 但 data_id ≠ 0x21 | payload[0] 原值 | 0x01 FORMAT |
+| 0x01 REQ_NAV | 0x02 | payload<4B → 0x01；nav_id≥8 或 gear>3 → 0x03 PARAM |
+| 0x02 REQ_STOP | 0x02 | 无（参数忽略，命中即收） |
+| 0x03 REQ_TURNTABLE | 0x03 | payload<3B → 0x01；turn_code>7 → 0x03 |
+| 0x04 GYRO_ZERO | 0x00（payload<2B 时在通用检查先行拦截，sub 值不可知）、0x04 正常收发无 NACK | —（其 2B 子帧不足由第一行覆盖） |
+| 0x05 TRACKING_START | 0x05 | payload<3B → 0x01；speed_level>1 → 0x03 |
+| 0x06 TRACKING_ERROR | — | 高频误差流不回 ACK/NACK；payload<5B 静默丢弃 |
+| 0x07 TRACKING_STOP | 0x07 | payload<3B → 0x01；stop_mode>1 → 0x03 |
+| 未知 sub_cmd | 原 sub 值回显 | 0x04 UNKNOWNSUB |
 
 ### 4.3 nav_id 共享小表（两端唯一契约）
 
@@ -347,7 +378,7 @@ NAV_FAULT(reason=0x04)。增量位移对"轮子打滑车没动"是盲的，用�
 
 ## 6. 测试向量
 
-CRC 按 §1.3 计算。可用串口助手直接发送验证。
+CRC 按 §1.3 计算。可用串口助手直接发送验证（含 v2.2 底盘 3B NACK 与相机 legacy 2B NACK 向量）。
 
 ```
 USART1 中控→CAM 订阅爆炸物(50ms):  AA 55 06 20 01 32 00 E7 49
@@ -378,6 +409,13 @@ UART4 中控→底盘 TRACKING_ERROR(e=-0.25,found):AA 55 08 20 21 06 3C F6 01 A
 UART4 中控→底盘 TRACKING_STOP(就地刹停):AA 55 07 20 21 07 00 00 DD D2
 UART4 中控→底盘 TRACKING_STOP(继续走完当前段):AA 55 07 20 21 07 01 00 EE E3
 UART4 底盘→中控 ACK:                AA 55 06 21 21 01 01 57 DC
+UART4 底盘→中控 NACK(REQ_NAV 参数越界, sub_echo=0x02, PARAM):
+                                    AA 55 06 22 21 02 03 B9 11
+UART4 底盘→中控 NACK(帧类型/data_id 不支持, sub_echo=0, FORMAT):
+                                    AA 55 06 22 21 00 01 FF 31
+UART4 底盘→中控 NACK(未知子命令0x09, sub_echo=0x09, UNKNOWNSUB):
+                                    AA 55 06 22 21 09 04 15 0C
+USART1 相机→中控 legacy 2B NACK(未知 data_id=0x01): AA 55 05 22 01 01 07 2A
 UART4 底盘→中控 NAV_DONE(排爆点):    AA 55 0D 24 01 22 02 01 00 00 00 00 00 00 16 2B
 UART4 底盘→中控 NAV_FAULT(排爆点,堵转):
                                     AA 55 0D 24 02 22 03 01 01 00 00 00 00 00 A5 97
@@ -396,9 +434,9 @@ UART4 底盘→中控 TRACKING_FAULT(预留, 未实现):AA 55 0D 24 05 22 06 00 
 
 | 端 | 改动 |
 |---|---|
-| panzer_Brain | `Middlewares/serial_protocol` 已入工程；三个串口各建一个 `Protocol_Parser_t` + 链路 cfg；按 §2/§3/§4 注册处理函数；订阅重试参考 26-electric `Protocol_Task` 模式 |
-| 近端 MaixCAM | `main.py` 收发改为帧编解码（参考 `protocol.md` 的 Python CRC 实现）；三个任务分支按 data_id 切换，推送循环受订阅状态控制 |
-| 远端 MaixCAM | `qr_code.py` 时刻扫码画 bbox 并缓存有效码，收到 REQUEST 第一时间发缓存（无码则扫到再补发一帧） |
+| panzer_Brain | `Middlewares/serial_protocol` 已入工程；三个串口各建一个 `Protocol_Parser_t` + 链路 cfg；按 §2/§3/§4 注册处理函数；订阅重试参考 26-electric `Protocol_Task` 模式；**v2.2：三链路 NACK 解析（§1.4）+ sent 标志作废联动 + USART3 调试回显 NACK 事件** |
+| 近端 MaixCAM | `main.py` 收发改为帧编解码（参考 `protocol.md` 的 Python CRC 实现）；三个任务分支按 data_id 切换，推送循环受订阅状态控制；未知 data_id 回 NACK [did,0x01]（已迁 Zulu-Walker，见 v2.2） |
+| 远端 MaixCAM | `main.py` 时刻扫码画 bbox 并缓存有效码，收到 REQUEST 第一时间发缓存（无码则扫到再补发一帧） |
 | panzer 底盘 | `interurp.c` 换成 protocol 框架帧解析（sub_cmd/args，`protocol.c/h` 已入 `GetData`）；删 `Car_Drive_route()`/`Sport_Car()`/`Car_turn_corner()` 旧路线，复刻为 6 张任务 `mf_seg_t` 段表 + 2 张重锚伪路线（`Control_Car.c` 按 nav_id 索引，§4.4），执行交给 Motion 库 `mf_tick()`（TIM4 10ms：纯消费 `Car_Sense.c` 采样快照→里程计+段执行+逆解+轮速环，采集/存储/执行在 sense 层）；完成回 NAV_DONE，重发走段内续跑（§4.5）；转台改 REQ_TURNTABLE 驱动（对坑/对桶/回正码）；GYRO_ZERO 支持上电全自动（扫码→置零→起步） |
 
 ---
@@ -407,6 +445,7 @@ UART4 底盘→中控 TRACKING_FAULT(预留, 未实现):AA 55 0D 24 05 22 06 00 
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v2.2 | 2026-09-14 | NACK 全链路语义落地（§1.4 新章节）：原因码统一枚举 0x01 FORMAT/0x02 BUSY/0x03 PARAM/0x04 UNKNOWNSUB（相机 0x01/0x02 语义与格式不变）；底盘 NACK 升级 3B `[0x21, sub_cmd_echo, reason]`（legacy 2B 仍接受，master 按 payload 长度判别），逐请求拒绝对照表 + 样例帧；Brain 新增三链路 NACK 解析与 volatile 计数 / fresh 事件标志，按 sub_cmd_echo 立即作废对应 sent 标志触发下拍重发，USART3 调试口主循环异步回显 NACK 事件与计数；Zulu-Walker SDK NACK_REASON_NAMES 补 0x03/0x04 |
 | v2.1 | 2026-09-12 | 入桶方向补全 + 航向重锚恢复：REQ_TURNTABLE arg0 扩展 4~6 对桶（270°/270°/90°反向CW，摆位沿用旧实测值）与 7 回正90°，TURN_DONE echo 泛化为 arg0 回显，投放后回正与下一 NAV 同拍并行；nav_id 新增 6/7 重锚伪路线（MF_SEG_TURN_TO 原地转绝对角 −90.3°/−179.8°，复用 NAV 幂等/看门狗/重发全套机制），主控在排爆区对坑前与携人质返程前各调度一次 |
 | v2.0 | 2026-09-11 | 打靶段内跟瞄（段表不断）：视觉 0x02 直推归一化误差 e=(cx-320)/320；新增 TRACKING_START/ERROR/STOP + TRACKING_DONE/FAULT（全称语义变量）；底盘段内叠加视觉航向修正、收敛段内刹停、发射后继续走完当前段；REQ_TURNTABLE 恢复固定角（删 err）；激光 PA4 拉低发射 |
 | v1.5 | 2026-09-10 | 远端改常扫+缓存+请求即回（时刻扫码画 bbox，无码等扫到再回，不回空帧）；近端修任务码切换清 latch、无阈值空帧心跳、阈值缺失保护；帧格式/Brain 零改动 |

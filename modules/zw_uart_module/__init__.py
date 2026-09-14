@@ -18,7 +18,7 @@ from .protocol import (
     COLOR_NONE, COLOR_RED, COLOR_GREEN, COLOR_BLUE,
     SHAPE_NONE, SHAPE_CYLINDER, SHAPE_CONE, SHAPE_WAIST_DRUM,
     MIN_INTERVAL_MS, SUBSCRIBE_FULL_LEN,
-    NACK_UNSUPPORTED_TYPE, NACK_NOT_READY,
+    NACK_UNSUPPORTED_TYPE, NACK_NOT_READY, NACK_PARAM, NACK_UNKNOWNSUB,
     FrameData, parse_frame, crc16_ccitt,
     build_cmd_ack_frame, build_cmd_nack_frame,
     build_data_stream_frame,

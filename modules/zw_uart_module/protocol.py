@@ -52,9 +52,11 @@ TYPE_CMD_NACK     = 0x22  # Slave -> Master: 拒绝
 TYPE_CMD_STOP     = 0x23  # Master -> Slave: 停止推送
 TYPE_DATA_STREAM  = 0x24  # Slave -> Master: 数据流
 
-# NACK reasons
+# NACK reasons (v2.2 §1.4 统一枚举；0x01/0x02 相机链沿用，0x03/0x04 为底盘链路专属)
 NACK_UNSUPPORTED_TYPE = 0x01
 NACK_NOT_READY        = 0x02
+NACK_PARAM            = 0x03   # 底盘: 子命令存在但参数越界
+NACK_UNKNOWNSUB       = 0x04   # 底盘: data_id=0x21 合法但 sub_cmd 不在定义表
 
 # === data_id 表（本端支持的三个视觉任务）===
 DATA_EXPLOSIVE = 0x01   # 爆炸物坑位识别
@@ -309,4 +311,6 @@ def parse_rescue_sub_payload(data: bytes) -> Optional[dict]:
 NACK_REASON_NAMES: dict[int, str] = {
     NACK_UNSUPPORTED_TYPE: "UNSUPPORTED_TYPE",
     NACK_NOT_READY:        "NOT_READY",
+    NACK_PARAM:            "PARAM",
+    NACK_UNKNOWNSUB:       "UNKNOWNSUB",
 }
