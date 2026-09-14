@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-设备端 LAB 阈值调参工具（MaixCAM2 触屏）— `python run.py debug color`
+设备端 LAB 阈值调参工具（MaixCAM2 触屏）
 
-照搬 F:\\2026工科赛\\maixcam\\脱机调阈值\\640480 的使用方式重构:
+两种使用方式:
+- 独立模式: `python run.py debug color` — 自建 Camera/Display 阻塞运行;
+- 页面模式: 主程序 KEY_OK 切入, 外部喂帧, `step()` 单帧渲染不复用 Camera/Display。
+
 - 6 组阈值 = 爆红/爆绿/爆蓝 + 靶红/靶绿/靶蓝（与 GksTaskProcessor 组序约定一致）;
 - 实时预览: 当前组阈值命中像素绿色高亮 + 色块 bbox + 点选取色(LAB 读数);
 - 保存写到 /my-threshold/my_64threshold.txt（组序同 main.py）,
@@ -10,6 +13,10 @@
 
 文件行格式: name|Lmin,Lmax,Amin,Amax,Bmin,Bmax（第三段 hsv 本工具不写,
 消费端只读 LAB 段）。触屏 API 依 MaixPy 官方文档 touchscreen.md。
+
+绘图颜色依官方 image_ops.md: draw_rect/draw_string 的 color 需传入
+image.Color.from_rgb(...) / maix.image.COLOR_* 构造值, 不接受 RGB 元组 —
+元组会抛异常且被绘制兜底吞掉, 表现为界面静默空白。
 """
 import os
 import time
@@ -34,89 +41,172 @@ _UI_ACTION_H = 30    # Exit/SAVE/RESET 按钮条高度
 _UI_SLIDER_H = 50    # 每行滑条高度（底部 2 列 x 3 行）
 
 
+def _pack(rgb) -> int:
+    r, g, b = rgb
+    return (int(r) & 0xFF) << 16 | (int(g) & 0xFF) << 8 | (int(b) & 0xFF)
+
+
 class GksThresholdTuner:
-    """触屏 LAB 调参器。run() 阻塞运行至点 Exit / app 退出。"""
+    """触屏 LAB 调参器。
+
+    独立模式: run() 阻塞运行至点 Exit / app 退出。
+    页面模式(主程序内嵌): step(disp, ts, frame_bgr) 每帧调用,
+    exit_requested() 为 True 表示用户点了 Exit, 由外部调用方切回主页面。
+    """
 
     def __init__(self, camera_source=None, width: int = 640, height: int = 480):
         self._source = camera_source
         self._req_w, self._req_h = width, height
         self._stop = False
+        self._C = self._build_colors()
+        self._diag_logged = {}
+        self._bind_disp = None
+        self._bind_ts = None
 
-    # ---- lifecycle ----
+    # ---- colors (官方 API: image.Color.from_rgb / maix.image.COLOR_*) ----
+
+    def _mi(self):
+        import maix.image
+        return maix.image
+
+    def _mk_color(self, rgb, const_name=None):
+        try:
+            mi = self._mi()
+            if const_name and hasattr(mi, const_name):
+                return getattr(mi, const_name)
+            return mi.Color.from_rgb(*rgb)
+        except Exception:
+            return _pack(rgb)
+
+    def _build_colors(self) -> dict:
+        return {
+            "white": self._mk_color((255, 255, 255), "COLOR_WHITE"),
+            "black": self._mk_color((0, 0, 0), "COLOR_BLACK"),
+            "green": self._mk_color((0, 255, 0), "COLOR_GREEN"),
+            "yellow": self._mk_color((255, 255, 0), "COLOR_YELLOW"),
+            "gray_off": self._mk_color((200, 200, 200), "COLOR_GRAY"),
+            "slider_track": self._mk_color((120, 120, 120), "COLOR_GRAY"),
+            "magenta": self._mk_color((255, 0, 255), "COLOR_PURPLE"),
+            "cyan": self._mk_color((0, 255, 255), "COLOR_CYAN"),
+        }
+
+    # ---- diag ----
+
+    def _diag(self, site: str, exc: Exception) -> None:
+        if site in self._diag_logged:
+            return
+        self._diag_logged[site] = True
+        try:
+            from utils.log_util import log_print
+            log_print(f"[TUNER] draw fail at {site}: {type(exc).__name__}: {exc}")
+        except Exception:
+            pass
+
+    # ---- lifecycle: 独立模式 ----
 
     def run(self) -> None:
-        import cv2
-        from maix import camera, display, image, app, touchscreen
+        from maix import camera, display, app, image, touchscreen
 
+        self._reset_session()
         cam = camera.Camera(width=self._req_w, height=self._req_h,
                             format=image.Format.FMT_RGB888,
                             device=str(self._source) if self._source else None,
                             open=True)
         disp = display.Display()
         ts = touchscreen.TouchScreen()
-        dw, dh = disp.width(), disp.height()
-
-        groups = self._load_groups()
-        cur = 0
-        pick = None          # 预览区点选像素 (x, y) -> LAB 读数
-        toast = ""           # 操作提示（1.5s 消失）
-        toast_until = 0.0
-        pressed_last = False
-
         while not app.need_exit() and not self._stop:
             frame = cam.read()
             if frame is None:
                 time.sleep(0.005)
                 continue
             frame_bgr = self._to_bgr(frame)
-
-            lab_now = groups[cur]
-            mask, blobs = self._analyze(frame_bgr, lab_now)
-            preview_bgr = self._highlight(frame_bgr, mask)
-
-            img = self._to_maix(preview_bgr)
-            if img.width() != dw or img.height() != dh:
-                try:
-                    img = img.resize(dw, dh)
-                except Exception:
-                    pass
-            sx = img.width() / frame_bgr.shape[1]
-            sy = img.height() / frame_bgr.shape[0]
-
-            x, y, pressed = ts.read()
-            clicked = pressed and not pressed_last
-            pressed_last = pressed
-
-            hit_btn = self._draw_groups(img, cur)
-            act = self._draw_actions(img)
-            if clicked:
-                for gx, gname in hit_btn:
-                    if self._in(x, y, gx):
-                        cur = gname
-                        pick = None
-                if self._in(x, y, act["exit"]):
-                    break
-                if self._in(x, y, act["save"]):
-                    self._save(groups)
-                    toast, toast_until = "SAVED -> " + THRESHOLD_FILE, time.time() + 1.5
-                if self._in(x, y, act["reset"]):
-                    groups = self._load_groups()
-                    toast, toast_until = "RELOADED", time.time() + 1.0
-                px, py = int(x / sx), int(y / sy)
-                if 0 <= px < frame_bgr.shape[1] and 0 <= py < frame_bgr.shape[0] \
-                        and y > _UI_GROUP_H + _UI_ACTION_H:
-                    pick = (px, py)
-
-            self._draw_sliders(img, groups[cur], x, y, pressed)
-            self._draw_info(img, blobs, mask, pick, frame_bgr, sx, sy)
-            if toast and time.time() < toast_until:
-                self._text(img, 8, img.height() - 24, toast, (255, 255, 0), 1.2)
-
+            img = self._render_step(frame_bgr, disp, ts)
             disp.show(img)
+            if self._session_stop:
+                break
             time.sleep(0.001)
 
     def stop(self) -> None:
         self._stop = True
+
+    # ---- lifecycle: 页面模式 ----
+
+    def step(self, disp, ts, frame_bgr) -> None:
+        """主程序 KEY_OK 切入后每帧调用: 渲染调参页并处理触屏。"""
+        img = self._render_step(frame_bgr, disp, ts)
+        disp.show(img)
+
+    def exit_requested(self) -> bool:
+        """页面模式下用户点 Exit / 外部 stop()。"""
+        return self._session_stop or self._stop
+
+    def begin(self) -> None:
+        """页面模式进入调参页：重建会话状态（组/选中/点选/提示）。"""
+        self._reset_session()
+
+    def _reset_session(self) -> None:
+        self._groups = self._load_groups()
+        self._cur = 0
+        self._pick = None          # 预览区点选像素 (x, y) -> LAB 读数
+        self._toast = ""           # 操作提示（1.5s 消失）
+        self._toast_until = 0.0
+        self._pressed_last = False
+        self._session_stop = False
+
+    # ---- 单帧渲染 + 触屏交互 ----
+
+    def _render_step(self, frame_bgr, disp, ts):
+        groups = self._groups
+        cur = self._cur
+        pick = self._pick
+        pressed_last = self._pressed_last
+
+        disp_w, disp_h = disp.width(), disp.height()
+
+        lab_now = groups[cur]
+        mask, blobs = self._analyze(frame_bgr, lab_now)
+        preview_bgr = self._highlight(frame_bgr, mask)
+
+        img = self._to_maix(preview_bgr)
+        if img.width() != disp_w or img.height() != disp_h:
+            try:
+                img = img.resize(disp_w, disp_h)
+            except Exception as e:
+                self._diag("resize", e)
+        sx = img.width() / frame_bgr.shape[1]
+        sy = img.height() / frame_bgr.shape[0]
+
+        x, y, pressed = ts.read()
+        clicked = pressed and not pressed_last
+        self._pressed_last = pressed
+
+        hit_btn = self._draw_groups(img, cur)
+        act = self._draw_actions(img)
+        if clicked:
+            for gx, gname in hit_btn:
+                if self._in(x, y, gx):
+                    self._cur = gname
+                    self._pick = None
+            if self._in(x, y, act["exit"]):
+                self._session_stop = True
+            if self._in(x, y, act["save"]):
+                self._save(self._groups)
+                self._toast = "SAVED -> " + THRESHOLD_FILE
+                self._toast_until = time.time() + 1.5
+            if self._in(x, y, act["reset"]):
+                self._groups = self._load_groups()
+                self._toast, self._toast_until = "RELOADED", time.time() + 1.0
+            px, py = int(x / sx), int(y / sy)
+            if 0 <= px < frame_bgr.shape[1] and 0 <= py < frame_bgr.shape[0] \
+                    and y > _UI_GROUP_H + _UI_ACTION_H:
+                self._pick = (px, py)
+
+        self._draw_sliders(img, self._groups[self._cur], x, y, pressed)
+        self._draw_info(img, blobs, mask, self._pick, frame_bgr, sx, sy)
+        if self._toast and time.time() < self._toast_until:
+            self._text(img, 8, img.height() - 24, self._toast,
+                       self._C["yellow"], 1.2)
+        return img
 
     # ---- data ----
 
@@ -197,23 +287,25 @@ class GksThresholdTuner:
     def _in(x, y, rect):
         return rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]
 
-    @staticmethod
-    def _text(img, x, y, s, color, scale=1.0):
+    def _text(self, img, x, y, s, color, scale=1.0):
         try:
             img.draw_string(x, y, s, color=color, scale=scale, thickness=1)
-        except Exception:
-            pass
+        except Exception as e:
+            self._diag(f"string@({x},{y})", e)
+
+    def _rect(self, img, x, y, w, h, color, thickness=2):
+        try:
+            img.draw_rect(x, y, w, h, color=color, thickness=thickness)
+        except Exception as e:
+            self._diag(f"rect@({x},{y})", e)
 
     def _draw_groups(self, img, cur: int):
         rects = []
         bw = img.width() // 6
         for i, name in enumerate(GROUP_NAMES):
             rect = (i * bw + 2, 2, bw - 4, _UI_GROUP_H - 6)
-            color = (0, 255, 0) if i == cur else (200, 200, 200)
-            try:
-                img.draw_rect(rect[0], rect[1], rect[2], rect[3], color=color, thickness=2)
-            except Exception:
-                pass
+            color = self._C["green"] if i == cur else self._C["gray_off"]
+            self._rect(img, rect[0], rect[1], rect[2], rect[3], color=color)
             self._text(img, rect[0] + 8, rect[1] + 4, name, color, 1.2)
             rects.append((rect, i))
         return rects
@@ -226,15 +318,12 @@ class GksThresholdTuner:
             "save": (img.width() - 200, y, 90, h - 4),
             "reset": (img.width() - 104, y, 100, h - 4),
         }
-        try:
-            img.draw_rect(*rects["exit"], color=(255, 255, 255), thickness=2)
-            img.draw_rect(*rects["save"], color=(0, 255, 0), thickness=2)
-            img.draw_rect(*rects["reset"], color=(255, 255, 0), thickness=2)
-        except Exception:
-            pass
-        self._text(img, rects["exit"][0] + 8, y + 6, "< Exit", (255, 255, 255), 1.2)
-        self._text(img, rects["save"][0] + 8, y + 6, "SAVE", (0, 255, 0), 1.2)
-        self._text(img, rects["reset"][0] + 8, y + 6, "RESET", (255, 255, 0), 1.2)
+        self._rect(img, *rects["exit"], color=self._C["white"])
+        self._rect(img, *rects["save"], color=self._C["green"])
+        self._rect(img, *rects["reset"], color=self._C["yellow"])
+        self._text(img, rects["exit"][0] + 8, y + 6, "< Exit", self._C["white"], 1.2)
+        self._text(img, rects["save"][0] + 8, y + 6, "SAVE", self._C["green"], 1.2)
+        self._text(img, rects["reset"][0] + 8, y + 6, "RESET", self._C["yellow"], 1.2)
         return rects
 
     def _draw_sliders(self, img, lab: list, tx, ty, pressed) -> bool:
@@ -249,13 +338,10 @@ class GksThresholdTuner:
             w = col_w - 60
             lo, hi = SLIDER_RANGE[i]
             value = lab[i]
-            try:
-                img.draw_rect(x0, y0 + 8, w, 8, color=(120, 120, 120), thickness=-1)
-                kx = x0 + int((value - lo) / (hi - lo) * w)
-                img.draw_rect(kx - 4, y0 + 2, 8, 20, color=(0, 255, 0), thickness=-1)
-            except Exception:
-                pass
-            self._text(img, x0, y0 - 2, f"{name}:{value}", (255, 255, 255), 1.0)
+            self._rect(img, x0, y0 + 8, w, 8, self._C["slider_track"], thickness=-1)
+            kx = x0 + int((value - lo) / (hi - lo) * w)
+            self._rect(img, kx - 4, y0 + 2, 8, 20, self._C["green"], thickness=-1)
+            self._text(img, x0, y0 - 2, f"{name}:{value}", self._C["white"], 1.0)
             if pressed and x0 <= tx <= x0 + w and y0 - 6 <= ty <= y0 + 30:
                 new_v = int(lo + (tx - x0) / max(1, w) * (hi - lo))
                 new_v = max(lo, min(hi, new_v))
@@ -270,21 +356,19 @@ class GksThresholdTuner:
         if blobs:
             b = blobs[0]
             info += f" max:{b['area']}px ({b['x']},{b['y']},{b['w']},{b['h']})"
-        self._text(img, 8, _UI_GROUP_H + _UI_ACTION_H + 4, info, (255, 255, 255), 1.0)
+        self._text(img, 8, _UI_GROUP_H + _UI_ACTION_H + 4, info,
+                   self._C["white"], 1.0)
         for b in blobs:
-            try:
-                img.draw_rect(int(b["x"] * sx), int(b["y"] * sy),
-                              int(b["w"] * sx), int(b["h"] * sy),
-                              color=(255, 0, 255), thickness=2)
-            except Exception:
-                pass
+            self._rect(img, int(b["x"] * sx), int(b["y"] * sy),
+                       int(b["w"] * sx), int(b["h"] * sy),
+                       color=self._C["magenta"])
         if pick is not None:
             l, a, bb = self._pixel_lab(frame_bgr, pick[0], pick[1])
             self._text(img, img.width() - 220, _UI_GROUP_H + _UI_ACTION_H + 4,
                        f"pick({pick[0]},{pick[1]}) L:{l} A:{a} B:{bb}",
-                       (0, 255, 255), 1.0)
+                       self._C["cyan"], 1.0)
             try:
                 img.draw_circle(int(pick[0] * sx), int(pick[1] * sy), 4,
-                                color=(0, 255, 255), thickness=2)
-            except Exception:
-                pass
+                                color=self._C["cyan"], thickness=2)
+            except Exception as e:
+                self._diag("pick_circle", e)

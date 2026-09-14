@@ -56,6 +56,9 @@ class VisionManager:
         self._exit_icon_size: int = 0
         self._exit_icon_margin: int = 0
 
+        # 调参页等独占相机的场景: 暂停采集处理, 让出相机成为唯一读取者
+        self._paused = False
+
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
 
@@ -132,6 +135,10 @@ class VisionManager:
                 if self._wdt_count % 100 == 0:
                     log_print(f"[WDT] viz feed #{self._wdt_count}")
 
+                if self._paused:
+                    time.sleep(0.01)
+                    continue
+
                 profiler.start("total")
                 _, all_results, any_fresh = self.process_all()
 
@@ -204,6 +211,18 @@ class VisionManager:
     def set_hud(self, hud) -> None:
         """注入显示 HUD（状态栏 + 检测叠加）; None = 只画退出图标。"""
         self._hud = hud
+
+    def set_paused(self, paused: bool) -> None:
+        """暂停/恢复采集处理（调参页独占相机时置 True）。
+        暂停期间不读相机、不 produce 新结果, WDT 照常喂;
+        结果 >1s 陈旧由 coordinator 的归零心跳逻辑兜底。"""
+        self._paused = bool(paused)
+
+    def get_pipeline_camera(self):
+        """首个 pipeline 的 HAL 相机（供调参页等独占式页面读帧）。"""
+        for _pid, pipe in self._pipelines.items():
+            return pipe.camera
+        return None
 
     def _draw_exit_icon(self, img) -> None:
         if self._exit_icon is None:
