@@ -310,6 +310,15 @@ class LinuxCamera:
         except queue.Empty:
             return None
 
+    @property
+    def last_raw(self):
+        """linux/USB 平台无 maix Image：恒 None（调用方走 cv2 回退路径）。"""
+        return None
+
+    def read_raw(self) -> Optional[np.ndarray]:
+        """委托 read()：USB 帧即 BGR numpy，无需二次转换；停帧返回 None。"""
+        return self.read()
+
     def set(self, prop_id: int, value) -> bool:
         if self._cap is None:
             return False

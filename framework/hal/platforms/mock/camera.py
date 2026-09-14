@@ -41,5 +41,14 @@ class MockCamera:
     def set(self, prop_id: int, value) -> bool:
         return True
 
+    @property
+    def last_raw(self):
+        """mock 平台无 maix Image：恒 None（调用方走 cv2 回退路径）。"""
+        return None
+
+    def read_raw(self) -> Optional[np.ndarray]:
+        """委托 read()：合成帧即 BGR numpy；与 read() 同语义。"""
+        return self.read()
+
     def release(self) -> None:
         logger.info("MockCamera %s released", self._camera_id)
