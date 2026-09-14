@@ -66,6 +66,11 @@ class DebugConsole:
         with self._status_lock:
             return self._status.get(key, default)
 
+    def get_all(self) -> Dict[str, str]:
+        """状态键值快照（供 HUD 上屏等场景线程安全读取）。"""
+        with self._status_lock:
+            return dict(self._status)
+
     def log(self, msg: str) -> None:
         if not DebugConsole._global_enabled:
             return

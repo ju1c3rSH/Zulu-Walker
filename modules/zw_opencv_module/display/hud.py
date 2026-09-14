@@ -19,13 +19,19 @@ _MODE_TEXT = {
     "RESCUE": "MODE:RESCUE",
 }
 
-# RGB 色（maix Image 为 RGB888; 处理器 hits 约定同色制）
-_COLOR_WHITE = (255, 255, 255)
-_COLOR_BLACK = (0, 0, 0)
-_COLOR_GREEN = (0, 255, 0)
-_COLOR_YELLOW = (255, 255, 0)
-_COLOR_RED = (255, 64, 64)
-_COLOR_GRAY = (160, 160, 160)
+# RGB 色（maix Image 为 RGB888; 处理器 hits 约定同色制）。
+# 官方文档规定 color 用 image.Color.from_rgb(r,g,b) 构造; 无 maix 时回退 24-bit 打包 int。
+def _pack(rgb) -> int:
+    r, g, b = rgb
+    return (int(r) & 0xFF) << 16 | (int(g) & 0xFF) << 8 | (int(b) & 0xFF)
+
+
+_BLACK = (0, 0, 0)
+_GREEN = (0, 255, 0)
+_YELLOW = (255, 255, 0)
+_RED = (255, 64, 64)
+_GRAY = (160, 160, 160)
+_WHITE = (255, 255, 255)
 
 _BAR_H = 30
 _LINE2_H = 24
@@ -45,6 +51,34 @@ class DisplayHUD:
     def __init__(self, status_fn: Optional[Callable[[], dict]] = None):
         self._status_fn = status_fn
         self._mi = _try_import_maix_image()
+        self._draw_once_logged = False
+        self._diag_logged = {}
+        self._c = self._build_colors()
+
+    def _mk_color(self, rgb, const_name=None):
+        """优先用 maix.image.COLOR_* 命名常量（旧分支在此设备上验证可用）,
+        其次 Color.from_rgb, 最后打包 int"""
+        mi = self._mi
+        if const_name and hasattr(mi, const_name):
+            return getattr(mi, const_name)
+        try:
+            return mi.Color.from_rgb(*rgb)
+        except Exception:
+            return _pack(rgb)
+
+    def _build_colors(self) -> dict:
+        return {
+            "black": self._mk_color(_BLACK, "COLOR_BLACK"),
+            "green": self._mk_color(_GREEN, "COLOR_GREEN"),
+            "yellow": self._mk_color(_YELLOW, "COLOR_YELLOW"),
+            "red": self._mk_color(_RED, "COLOR_RED"),
+            "gray": self._mk_color(_GRAY, "COLOR_GRAY"),
+            "white": self._mk_color(_WHITE, "COLOR_WHITE"),
+        }
+
+    @property
+    def C(self):
+        return self._c
 
     def set_status_provider(self, status_fn: Callable[[], dict]) -> None:
         self._status_fn = status_fn
@@ -55,10 +89,18 @@ class DisplayHUD:
         """img: 原始 maix Image（RGB888）; results: {task_name: VisionResult}"""
         if self._mi is None or img is None:
             return
+        if not self._draw_once_logged:
+            self._draw_once_logged = True
+            try:
+                from utils.log_util import log_print
+                log_print(f"[HUD] first draw ok: img={img.width()}x{img.height()} fps={fps:.2f}")
+            except Exception:
+                pass
         status = self._fetch_status()
         self._draw_bar(img)
         self._draw_line1(img, status, fps)
         self._draw_line2(img, status)
+        self._draw_debug(img, status, fps)
         self._draw_hits(img, results or {})
 
     # ---- internals ----
@@ -71,35 +113,46 @@ class DisplayHUD:
         except Exception:
             return {}
 
+    def _diag(self, site: str, exc: Exception) -> None:
+        """绘制失败诊断：同一 site 只记一次，避免刷屏。"""
+        if site in self._diag_logged:
+            return
+        self._diag_logged[site] = True
+        try:
+            from utils.log_util import log_print
+            log_print(f"[HUD] draw fail at {site}: {type(exc).__name__}: {exc}")
+        except Exception:
+            pass
+
     def _draw_bar(self, img) -> None:
         try:
             img.draw_rect(0, 0, img.width(), _BAR_H + _LINE2_H,
                           color=self._mi.COLOR_BLACK, thickness=-1)
-        except Exception:
-            pass
+        except Exception as e:
+            self._diag("bar", e)
 
     def _text(self, img, x, y, s, color, scale=1.5) -> None:
         try:
             img.draw_string(x, y, s, color=color, scale=scale, thickness=1)
-        except Exception:
-            pass
+        except Exception as e:
+            self._diag(f"string@({x},{y})", e)
 
     def _draw_line1(self, img, status: dict, fps: float) -> None:
         mode = str(status.get("state", "IDLE"))
         mode_text = _MODE_TEXT.get(mode, f"MODE:{mode}")
         link = "LINK:OK" if status.get("link_active") else "LINK:--"
-        link_color = _COLOR_GREEN if status.get("link_active") else _COLOR_GRAY
+        link_color = self._c["green"] if status.get("link_active") else self._c["gray"]
         found = "FOUND" if status.get("found") else "-"
-        found_color = _COLOR_GREEN if status.get("found") else _COLOR_GRAY
+        found_color = self._c["green"] if status.get("found") else self._c["gray"]
 
-        self._text(img, 6, 4, mode_text, _COLOR_WHITE, scale=1.5)
+        self._text(img, 6, 4, mode_text, self._c["white"], scale=1.5)
         try:
-            w1 = self._mi.string_size(mode_text, scale=1.5)[0]
+            w1 = self._mi.string_size(mode_text, scale=1.5, thickness=1)[0]
         except Exception:
             w1 = 8 * len(mode_text) * 1.5
         x = 6 + int(w1) + 12
         self._text(img, x, 4, link, link_color, scale=1.5)
-        self._text(img, img.width() - 130, 4, f"FPS:{fps:4.1f}", _COLOR_WHITE, scale=1.5)
+        self._text(img, img.width() - 130, 4, f"FPS:{fps:4.1f}", self._c["white"], scale=1.5)
         self._text(img, img.width() - 240, 4, f"T:{found}", found_color, scale=1.5)
 
     def _draw_line2(self, img, status: dict) -> None:
@@ -107,7 +160,7 @@ class DisplayHUD:
         codes = status.get("codes") or [0, 0, 0]
         y = _BAR_H + 2
         if mode == "IDLE":
-            self._text(img, 6, y, "IDLE (wait CMD_REQUEST)", _COLOR_GRAY, scale=1.2)
+            self._text(img, 6, y, "IDLE (wait CMD_REQUEST)", self._c["gray"], scale=1.2)
             return
 
         parts = [f"CODES:{codes}"]
@@ -127,8 +180,39 @@ class DisplayHUD:
         elif mode == "RESCUE":
             parts.append(f"POS:{status.get('pos', 0)}")
 
-        color = _COLOR_GREEN if status.get("found") else _COLOR_YELLOW
+        color = self._c["green"] if status.get("found") else self._c["yellow"]
         self._text(img, 6, y, "  ".join(parts), color, scale=1.2)
+
+    # 顶栏已绘制过的键，调试行不再重复（state/link/fps → 行1; codes/pending → 行2）
+    _DEBUG_DUP_KEYS = ("state", "link_active", "fps", "codes", "pending")
+
+    def _draw_debug(self, img, status: dict, fps: float) -> None:
+        """调试键值行（黑底白字）：只显示顶栏没有的 DebugConsole 键,
+        如 log_drop / det_count 等; 无 maix 或无内容时静默跳过。"""
+        items = {}
+        try:
+            from utils.debug_console import DebugConsole
+            for k, v in DebugConsole().get_all().items():
+                if k not in self._DEBUG_DUP_KEYS:
+                    items[k] = str(v)
+        except Exception:
+            pass
+        if not items:
+            return
+        line = " ".join(f"{k}={v}" for k, v in items.items())
+        if len(line) > 72:
+            line = line[:69] + "..."
+        y = _BAR_H + _LINE2_H + 4
+        try:
+            tw, th = self._mi.string_size(line, scale=1, thickness=1)[:2]
+        except Exception:
+            tw, th = 8 * len(line), 14
+        try:
+            img.draw_rect(0, y - 3, img.width(), th + 6,
+                          color=self._c["black"], thickness=-1)
+        except Exception as e:
+            self._diag("debug_bar", e)
+        self._text(img, 6, y, line, self._c["white"], scale=1)
 
     def _draw_hits(self, img, results: Dict) -> None:
         gks = results.get("gks_task")
@@ -137,10 +221,11 @@ class DisplayHUD:
         data = getattr(gks, "result_data", None) or {}
         for hit in data.get("hits", []):
             x, y, w, h = hit["x"], hit["y"], hit["w"], hit["h"]
-            color = hit.get("color", _COLOR_GREEN)
+            color = self._mk_color(hit.get("color", (0, 255, 0)))
             try:
                 img.draw_rect(x, y, w, h, color=color, thickness=2)
-            except Exception:
+            except Exception as e:
+                self._diag("hit_rect", e)
                 continue
             text = hit.get("text") or ""
             if text:

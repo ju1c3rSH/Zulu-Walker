@@ -164,6 +164,7 @@ class GksCoordinator:
             if now - self._last_fps_time >= 1.0:
                 self._last_fps = self._vision_manager.get_pipeline_fps(_PIPELINE_ID)
                 self._last_fps_time = now
+                log_print(f"[FPS] pipeline: {self._last_fps:.1f}")
 
         with self._sm_lock:
             while self._sm_queue:

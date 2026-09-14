@@ -1,6 +1,6 @@
 platform: maixcam2
 
-debug_console_enabled: false
+debug_console_enabled: true
 display_enabled: true
 
 cameras:
