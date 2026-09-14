@@ -100,14 +100,14 @@ class PipelineCamera:
     def process_frame(self, fps: float = 0.0) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
         raw_img = self.camera.read_raw()
 
-        if raw_img is not None:
-            frame = raw_img
-            self._last_frame = frame
-        else:
-            frame = self._last_frame
- 
-        if frame is None:
+        if raw_img is None:
+            # 相机停帧: 不复用旧帧加工、不产出结果。
+            # 显示侧仍用 camera.last_raw 画旧画面；coordinator 侧无新结果，
+            # _latest_task_ts 不更新，1s 后归零心跳兜底（零值不断流）。
             return None, {}
+
+        frame = raw_img
+        self._last_frame = frame
 
         env_context = {
             "fps": fps,
@@ -121,7 +121,15 @@ class PipelineCamera:
         return processed_frame, task_results
 
     def enable_task(self, task_name: str) -> bool:
-        return self.task_manager.enable_task(task_name)
+        ok = self.task_manager.enable_task(task_name)
+        if ok and self._ai is not None:
+            # Task.disable() 会调 processor.release()（GksTaskProcessor 会清空
+            # 借用的 AI 句柄）；重启用时把共享 AI 重新注入，否则 RESCUE 在
+            # 一次 STOP 后永久走“模型缺失零值”分支。
+            task = self.task_manager.get_task(task_name)
+            if task is not None and hasattr(task.processor, "set_ai"):
+                task.processor.set_ai(self._ai)
+        return ok
 
     def disable_task(self, task_name: str) -> bool:
         return self.task_manager.disable_task(task_name)
