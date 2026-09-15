@@ -4,7 +4,9 @@ name[zh]: 工科赛近端视觉
 version: 2.0.0
 icon: app.png
 author: GongKeSai 2026
-desc: GKS2026 near-end vision on MaixCAM2 - explosive/target/rescue subscription streams (panzer_links_protocol v2.1) for panzer_Brain
+desc: >-
+  GKS2026 near-end vision on MaixCAM2 - explosive/target/rescue subscription
+  streams (panzer_links_protocol v2.1) for panzer_Brain
 desc[zh]: 2026 工科赛近端视觉（MaixCAM2）——爆炸物/靶标/人质订阅流，协议 v2.1，对接 panzer_Brain USART1
 exclude:
   - .git
@@ -70,19 +72,19 @@ files:
   - framework\module_manager.py
   - framework\visual_state_machine.py
   - modules\zw_opencv_module\config\camera_config.yaml
-  - modules\zw_opencv_module\config\vision_config.yaml
   - modules\zw_opencv_module\config\eod_config.yaml
+  - modules\zw_opencv_module\config\vision_config.yaml
   - modules\zw_opencv_module\debug\__init__.py
   - modules\zw_opencv_module\debug\threshold_tuner.py
-  - modules\zw_opencv_module\detectors\__init__.py
-  - modules\zw_opencv_module\detectors\eod_color\__init__.py
-  - modules\zw_opencv_module\detectors\eod_color\maix_accel.py
-  - modules\zw_opencv_module\detectors\eod_shape\__init__.py
-  - modules\zw_opencv_module\display\__init__.py
-  - modules\zw_opencv_module\display\hud.py
   - modules\zw_opencv_module\detectors\_shared\__init__.py
   - modules\zw_opencv_module\detectors\_shared\kalman_utils.py
   - modules\zw_opencv_module\detectors\_shared\param_def.py
+  - modules\zw_opencv_module\detectors\eod_color\__init__.py
+  - modules\zw_opencv_module\detectors\eod_color\maix_accel.py
+  - modules\zw_opencv_module\detectors\eod_shape\__init__.py
+  - modules\zw_opencv_module\detectors\__init__.py
+  - modules\zw_opencv_module\display\__init__.py
+  - modules\zw_opencv_module\display\hud.py
   - modules\zw_opencv_module\models\__init__.py
   - modules\zw_opencv_module\models\color.py
   - modules\zw_opencv_module\processors\__init__.py
