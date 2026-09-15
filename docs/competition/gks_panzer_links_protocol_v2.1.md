@@ -439,13 +439,22 @@ UART4 底盘→中控 TRACKING_FAULT(预留, 未实现):AA 55 0D 24 05 22 06 00 
 | 远端 MaixCAM | `main.py` 时刻扫码画 bbox 并缓存有效码，收到 REQUEST 第一时间发缓存（无码则扫到再补发一帧） |
 | panzer 底盘 | `interurp.c` 换成 protocol 框架帧解析（sub_cmd/args，`protocol.c/h` 已入 `GetData`）；删 `Car_Drive_route()`/`Sport_Car()`/`Car_turn_corner()` 旧路线，复刻为 6 张任务 `mf_seg_t` 段表 + 2 张重锚伪路线（`Control_Car.c` 按 nav_id 索引，§4.4），执行交给 Motion 库 `mf_tick()`（TIM4 10ms：纯消费 `Car_Sense.c` 采样快照→里程计+段执行+逆解+轮速环，采集/存储/执行在 sense 层）；完成回 NAV_DONE，重发走段内续跑（§4.5）；转台改 REQ_TURNTABLE 驱动（对坑/对桶/回正码）；GYRO_ZERO 支持上电全自动（扫码→置零→起步） |
 
+### 7.1 调试口约定（v2.2，两块板各一条，均 ISR 零发送）
+
+| 端 | 口 | 事件行（主循环回发，事件驱动） | 查询输入 | 查询回行 |
+|---|---|---|---|---|
+| panzer_Brain | USART3, 115200 | `NACK:[C/Q/R]<sub>/<reason> #<n>`（C=底盘链/Q=USART2 扫码/R=USART1 近相机） | `'?'` | `BRAIN:<状态名> ACK:<n> NACK:<n> <sub>/<reason>` |
+| panzer | USART2, 115200 | `ACK:<sub>/<status> #<n>`、`NACK:<sub>/<reason> #<n>`（自报无链路前缀，与 Brain `[C]` 行同构对照） | `'?'`（USART2 RX DMA1_S5/CH4，IDLE+0x8000 突发扫描） | `CHASSIS:NAV=<I/R/D> ID=<nav_id> SEG=<seg>/<done> TRK=<I/R/L> E=<误差x10000>` + `POSE:<x_mm> <y_mm> <yaw_x10deg>` |
+
+联调试法：同一参数错误在 Brain 侧打 `NACK:[C]02/03`、底盘侧打 `NACK:02/03`，两边 `#n` 应同步递增；底盘 ORE/错误重装沿用 UART4 ErrorCallback 同款。USART2 RX DMA 用 HAL 旧式 Stop+重装骨架（同 UART4 实车验证路径），IDLE→重装窗口丢字节仅影响 '?' 类人工单字节输入，可忽略。
+
 ---
 
 ## 8. 版本历史
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
-| v2.2 | 2026-09-14 | NACK 全链路语义落地（§1.4 新章节）：原因码统一枚举 0x01 FORMAT/0x02 BUSY/0x03 PARAM/0x04 UNKNOWNSUB（相机 0x01/0x02 语义与格式不变）；底盘 NACK 升级 3B `[0x21, sub_cmd_echo, reason]`（legacy 2B 仍接受，master 按 payload 长度判别），逐请求拒绝对照表 + 样例帧；Brain 新增三链路 NACK 解析与 volatile 计数 / fresh 事件标志，按 sub_cmd_echo 立即作废对应 sent 标志触发下拍重发，USART3 调试口主循环异步回显 NACK 事件与计数；Zulu-Walker SDK NACK_REASON_NAMES 补 0x03/0x04 |
+| v2.2 | 2026-09-14 | NACK 全链路语义落地（§1.4 新章节）：原因码统一枚举 0x01 FORMAT/0x02 BUSY/0x03 PARAM/0x04 UNKNOWNSUB（相机 0x01/0x02 语义与格式不变）；底盘 NACK 升级 3B `[0x21, sub_cmd_echo, reason]`（legacy 2B 仍接受，master 按 payload 长度判别），逐请求拒绝对照表 + 样例帧；Brain 新增三链路 NACK 解析与 volatile 计数 / fresh 事件标志，按 sub_cmd_echo 立即作废对应 sent 标志触发下拍重发，USART3 调试口主循环异步回显 NACK 事件与计数；底盘新增 USART2 调试口（RX DMA1_S5/CH4）ACK/NACK 事件与 '?' 状态查询（§7.1）；Zulu-Walker SDK NACK_REASON_NAMES 补 0x03/0x04 |
 | v2.1 | 2026-09-12 | 入桶方向补全 + 航向重锚恢复：REQ_TURNTABLE arg0 扩展 4~6 对桶（270°/270°/90°反向CW，摆位沿用旧实测值）与 7 回正90°，TURN_DONE echo 泛化为 arg0 回显，投放后回正与下一 NAV 同拍并行；nav_id 新增 6/7 重锚伪路线（MF_SEG_TURN_TO 原地转绝对角 −90.3°/−179.8°，复用 NAV 幂等/看门狗/重发全套机制），主控在排爆区对坑前与携人质返程前各调度一次 |
 | v2.0 | 2026-09-11 | 打靶段内跟瞄（段表不断）：视觉 0x02 直推归一化误差 e=(cx-320)/320；新增 TRACKING_START/ERROR/STOP + TRACKING_DONE/FAULT（全称语义变量）；底盘段内叠加视觉航向修正、收敛段内刹停、发射后继续走完当前段；REQ_TURNTABLE 恢复固定角（删 err）；激光 PA4 拉低发射 |
 | v1.5 | 2026-09-10 | 远端改常扫+缓存+请求即回（时刻扫码画 bbox，无码等扫到再回，不回空帧）；近端修任务码切换清 latch、无阈值空帧心跳、阈值缺失保护；帧格式/Brain 零改动 |
