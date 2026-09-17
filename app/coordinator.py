@@ -38,6 +38,7 @@ except ImportError:
     maix_sys = None
     _HAVE_MAIX_SYS = False
 
+from app.subscription_sm import GateSignal, SubscriptionStateMachine
 from framework.event_bus import EventBus
 from modules.zw_uart_module.events import (
     CmdRequestEvent,
@@ -91,10 +92,6 @@ class GksCoordinator:
         self._vision_manager: Optional[VisionManager] = None
         self._ai = None
 
-        # gating mutations from the RX thread are applied in the main loop
-        self._sm_queue: Deque[Callable] = deque()
-        self._sm_lock = threading.Lock()
-
         # master-slave streaming state (v2.1)
         self._sub_id = 0                 # 当前订阅 data_id, 0=未订阅
         self._codes = (0, 0, 0)          # (爆色, 靶色, 形状), 随完整订阅帧更新
@@ -104,12 +101,20 @@ class GksCoordinator:
         self._last_send_time = 0.0
         self._master_linked = False
         self._cmd_lock = threading.Lock()
+        self._last_nack = None           # (reason code, monotonic time) HUD 横幅用
+
+        # gating mutations from the RX thread are applied in the main loop
+        self._gate_queue: Deque[GateSignal] = deque()
+        self._gate_lock = threading.Lock()
+        self._gating = SubscriptionStateMachine(self)
 
         self._stream_log_count = 0
         self._last_streamed_id = 0
 
         # task gating cache (avoid redundant TaskManager calls)
         self._task_enabled = False
+
+        self._latch_cleared_by_idle = False
 
         self._running = False
         self._wdt_feed: Callable[[], None] = lambda: None
@@ -150,9 +155,9 @@ class GksCoordinator:
                 return False
         return False
 
-    def _enqueue(self, fn: Callable) -> None:
-        with self._sm_lock:
-            self._sm_queue.append(fn)
+    def _enqueue(self, signal: GateSignal) -> None:
+        with self._gate_lock:
+            self._gate_queue.append(signal)
 
     # ===== main loop =====
 
@@ -167,9 +172,9 @@ class GksCoordinator:
                 self._last_fps_time = now
                 log_print(f"[FPS] pipeline: {self._last_fps:.1f}")
 
-        with self._sm_lock:
-            while self._sm_queue:
-                self._sm_queue.popleft()()
+        with self._gate_lock:
+            while self._gate_queue:
+                self._gating.dispatch(self._gate_queue.popleft())
 
         self._wdt_feed()
         self._wdt_count += 1
@@ -239,8 +244,10 @@ class GksCoordinator:
 
         if data_id not in SUPPORTED_DATA_IDS:
             log_print(f"[UART TX] CMD_NACK type={dt_name} "
-                      f"reason={NACK_REASON_NAMES.get(NACK_UNSUPPORTED_TYPE)}")
+                      f"reason={NACK_REASON_NAMES.get(NACK_UNSUPPORTED_TYPE)} "
+                      f"-> 不订阅不推流")
             self._send(build_cmd_nack_frame(data_id, NACK_UNSUPPORTED_TYPE))
+            self._last_nack = (NACK_UNSUPPORTED_TYPE, time.monotonic())
             return
 
         # RESCUE 需要 YOLO 模型: 热切换失败（含 AI 未初始化）回 NACK NOT_READY
@@ -258,9 +265,12 @@ class GksCoordinator:
                 log_print(f"[UART TX] CMD_NACK type={dt_name} "
                           f"reason={NACK_REASON_NAMES.get(NACK_NOT_READY)}")
                 self._send(build_cmd_nack_frame(data_id, NACK_NOT_READY))
+                self._last_nack = (NACK_NOT_READY, time.monotonic())
                 return
 
         mode = _DATA_ID_MODES[data_id]
+        # 换任务码才写码; 短帧重订阅继承原任务码（且处理器判重保锁存）
+        codes_action = "换任务码" if event.has_codes else "继承原任务码"
         with self._cmd_lock:
             if event.has_codes:
                 self._codes = event.codes
@@ -271,11 +281,11 @@ class GksCoordinator:
             self._last_send_time = 0.0   # 新订阅立即推一帧
             codes_snapshot = self._codes
 
-        self._enqueue(lambda m=mode, c=codes_snapshot: self._gate_task(m, c))
+        self._enqueue(GateSignal(state_name=mode, codes=codes_snapshot))
 
         log_print(f"[UART TX] CMD_ACK type={dt_name} freq={ACK_MAX_FREQ_HZ}Hz "
                   f"size={ACK_PAYLOAD_SIZE}B interval={self._interval_ms}ms "
-                  f"codes={list(self._codes)}")
+                  f"codes={list(self._codes)} ({codes_action})")
         self._send(build_cmd_ack_frame(data_id))
 
     def _on_cmd_stop(self, event: CmdStopEvent) -> None:
@@ -285,9 +295,9 @@ class GksCoordinator:
             self._sub_id = 0
             self._stream_seq = 0
         log_print("[UART RX] CMD_STOP -> idle (no ACK: Brain 不消费)")
-        self._enqueue(self._gate_idle)
+        self._enqueue(GateSignal(is_stop=True))
 
-    # ===== subscription gating (runs in main loop) =====
+    # ===== subscription gating (runs in main loop, via SubscriptionStateMachine) =====
 
     def _get_gks_processor(self):
         if not self._vision_manager:
@@ -298,21 +308,43 @@ class GksCoordinator:
         task = pipe.task_manager.get_task(_TASK_GKS)
         return task.processor if task else None
 
-    def _gate_task(self, mode: str, codes: tuple) -> None:
+    def apply_gate_task(self, mode: str, codes: tuple) -> None:
         """启用 gks_task 并切换模式（codes 为订阅帧快照）。
 
         处理器 set_task 内部判重: 同模式同码的重订阅不清锁存,
         换 data_id / 换任务码才清（main.py reset_task_latch 时机）。
         """
-        if not self._task_enabled:
+        task_enabled_before = self._task_enabled
+        prev_task = None
+        processor = self._get_gks_processor()
+        if processor is not None:
+            getter = getattr(processor, "current_task", None)
+            if callable(getter):
+                try:
+                    prev_task = getter()
+                except Exception:
+                    prev_task = None
+        if not task_enabled_before:
             if self._vision_manager:
                 self._vision_manager.enable_task(_PIPELINE_ID, _TASK_GKS)
             self._task_enabled = True
-        processor = self._get_gks_processor()
         if processor is not None:
             processor.set_task(mode, tuple(codes))
+            # 判重描述需覆盖 STOP 清锁存保留模式的情况: STOP reset() 清锁存
+            # 但 _mode/_codes 不变, 同码重订 prev 会命中现值, 实际锁存非"保留"
+            if prev_task == (mode, tuple(codes)):
+                latch_desc = ("cleared(锁存已被STOP清)" if self._latch_cleared_by_idle
+                              else "kept(幂等重订阅)")
+            else:
+                latch_desc = "cleared(换任务/换模式)"
+            self._latch_cleared_by_idle = False
+            setup = "任务首次启用" if not task_enabled_before else "任务已启用"
+            log_print(f"[UART ACTION] gate={mode} codes={list(codes)} "
+                      f"latch={latch_desc} ({setup})")
 
-    def _gate_idle(self) -> None:
+    def apply_gate_idle(self) -> None:
+        """停推: 关任务门, 清处理器锁存与结果缓存。"""
+        was_active = self._task_enabled
         if self._task_enabled:
             if self._vision_manager:
                 self._vision_manager.disable_task(_PIPELINE_ID, _TASK_GKS)
@@ -321,6 +353,9 @@ class GksCoordinator:
         if processor is not None:
             processor.reset()
         self._latest_task = {}
+        self._latch_cleared_by_idle = True   # reset() 清锁存但保留 _mode/_codes
+        setup = "任务已停用" if was_active else "已是空闲"
+        log_print(f"[UART ACTION] gate=IDLE latch=cleared ({setup})")
 
     # ===== streaming payload builders =====
 
@@ -369,6 +404,12 @@ class GksCoordinator:
 
     # ===== debug / HUD =====
 
+    def _ai_status(self) -> tuple:
+        ai = self._ai
+        if ai is None:
+            return False, None
+        return bool(getattr(ai, "loaded", False)), getattr(ai, "active_model", None)
+
     def get_info(self) -> dict:
         with self._cmd_lock:
             linked = self._master_linked
@@ -377,6 +418,7 @@ class GksCoordinator:
             interval = self._interval_ms
         data = self._latest_task
         mode = DATA_ID_NAMES.get(sub_id, "IDLE") if sub_id else "IDLE"
+        ai_loaded, active_model = self._ai_status()
         return {
             "state": mode,
             "state_id": sub_id,
@@ -391,4 +433,15 @@ class GksCoordinator:
             "pending_count": data.get("pending_count", 0),
             "thresholds_ok": data.get("thresholds_ok", True),
             "fps": self._last_fps,
+            "ai_loaded": ai_loaded,
+            "ai_model": active_model,
+            "last_nack": self._last_nack,
+            "target_roi": self._target_roi_snapshot(),
         }
+
+    def _target_roi_snapshot(self):
+        processor = self._get_gks_processor()
+        try:
+            return processor.target_roi() if processor is not None else None
+        except Exception:
+            return None

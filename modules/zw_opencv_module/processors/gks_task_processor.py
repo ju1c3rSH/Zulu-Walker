@@ -188,9 +188,38 @@ class GksTaskProcessor(Processor):
         self._codes = codes
         self._reset_latch()
 
+    def current_task(self) -> Tuple[Optional[str], Tuple[int, int, int]]:
+        """当前订阅模式与任务码快照（coordinator 命令日志判重描述用）。"""
+        return self._mode, self._codes
+
     def reset(self) -> None:
         """CMD_STOP / 主机静默: 清锁存, 保留模式（下次 set_task 决定）。"""
         self._reset_latch()
+
+    _IMMUTABLE_RUNTIME_KEYS = frozenset({"thresholds_file"})
+
+    def set_runtime_param(self, section: str, key: str, value) -> None:
+        """调试页运行时改参（立即生效于 process(), 不落盘不清锁存）。
+
+        仅接受 _DEFAULT_CONFIG 已定义的参数: 段参数 (section, key) 或
+        顶层标量 (key == section 名), 否则 ValueError。thresholds_file
+        属硬性不可改键（重载器在 __init__ 已缓存路径）。
+        """
+        if key in self._IMMUTABLE_RUNTIME_KEYS:
+            raise ValueError(f"{key} is immutable at runtime")
+        default_section = _DEFAULT_CONFIG.get(section)
+        if isinstance(default_section, dict):
+            if key not in default_section:
+                raise ValueError(f"unknown runtime param: {section}.{key}")
+            if isinstance(default_section[key], dict):
+                raise ValueError(f"{section}.{key} is a nested section")
+            self._cfg[section][key] = value
+            return
+        if default_section is None and section not in _DEFAULT_CONFIG:
+            raise ValueError(f"unknown runtime param: {section}.{key}")
+        if key != section:
+            raise ValueError(f"{section} is a top-level param, use key=section")
+        self._cfg[section] = value
 
     def set_ai(self, ai) -> None:
         """Pipeline 自动注入 AI HAL（RESCUE 模式使用; 可为 None）。"""
@@ -199,6 +228,31 @@ class GksTaskProcessor(Processor):
     @property
     def mode(self) -> Optional[str]:
         return self._mode
+
+    @property
+    def config(self) -> dict:
+        """当前生效配置（读视图: 修改请走 set_runtime_param）。"""
+        return self._cfg
+
+    def target_roi(self):
+        """靶标 ROI 归一化界 (x0, y0, x1, y1) 或 None（未配置）。"""
+        roi = self._cfg.get("target", {}).get("roi")
+        if isinstance(roi, (list, tuple)) and len(roi) == 4:
+            return tuple(float(v) for v in roi)
+        return None
+
+    @property
+    def pit_status(self) -> dict:
+        """调试页读锁存进度（爆炸物/人质坑位映射当前状态）。"""
+        return {
+            "pit": self._pos,
+            "pit_flag": self._pos_flag,
+            "latched": list(self._position),
+            "pending": self._pending_count,
+            "pit2": self._position2,
+            "pending2": self._pending_count2,
+            "shapes_seen": dict(self._shape_seen),
+        }
 
     @property
     def codes(self) -> Tuple[int, int, int]:

@@ -91,6 +91,7 @@ class STM32UartInterface:
         self._rx_frames_bad = 0
         self._rx_frames_unknown = 0
         self._stats_log_counter = 0
+        self._unexpected_counts: dict = {}   # 意外帧型节流打印: 首见+每50帧汇总一次
 
     @property
     def is_connected(self) -> bool:
@@ -203,12 +204,15 @@ class STM32UartInterface:
             if parsed is not None:
                 data_id, min_interval_ms, codes = parsed
                 dt_name = DATA_ID_NAMES.get(data_id, f"0x{data_id:02X}")
+                pl_hex = frame.payload.hex().upper()
                 if codes is not None:
                     log_print(f"[UART RX] CMD_REQUEST type={dt_name} "
-                              f"interval={min_interval_ms}ms codes={list(codes)}")
+                              f"interval={min_interval_ms}ms codes={list(codes)} "
+                              f"payload={pl_hex}")
                 else:
                     log_print(f"[UART RX] CMD_REQUEST type={dt_name} "
-                              f"interval={min_interval_ms}ms (resubscribe)")
+                              f"interval={min_interval_ms}ms (短帧重订阅) "
+                              f"payload={pl_hex}")
                 from .events import CmdRequestEvent
                 event = CmdRequestEvent(
                     data_type=data_id,
@@ -223,24 +227,32 @@ class STM32UartInterface:
 
         elif frame.frame_type == 0x23:   # TYPE_CMD_STOP
             if parse_cmd_stop_payload(frame.payload):
-                log_print("[UART RX] CMD_STOP")
+                log_print(f"[UART RX] CMD_STOP payload={frame.payload.hex().upper()}")
                 from .events import CmdStopEvent
                 self._publish(CmdStopEvent())
             else:
                 self._logger.warning("CMD_STOP with non-empty payload ignored")
 
         elif frame.frame_type == 0x21:   # TYPE_CMD_ACK
-            self._logger.warning("Unexpected CMD_ACK received (slave role)")
+            self._log_unexpected(0x21, "CMD_ACK", frame.payload)
 
         elif frame.frame_type == 0x22:   # TYPE_CMD_NACK
-            self._logger.warning("Unexpected CMD_NACK received (slave role)")
+            self._log_unexpected(0x22, "CMD_NACK", frame.payload)
 
         elif frame.frame_type == 0x24:   # TYPE_DATA_STREAM
-            self._logger.warning("Unexpected DATA_STREAM received (slave role)")
+            self._log_unexpected(0x24, "DATA_STREAM", frame.payload)
 
         else:
             self._rx_frames_unknown += 1
-            self._logger.warning(f"Unknown frame type: 0x{frame.frame_type:02X}")
+            self._log_unexpected(frame.frame_type, "Unknown", frame.payload)
+
+    def _log_unexpected(self, frame_type: int, name: str, payload: bytes) -> None:
+        """意外帧型（从站不应收到）: 首见打印, 之后每 50 帧汇总一次, 防刷屏。"""
+        self._unexpected_counts[frame_type] = self._unexpected_counts.get(frame_type, 0) + 1
+        count = self._unexpected_counts[frame_type]
+        if count == 1 or count % 50 == 0:
+            log_print(f"[UART RX] 意外帧 type=0x{frame_type:02X}({name}) "
+                      f"payload={payload.hex().upper()} (第{count}次)")
 
 
 # === Module test / demo ===
