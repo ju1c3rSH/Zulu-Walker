@@ -481,7 +481,7 @@ class GksTaskProcessor(Processor):
                     self._pos = ordered.index(self._codes[0]) + 1
                     self._pos_flag = 1
                     log_print(f"[GKS] latch pit={self._pos} seen={self._seen_order} "
-                  f"ordered={ordered} codes={list(self._codes)}")
+                    f"ordered={ordered} codes={list(self._codes)}")
         result = {
             "cx": self._explosive_cx,
             "pit": self._pos,
