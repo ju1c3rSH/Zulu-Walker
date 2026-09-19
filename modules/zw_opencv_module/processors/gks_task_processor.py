@@ -29,6 +29,8 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
+from utils.log_util import log_print
+
 from .registry import register_processor
 from .base import Processor, VisionResult
 from ..detectors.eod_color.maix_accel import find_blobs_maix, maix_image_from_context
@@ -252,6 +254,7 @@ class GksTaskProcessor(Processor):
             "pit2": self._position2,
             "pending2": self._pending_count2,
             "shapes_seen": dict(self._shape_seen),
+            "seen_order": list(self._seen_order),
         }
 
     @property
@@ -260,6 +263,8 @@ class GksTaskProcessor(Processor):
 
     def _reset_latch(self) -> None:
         # task1 爆炸物坑位状态
+        self._seen_order = []
+        self._color_hits = {1: 0, 2: 0, 3: 0}    # 每色连续命中帧数
         self._position = [0, 0, 0]
         self._explosive_cx = 0
         self._pos = 0
@@ -437,12 +442,33 @@ class GksTaskProcessor(Processor):
                 color_cx[i + 1] = largest["cx"]
         if self._codes[0] in color_cx:
             self._explosive_cx = int(color_cx[self._codes[0]])
-        # 顺序映射: 三坑各放一色, 按画面 x 从左到右排;
-        # 齐三色且连续两帧顺序一致才锁存, 防单帧误检/部分可见错排
-        if self._pos_flag == 0 and len(color_cx) == 3:
-            ordered = [c for c, _cx in sorted(color_cx.items(), key=lambda kv: kv[1])]
-            if not self._cfg["pit_left_is_1"]:
-                ordered.reverse()
+        # 跨帧累积: 同帧内按 cx 排序(摄像头从左到右, 同帧 cx 序=空间序),
+        # 首次出现的颜色追加到 _seen_order 末尾
+        for c in (1, 2, 3):
+            self._color_hits[c] = self._color_hits[c] + 1 if c in color_cx else 0
+
+        same_frame = sorted(color_cx.keys(), key=lambda c: color_cx[c])
+        if not self._cfg["pit_left_is_1"]:
+            same_frame.reverse()
+
+        # 一致性: 本帧已见色的相对序必须与 _seen_order 一致, 否则丢本帧
+        prev = [c for c in self._seen_order if c in color_cx]
+        if prev and prev != same_frame[:len(prev)]:
+            return ({"cx": int(self._explosive_cx), "pit": self._pos,
+                     "found": bool(self._pos_flag)},
+                    hits, list(self._position), self._pending_count, True)
+
+        # 只把确认过连续帧的颜色写入 _seen_order
+        for color_num in same_frame:
+            if (self._color_hits[color_num] >= 2
+                    and color_num not in self._seen_order):
+                self._seen_order.append(color_num)
+                log_print(f"[GKS] seen += {color_num} -> {self._seen_order}")
+
+        # 锁存: 已见 >=2 色即可推断完整顺序(缺色补末尾)
+        if self._pos_flag == 0 and len(self._seen_order) >= 2:
+            missing = [c for c in (1, 2, 3) if c not in self._seen_order]
+            ordered = self._seen_order + missing
             if ordered == self._pending_order:
                 self._pending_count += 1
             else:
@@ -451,9 +477,11 @@ class GksTaskProcessor(Processor):
             if self._pending_count >= int(self._cfg["pit_latch_frames"]):
                 for j, color_num in enumerate(ordered):
                     self._position[j] = color_num
-                if self._codes[0] in ordered:   # 守卫: 非法色号保持 pos=0 等待
+                if self._codes[0] in ordered:
                     self._pos = ordered.index(self._codes[0]) + 1
                     self._pos_flag = 1
+                    log_print(f"[GKS] latch pit={self._pos} seen={self._seen_order} "
+                  f"ordered={ordered} codes={list(self._codes)}")
         result = {
             "cx": self._explosive_cx,
             "pit": self._pos,
