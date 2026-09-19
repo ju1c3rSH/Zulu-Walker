@@ -7,11 +7,21 @@
   新路径始终可显示, 且叠加内容来自 gks_task 的 VisionResult（单来源）。
 - 顶部状态栏: 模式 / 链路 / FPS; 第二行: 任务码 + 锁存进度 + 坑位结果;
   检测叠加（bbox+标签）来自处理器 hits（RGB 色, maix Image 为 RGB888）。
+- 引导叠加: 靶标 ROI 两条横线 + 水平中线/误差刻度（读 get_info().target_roi）。
+- 告警横幅: 模型未加载/阈值缺失/推流停摆/NACK 文案, 单行红/黄色条。
 
 HUD 不解释像素, 只做呈现; 状态来自 status_fn（coordinator.get_info）。
 PC 无 maix 时所有绘制静默跳过（pytest 不受影响）。
 """
+import time
 from typing import Callable, Dict, Optional
+
+from modules.zw_uart_module.protocol import NACK_REASON_NAMES
+
+_NACK_BANNER_TTL_S = 5.0
+_STALE_FPS_LIMIT = 0.05
+_GUIDE_TICK_FRACTIONS = (-0.80, -0.40, -0.20, 0.0, 0.20, 0.40, 0.80)
+_TICK_H_RATIO = 0.06
 
 _MODE_TEXT = {
     "EXPLOSIVE": "MODE:EXPLOSIVE",
@@ -35,6 +45,7 @@ _WHITE = (255, 255, 255)
 
 _BAR_H = 30
 _LINE2_H = 24
+_BANNER_H = 20
 
 
 def _try_import_maix_image():
@@ -102,6 +113,8 @@ class DisplayHUD:
         self._draw_line2(img, status)
         self._draw_debug(img, status, fps)
         self._draw_hits(img, results or {})
+        self._draw_guides(img, status)
+        self._draw_alert_banner(img, status)
 
     # ---- internals ----
 
@@ -230,3 +243,82 @@ class DisplayHUD:
             text = hit.get("text") or ""
             if text:
                 self._text(img, x, max(2, y - 16), text, color, scale=1.0)
+
+    # ---- guides (ROI lines + target error axis) ----
+
+    def _draw_guides(self, img, status) -> None:
+        mode = str(status.get("state", "IDLE"))
+        if mode == "TARGET":
+            self._draw_roi_band(img, status)
+            self._draw_error_axis(img, status)
+        elif mode in ("EXPLOSIVE", "RESCUE"):
+            self._draw_roi_band(img, status, dim=True)
+
+    def _draw_roi_band(self, img, status, dim=False) -> None:
+        roi = status.get("target_roi")
+        if not roi:
+            return
+        h = img.height()
+        color = self._c["gray"] if dim else self._c["yellow"]
+        for fraction in (roi[1], roi[3]):
+            y = max(0, min(h - 1, int(fraction * h)))
+            try:
+                img.draw_rect(0, y, img.width(), 1, color=color, thickness=-1)
+            except Exception as e:
+                self._diag("roi_line", e)
+
+    def _draw_error_axis(self, img, status) -> None:
+        h = img.height()
+        w = img.width()
+        mid_y = h // 2
+        color = self._c["green"] if status.get("found") else self._c["gray"]
+        tick_len = max(8, int(h * _TICK_H_RATIO))
+        try:
+            img.draw_rect(0, mid_y, w, 1, color=color, thickness=-1)
+        except Exception as e:
+            self._diag("axis_mid", e)
+        for fraction in _GUIDE_TICK_FRACTIONS:
+            if fraction == 0.0:
+                continue
+            x = int(w // 2 * (1.0 + fraction))
+            try:
+                img.draw_rect(x, mid_y - tick_len // 2, 1, tick_len + 1,
+                              color=color, thickness=-1)
+                label = f"{fraction:+.0%}"
+                self._text(img, min(w - 40, max(2, x - 12)),
+                           mid_y + tick_len // 2 + 2, label, color, scale=0.9)
+            except Exception as e:
+                self._diag("axis_tick", e)
+
+    # ---- alert banner ----
+
+    def _collect_alerts(self, status) -> list:
+        alerts = []
+        mode = str(status.get("state", "IDLE"))
+        if not status.get("thresholds_ok", True):
+            alerts.append("THRESHOLDS MISSING (/my-threshold)")
+        if mode == "RESCUE" and not status.get("ai_loaded", True):
+            alerts.append("AI MODEL NOT LOADED (RESCUE unavailable)")
+        if status.get("link_active") and float(status.get("fps", 0.0)) < _STALE_FPS_LIMIT:
+            alerts.append("CAMERA STALLED (zero heartbeat streaming)")
+        nack = status.get("last_nack")
+        if nack:
+            reason, at = nack
+            if time.monotonic() - at < _NACK_BANNER_TTL_S:
+                alerts.append(f"NACK: {NACK_REASON_NAMES.get(reason, reason)}")
+        return alerts
+
+    def _draw_alert_banner(self, img, status) -> None:
+        alerts = self._collect_alerts(status)
+        if not alerts:
+            return
+        line = " | ".join(alerts)
+        y = _BAR_H + _LINE2_H + 26
+        try:
+            img.draw_rect(0, y, img.width(), _BANNER_H,
+                          color=self._c["red"], thickness=-1)
+        except Exception as e:
+            self._diag("alert_bar", e)
+            return
+        self._text(img, 6, y + 3, line, self._mi.COLOR_WHITE
+                   if hasattr(self._mi, "COLOR_WHITE") else self._c["white"], 1.0)

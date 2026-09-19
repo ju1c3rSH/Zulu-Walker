@@ -167,7 +167,7 @@ class GksCoordinator:
                 self._process_vision_results(all_results)
 
             now = time.monotonic()
-            if now - self._last_fps_time >= 1.0:
+            if now - self._last_fps_time >= 5.0:
                 self._last_fps = self._vision_manager.get_pipeline_fps(_PIPELINE_ID)
                 self._last_fps_time = now
                 log_print(f"[FPS] pipeline: {self._last_fps:.1f}")
@@ -178,7 +178,7 @@ class GksCoordinator:
 
         self._wdt_feed()
         self._wdt_count += 1
-        if self._wdt_count % 200 == 0:
+        if self._wdt_count % 600 == 0:
             log_print(f"[WDT] coord feed #{self._wdt_count}")
 
         now = time.monotonic()
@@ -202,7 +202,7 @@ class GksCoordinator:
                                   f"type={type_name} {self._stream_payload_desc()}")
 
         self._mem_log_counter += 1
-        if self._mem_log_counter >= 300:
+        if self._mem_log_counter >= 900:
             self._mem_log_counter = 0
             self._log_memory()
 

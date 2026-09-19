@@ -73,7 +73,7 @@ class ModuleManager:
             try:
                 self._wdt_feed()
                 self._wdt_count += 1
-                if self._wdt_count % 200 == 0:
+                if self._wdt_count % 600 == 0:
                     log_print(f"[WDT] main feed #{self._wdt_count}")
 
                 for name, loop_method in self._loop_methods.items():

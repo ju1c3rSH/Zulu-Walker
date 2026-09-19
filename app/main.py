@@ -1,35 +1,19 @@
+# -*- coding: utf-8 -*-
+"""工科赛近端视觉主程序 — 装配 + 页面路由 + 显示线程。
+
+页面四态由 AppPageState（framework/state_machine 页面状态机）驱动:
+MAIN 正常运行 / EXPLOSIVE / TARGET / RESCUE 三调试页, KEY_OK 循环切页。
+调试页独占相机的 set_paused 由页面状态机 enter/exit 托管; 显示线程对
+非 MAIN 页整体让位（页面自身 disp.show 全权接管）。退出图标由
+VisionManager 画入显示帧, 仅 MAIN 页消费触屏判定点击退出。
+"""
 import logging
 import os
 import sys
 import threading
 import time
+
 from utils.log_util import log_print, start_log_writer
-
-_DISPLAY_EVERY_N = 2
-_ICON_SIZE = 48
-_ICON_MARGIN = 12
-
-_KEY_HOLD = {"obj": None}  # Key 实例必须持引用: 回调线程挂在其上, 被 GC 后回调失效
-
-
-class AppPageState:
-    """页面状态单一事实来源，决定输入/显示路由。
-
-    消费方: 按键切页(写) / tick 渲染 / 显示线程 / main_callback 触摸处理(读)。
-    非主页面时 main_callback 短路: 调参页有自己的触摸消费渠道（tuner.step）,
-    这里不做坐标映射也不做退出图标判定 — 否则底部左列滑条热区会与
-    退出图标重叠, 误触直接 os._exit 且阈值未保存。
-    线程模型: 名字字符串单字段读写（key 回调线程写, 主循环/显示线程读）。
-    """
-    MAIN = "main"
-    TUNER = "tuner"
-
-    def __init__(self) -> None:
-        self.name = self.MAIN
-
-    def is_main(self) -> bool:
-        return self.name == self.MAIN
-
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.makedirs("logs", exist_ok=True)
@@ -44,7 +28,6 @@ logging.basicConfig(
 from framework.hal import Machine
 from framework.module_manager import ModuleManager
 
-
 try:
     from maix import sys as maix_sys
     _HAVE_MAIX_SYS = True
@@ -52,15 +35,33 @@ except ImportError:
     maix_sys = None
     _HAVE_MAIX_SYS = False
 
+_DISPLAY_SHOW_SKIP = 2
+_ICON_SIZE = 48
+_ICON_MARGIN = 12
+_ICON_HIT_PAD = 4
+_CMM_PRESSURE_THRESHOLD = 0.80
+_CMM_TOTAL_FALLBACK = 256 * 1024 * 1024
+_WDT_WINDOW_MS = 10000
+_WDT_FEED_PERIOD_S = 1.0
 
-def _check_cmm_pressure(skip_threshold: float = 0.80) -> bool:
+_EXPLOSIVE_GROUPS = (0, 1, 2)
+_TARGET_GROUPS = (3, 4, 5)
+
+_PIPELINE_ID = "cam_main"
+_TASK_GKS = "gks_task"
+_VISION_MODULE = "zw_opencv_module"
+
+from app.page_sm import STATE_MAIN
+
+
+def _check_cmm_pressure() -> bool:
     if not _HAVE_MAIX_SYS:
         return False
     try:
         info = maix_sys.memory_info()
         cmm_used = info.get("cmm_used", 0)
-        cmm_total = info.get("cmm_total", 256 * 1024 * 1024)
-        return cmm_used > int(cmm_total * skip_threshold)
+        cmm_total = info.get("cmm_total", _CMM_TOTAL_FALLBACK)
+        return cmm_used > int(cmm_total * _CMM_PRESSURE_THRESHOLD)
     except Exception:
         return False
 
@@ -76,273 +77,261 @@ def _push_coordinator_status(coordinator) -> None:
     dc.set("fps", f"{info.get('fps', 0.0):.1f}")
 
 
-def _make_key_switch(vm, pages) -> None:
-    """KEY_OK：主页面 ↔ 阈值调参页切换。
+class DebugPageFactory:
+    """调试页懒创建 + 会话保持: 页面实例跨按键循环连续存在。
 
-    注册自定义 key 回调后, MaixPy 默认"OK 键 = 退出程序"行为自动失效
-    （官方 peripheral/key.md）。回调在独立线程执行, 这里只做置位/暂停。
-    进调参页时暂停视觉采集（相机让位为唯一读取者）,
-    结果 >1s 陈旧由 coordinator 归零心跳自动兜底、UART 不断流。
+    首次进入 create(), 每次切入 begin()（重置交互态, 不丢共享会话数据）;
+    页面 exit_requested() 由 step_active 检测并回 MAIN。
     """
-    def on_key(key_id, state) -> None:
-        prev = _KEY_HOLD.get("last_state")
-        _KEY_HOLD["last_state"] = state
-        try:
-            log_print(f"[KEY] event id={key_id} state={state}")
-        except Exception:
-            pass
-        if state == prev:
+
+    def __init__(self, machine, vision_manager, pages):
+        self._machine = machine
+        self._vm = vision_manager
+        self._pages = pages
+        self._touchscreen = None
+        self._instances = {}
+        self._active = None
+
+    def ensure_entered(self, page_name: str) -> None:
+        if self._active == page_name:
             return
-        # 切沿按事件语义判定（str 化, 不依赖枚举对象）: 按下沿不切换,
-        # 释放沿/未知状态才切换 — 防止 press+release 双翻转"闪进闪出"。
-        # 运行久了事件投递间隔会拉大, 防抖窗口只作连发兜底, 不作主判据。
-        s = str(state).upper()
-        if "PRESS" in s:
-            edge = "press"
-        elif "RELEASE" in s:
-            edge = "release"
-        else:
-            edge = "unknown"
-        if edge == "press":
+        page = self._instances.get(page_name)
+        if page is None:
+            page = self._create(page_name)
+            if page is None:
+                log_print(f"[PAGE] {page_name} build failed -> main")
+                self._pages.select(STATE_MAIN)
+                return
+            self._instances[page_name] = page
+            log_print(f"[PAGE] built debug page: {page_name}")
+        page.begin()
+        self._active = page_name
+
+    def step_active(self, page_name: str) -> None:
+        page = self._instances.get(page_name)
+        ts = self._ensure_touchscreen()
+        cam = self._vm.get_pipeline_camera() if self._vm else None
+        if page is None or cam is None or ts is None:
+            log_print(f"[PAGE] {page_name} unavailable, "
+                      f"touch={ts is not None} cam={cam is not None} -> main")
+            self._pages.select(STATE_MAIN)
+            self._active = None
             return
-        import time as _time
-        now = _time.monotonic()
-        if now - _KEY_HOLD.get("last_toggle", 0.0) < 0.5:
+        frame_bgr = cam.read()
+        if frame_bgr is None:
             return
-        try:
-            _KEY_HOLD["last_toggle"] = now
-            if pages.is_main():
-                if vm.get_pipeline_camera() is None:
-                    log_print("[KEY] no pipeline camera, enter tuner refused")
-                    return
-                vm.set_paused(True)
-                pages.name = pages.TUNER
-                log_print("[KEY] toggle: edge=release, page -> tuner")
-            else:
-                pages.name = pages.MAIN
-                vm.set_paused(False)
-                log_print(f"[KEY] toggle: edge={edge}, page -> main, vision resume")
-        except Exception as e:
-            log_print(f"[KEY] toggle fail: {e}")
+        page.step(self._machine.display, ts, frame_bgr)
+        if getattr(page, "exit_requested", lambda: False)():
+            self._pages.select(STATE_MAIN)
+            self._active = None
+            log_print("[KEY] debug page Exit -> main, vision resume")
 
-    try:
-        from maix import key as _mkey
-        # Key 实例必须保存引用：回调线程挂在其上, 被 GC 后按键即为无响应
-        _KEY_HOLD["obj"] = _mkey.Key(on_key)
-        log_print("[KEY] KEY_OK toggles tuner page (default exit-app disabled)")
-    except Exception as e:
-        log_print(f"[KEY] init fail: {e}")
+    def page_active(self) -> bool:
+        return self._active is not None
 
+    def _ensure_touchscreen(self):
+        if self._touchscreen is None:
+            try:
+                from maix import touchscreen
+                self._touchscreen = touchscreen.TouchScreen()
+            except Exception:
+                return None
+        return self._touchscreen
 
-def _make_tick(machine, vm, pages) -> None:
-    """主循环 tick：主页面推 coordinator 状态; 调参页渲染调参器单帧。"""
-    from modules.zw_opencv_module.debug.threshold_tuner import GksThresholdTuner
-
-    _tick_state = {"tuner": None, "ts": None}
-
-    def _tick(coordinator) -> None:
-        if pages.name == pages.TUNER:
-            tuner = _tick_state["tuner"]
-            ts = _tick_state["ts"]
-            if tuner is None:
-                from modules.zw_opencv_module.debug.threshold_tuner import (
-                    GksThresholdTuner as _T,
-                )
-                tuner = _T()
-                tuner.begin()
-                _tick_state["tuner"] = tuner
-            if ts is None:
-                try:
-                    from maix import touchscreen
-                    ts = touchscreen.TouchScreen()
-                    _tick_state["ts"] = ts
-                except Exception:
-                    ts = None
-                    _tick_state["ts"] = None
-            cam = vm.get_pipeline_camera()
-            if cam is not None and ts is not None:
-                frame_bgr = cam.read()
-                if frame_bgr is not None:
-                    tuner.step(machine.display, ts, frame_bgr)
-                    if tuner.exit_requested():
-                        pages.name = pages.MAIN
-                        vm.set_paused(False)
-                        log_print("[KEY] tuner Exit -> main page, vision resume")
-        else:
-            _push_coordinator_status(coordinator)
-
-    return _tick
-
-
-def _load_exit_icon():
-    try:
-        from maix import image as _mi
-        icon = _mi.load("/maixapp/share/icon/ret.png")
-        if icon is not None:
-            w = icon.width() * 48 // icon.height()
-            if w % 2:
-                w += 1
-            return icon.resize(w, 48)
-    except Exception:
+    def _create(self, page_name: str):
+        if page_name in ("EXPLOSIVE", "TARGET"):
+            from modules.zw_opencv_module.debug.threshold_tuner import GksThresholdTuner
+            groups = _EXPLOSIVE_GROUPS if page_name == "EXPLOSIVE" else _TARGET_GROUPS
+            return GksThresholdTuner(group_indices=groups,
+                                     get_processor=self._get_gks_processor)
+        if page_name == "RESCUE":
+            from modules.zw_opencv_module.debug.rescue_tuner import GksRescueTuner
+            return GksRescueTuner(
+                get_processor=self._get_gks_processor,
+                get_ai=lambda: self._machine.ai,
+            )
         return None
 
+    def _get_gks_processor(self):
+        if not self._vm:
+            return None
+        pipe = self._vm.get_pipeline(_PIPELINE_ID)
+        if pipe is None:
+            return None
+        task = pipe.task_manager.get_task(_TASK_GKS)
+        return task.processor if task else None
 
-def _build_callbacks(manager, machine, pages):
-    """Returns (main_callback, start_display_thread).
 
-    main_callback: touch/input handling (~0ms), runs in main loop.
-    display thread: display.show() only, runs independently.
-    exit icon is drawn by VisionManager (via set_exit_icon).
+class MainUiShell:
+    """主循环 tick / MAIN 页触摸退出判定 / 显示线程。
+
+    MAIN 页 tick 只推 DebugConsole 状态; display_callback 读触摸判定
+    退出图标; 显示线程每 _DISPLAY_SHOW_SKIP 帧 show 一次（CMM 压力跳帧）。
+    非 MAIN 页所有路径短路, 与调试页触摸/显示互不干扰。
     """
-    _last_seen_frame = None
 
-    _touch = None
-    try:
-        from maix import touchscreen
-        _touch = touchscreen.TouchScreen()
-    except Exception:
-        pass
+    def __init__(self, machine, pages, factory: DebugPageFactory, vision_manager):
+        self._machine = machine
+        self._pages = pages
+        self._factory = factory
+        self._vm = vision_manager
+        self._touch = self._open_touch()
+        self._touch_down = False
+        self._touch_x = 0
+        self._touch_y = 0
+        self._last_seen_frame = None
+        self._display_counter = 0
 
-    _touch_down = False
-    _touch_x = _touch_y = 0
+    def _open_touch(self):
+        try:
+            from maix import touchscreen
+            return touchscreen.TouchScreen()
+        except Exception:
+            return None
 
-    def _in_btn(x, y, bx, by):
-        return bx - 4 <= x <= bx + _ICON_SIZE + 4 and by - 4 <= y <= by + _ICON_SIZE + 4
-
-    def main_callback():
-        """Touch handling only — fast (~0ms), no JPEG encoding, no GIL hog.
-
-        页面路由: 调参页整体短路 — 该页触摸由 tuner.step 自己消费,
-        这里既不读触摸屏（避免多读者状态互相干扰）也不做
-        退出图标判定（旧帧坐标映射失义 + 滑条热区重叠 os._exit 误触）。
-        """
-        nonlocal _touch_down, _touch_x, _touch_y
-
-        if not pages.is_main():
+    def tick(self, coordinator) -> None:
+        page_name = self._pages.name
+        if page_name == STATE_MAIN:
+            self._factory.reset()
+            _push_coordinator_status(coordinator)
             return
+        self._factory.ensure_entered(page_name)
+        if self._factory.page_active():
+            self._factory.step_active(page_name)
 
-        if _touch is not None:
-            try:
-                x, y, pressed = _touch.read()
-                if pressed:
-                    _touch_down = True
-                    try:
-                        vision_mod = manager.modules.get("zw_opencv_module")
-                        if vision_mod:
-                            vm2 = getattr(vision_mod, "get_vision_manager", lambda: None)()
-                            if vm2:
-                                frame2 = vm2.get_display_frame()
-                                if frame2 is not None and machine is not None:
-                                    import maix.image as _mi2
-                                    pt = _mi2.resize_map_pos_reverse(
-                                        frame2.width(), frame2.height(),
-                                        machine.display.width(), machine.display.height(),
-                                        _mi2.Fit.FIT_CONTAIN, x, y,
-                                    )
-                                    _touch_x, _touch_y = int(pt[0]), int(pt[1])
-                                else:
-                                    _touch_x, _touch_y = x, y
-                            else:
-                                _touch_x, _touch_y = x, y
-                        else:
-                            _touch_x, _touch_y = x, y
-                    except Exception:
-                        _touch_x, _touch_y = x, y
-                else:
-                    if _touch_down:
-                        vision_mod = manager.modules.get("zw_opencv_module")
-                        if vision_mod:
-                            vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
-                            if vm:
-                                frame = vm.get_display_frame()
-                                if frame is not None:
-                                    h = frame.height()
-                                    by = h - _ICON_SIZE - 8
-                                    bx = _ICON_MARGIN
-                                    if _in_btn(_touch_x, _touch_y, bx, by):
-                                        import os
-                                        os._exit(0)
-                    _touch_down = False
-            except Exception:
-                pass
+    def display_callback(self) -> None:
+        if not self._pages.is_main():
+            return
+        self._consume_main_touch()
 
-    def _display_loop():
-        nonlocal _last_seen_frame
-        _tick = 0
+    def start_display_thread(self):
+        thread = threading.Thread(target=self._display_loop, daemon=True)
+        thread.start()
+        return thread
+
+    def _display_loop(self) -> None:
         while True:
-            if pages.name == pages.TUNER:
+            if not self._pages.is_main():
                 time.sleep(0.01)
                 continue
-            vision_mod = manager.modules.get("zw_opencv_module")
-            if vision_mod and machine and machine.display:
-                vm = getattr(vision_mod, "get_vision_manager", lambda: None)()
-                if vm:
-                    frame = vm.get_display_frame()
-                    if frame is not None and frame is not _last_seen_frame:
-                        _last_seen_frame = frame
-                        _tick += 1
-                        if _tick % _DISPLAY_EVERY_N != 0:
-                            continue
-                        if _check_cmm_pressure():
-                            continue
-                        try:
-                            machine.display.show(frame)
-                        except Exception:
-                            pass
+            frame = self._vm.get_display_frame() if self._vm else None
+            if frame is not None and frame is not self._last_seen_frame:
+                self._last_seen_frame = frame
+                self._display_counter += 1
+                if self._display_counter % _DISPLAY_SHOW_SKIP == 0 \
+                        and not _check_cmm_pressure():
+                    try:
+                        self._machine.display.show(frame)
+                    except Exception:
+                        pass
             time.sleep(0.001)
 
-    def start_display_thread():
-        t = threading.Thread(target=_display_loop, daemon=True)
-        t.start()
-        return t
+    def _consume_main_touch(self) -> None:
+        if self._touch is None:
+            return
+        try:
+            x, y, pressed = self._touch.read()
+            if pressed:
+                self._touch_down = True
+                self._touch_x, self._touch_y = self._map_screen_to_frame(x, y)
+            elif self._touch_down:
+                self._touch_down = False
+                if self._in_exit_button(self._touch_x, self._touch_y):
+                    os._exit(0)
+        except Exception:
+            pass
 
-    return main_callback, start_display_thread
+    def _map_screen_to_frame(self, x, y):
+        frame = self._vm.get_display_frame() if self._vm else None
+        if frame is None:
+            return int(x), int(y)
+        try:
+            import maix.image as maix_image
+            point = maix_image.resize_map_pos_reverse(
+                frame.width(), frame.height(),
+                self._machine.display.width(), self._machine.display.height(),
+                maix_image.Fit.FIT_CONTAIN, x, y,
+            )
+            return int(point[0]), int(point[1])
+        except Exception:
+            return int(x), int(y)
+
+    def _in_exit_button(self, x, y) -> bool:
+        frame = self._vm.get_display_frame() if self._vm else None
+        if frame is None:
+            return False
+        bx = _ICON_MARGIN
+        by = frame.height() - _ICON_SIZE - 8
+        return (bx - _ICON_HIT_PAD <= x <= bx + _ICON_SIZE + _ICON_HIT_PAD
+                and by - _ICON_HIT_PAD <= y <= by + _ICON_SIZE + _ICON_HIT_PAD)
 
 
 def _make_wdt_feed():
     try:
-        from maix.peripheral import wdt as _mwdt
-        _w = _mwdt.WDT(0, 10000)
+        from maix.peripheral import wdt as maix_wdt
+        watchdog = maix_wdt.WDT(0, _WDT_WINDOW_MS)
         import time
-        _last = [0.0]
-        _fail_count = [0]
+        # 多处 feed 入口(main/coord/viz)共享同一节流时钟, 全局最多 1 次/周期,
+        # 避免各自独立计时导致 C 层 WDT::feed() 刷屏 (窗口 10s 足够余量)
+        if "_WDT_SHARED_STATE" not in globals():
+            globals()["_WDT_SHARED_STATE"] = {"last": 0.0, "fails": 0, "wdt": watchdog}
+        _state = globals()["_WDT_SHARED_STATE"]
+        _state["wdt"] = watchdog
 
         def _feed():
             now = time.monotonic()
-            if now - _last[0] < 1.0:
+            if now - _state["last"] < _WDT_FEED_PERIOD_S:
                 return
-            _last[0] = now
+            _state["last"] = now
             try:
-                _w.feed()
+                watchdog.feed()
             except Exception as e:
-                _fail_count[0] += 1
-                if _fail_count[0] % 50 == 1:
-                    log_print(f"[WDT] feed FAIL x{_fail_count[0]}: {e}")
+                _state["fails"] += 1
+                if _state["fails"] % 50 == 1:
+                    log_print(f"[WDT] feed FAIL x{_state['fails']}: {e}")
         return _feed
     except Exception as e:
         log_print(f"[WDT] init FAIL: {e}")
         return lambda: None
 
 
-def _init_streamer(vm) -> None:
+def _load_exit_icon():
+    try:
+        from maix import image as maix_image
+        icon = maix_image.load("/maixapp/share/icon/ret.png")
+        if icon is None:
+            return None
+        width = icon.width() * _ICON_SIZE // icon.height()
+        if width % 2:
+            width += 1
+        return icon.resize(width, _ICON_SIZE)
+    except Exception:
+        return None
+
+
+def _init_streamer(vision_manager) -> None:
     from modules.zw_wifi_stream import get_streamer
-    s = get_streamer()
-    if s is not None and vm is not None:
-        vm.set_capture_sink(s.push_frame)
-        s.start_async()
+    streamer = get_streamer()
+    if streamer is not None and vision_manager is not None:
+        vision_manager.set_capture_sink(streamer.push_frame)
+        streamer.start_async()
+
+
+def _project_config() -> dict:
+    import yaml
+    try:
+        with open("project_config.yaml") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
 
 
 def main():
     log_print("0xfb709394")
 
-    import yaml
-    try:
-        with open("project_config.yaml") as f:
-            _cfg = yaml.safe_load(f) or {}
-    except Exception:
-        _cfg = {}
     from utils.debug_console import DebugConsole
-    DebugConsole.set_global_enabled(_cfg.get("debug_console_enabled", True))
+    config = _project_config()
+    DebugConsole.set_global_enabled(config.get("debug_console_enabled", True))
     start_log_writer()
 
     wdt_feed = _make_wdt_feed()
@@ -363,43 +352,49 @@ def main():
         pass
 
     manager = ModuleManager(machine, event_bus=bus, wdt_feed=wdt_feed)
-    manager.register_many(["zw_opencv_module", "zw_uart_module", "zw_wifi_stream"])
+    manager.register_many([_VISION_MODULE, "zw_uart_module", "zw_wifi_stream"])
 
     from modules.zw_opencv_module import get_vision_manager
     from modules.zw_uart_module import get_interface
 
-    vm = get_vision_manager()
-    if vm:
-        coordinator.connect_vision(vm)
-        vm.set_hud(DisplayHUD(status_fn=coordinator.get_info))
+    vision_manager = get_vision_manager()
+    if vision_manager:
+        coordinator.connect_vision(vision_manager)
+        vision_manager.set_hud(DisplayHUD(status_fn=coordinator.get_info))
 
-    uart = get_interface()
-    if uart:
-        coordinator.set_uart_sender(uart.send_raw)
+    uart_interface = get_interface()
+    if uart_interface:
+        coordinator.set_uart_sender(uart_interface.send_raw)
 
     coordinator.set_ai(machine.ai)
-
-    _init_streamer(vm)
+    _init_streamer(vision_manager)
 
     exit_icon = _load_exit_icon()
-    if exit_icon is not None and vm is not None:
-        vm.set_exit_icon(exit_icon, _ICON_SIZE, _ICON_MARGIN)
+    if exit_icon is not None and vision_manager is not None:
+        vision_manager.set_exit_icon(exit_icon, _ICON_SIZE, _ICON_MARGIN)
 
-    cam_cfg = _cfg.get("cameras", [{}])[0]
-    cam_w = cam_cfg.get("width", 640)
-    cam_h = cam_cfg.get("height", 480)
-    log_print(f"cam w:{cam_w} h:{cam_h}")
-    coordinator.set_frame_size(cam_w, cam_h)
+    camera_config = config.get("cameras", [{}])[0]
+    coordinator.set_frame_size(
+        camera_config.get("width", 640), camera_config.get("height", 480))
+    log_print(f"cam w:{camera_config.get('width', 640)} h:{camera_config.get('height', 480)}")
 
-    pages = AppPageState()
-    if vm:
-        _make_key_switch(vm, pages)
+    from app.page_router import AppPageState, KeyCycleRouter
+    pages = AppPageState(vision_manager)
+    pages.set_camera_gate(
+        lambda: bool(vision_manager and vision_manager.get_pipeline_camera() is not None))
+    if vision_manager:
+        KeyCycleRouter(pages)
 
-    main_callback, start_display_thread = _build_callbacks(manager, machine, pages)
+    factory = DebugPageFactory(machine, vision_manager, pages)
+    ui = MainUiShell(machine, pages, factory, vision_manager)
 
     coordinator.start()
-    start_display_thread()
-    manager.run_main_loop(coordinator, tick_callback=_make_tick(machine, vm, pages), display_callback=main_callback)
+    ui.start_display_thread()
+    manager.run_main_loop(
+        coordinator,
+        tick_callback=ui.tick,
+        display_callback=ui.display_callback,
+    )
 
 
 if __name__ == "__main__":

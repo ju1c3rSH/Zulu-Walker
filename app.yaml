@@ -1,7 +1,7 @@
 id: gks_nearcam
 name: gks_nearcam
 name[zh]: 工科赛近端视觉
-version: 2.0.0
+version: 2.2.1
 icon: app.png
 author: GongKeSai 2026
 desc: >-
@@ -15,27 +15,18 @@ exclude:
   - .vscode
   - .claude
   - stories
+  - archive
   - docs
   - requirements*
   - tests
-  - modules/zw_opencv_module/detectors/cargo_detector
-  - modules/zw_opencv_module/detectors/circle_target_detector
-  - modules/zw_opencv_module/detectors/ring_detector
-  - modules/zw_opencv_module/detectors/line_detector
-  - modules/zw_opencv_module/detectors/pendulum_calibrator
-  - modules/zw_opencv_module/processors/cargo_processor.py
-  - modules/zw_opencv_module/processors/circle_target_processor.py
-  - modules/zw_opencv_module/processors/ring_discovery_processor.py
-  - modules/zw_opencv_module/processors/qr_processor.py
-  - modules/zw_opencv_module/processors/line_follow_processor.py
-  - modules/zw_opencv_module/processors/handlers
-  - modules/zw_opencv_module/processors/ai_inference_processor.py
 files:
   - app\__init__.py
   - app\coordinator.py
   - app\events.py
-  - app\line_follow_sm.py
   - app\main.py
+  - app\page_router.py
+  - app\page_sm.py
+  - app\subscription_sm.py
   - assets\models\hostage_yolo11n\eod_hostage_320.axmodel
   - assets\models\hostage_yolo11n\eod_hostage_320.mud
   - assets\restart.png
@@ -65,23 +56,18 @@ files:
   - framework\hal\machine.py
   - framework\state_machine\__init__.py
   - framework\state_machine\base.py
-  - framework\state_machine\bridge.py
   - framework\__init__.py
   - framework\event_bus.py
   - framework\log.py
   - framework\module_manager.py
-  - framework\visual_state_machine.py
-  - modules\zw_opencv_module\config\camera_config.yaml
   - modules\zw_opencv_module\config\eod_config.yaml
   - modules\zw_opencv_module\config\vision_config.yaml
   - modules\zw_opencv_module\debug\__init__.py
+  - modules\zw_opencv_module\debug\lab_session.py
+  - modules\zw_opencv_module\debug\rescue_tuner.py
   - modules\zw_opencv_module\debug\threshold_tuner.py
-  - modules\zw_opencv_module\detectors\_shared\__init__.py
-  - modules\zw_opencv_module\detectors\_shared\kalman_utils.py
-  - modules\zw_opencv_module\detectors\_shared\param_def.py
   - modules\zw_opencv_module\detectors\eod_color\__init__.py
   - modules\zw_opencv_module\detectors\eod_color\maix_accel.py
-  - modules\zw_opencv_module\detectors\eod_shape\__init__.py
   - modules\zw_opencv_module\detectors\__init__.py
   - modules\zw_opencv_module\display\__init__.py
   - modules\zw_opencv_module\display\hud.py

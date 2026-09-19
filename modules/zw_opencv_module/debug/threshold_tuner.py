@@ -4,34 +4,29 @@
 
 两种使用方式:
 - 独立模式: `python run.py debug color` — 自建 Camera/Display 阻塞运行;
-- 页面模式: 主程序 KEY_OK 切入, 外部喂帧, `step()` 单帧渲染不复用 Camera/Display。
+- 页面模式: 主程序调试页切入, 外部喂帧, `step()` 单帧渲染不复用 Camera/Display。
 
-- 6 组阈值 = 爆红/爆绿/爆蓝 + 靶红/靶绿/靶蓝（与 GksTaskProcessor 组序约定一致）;
-- 实时预览: 当前组阈值命中像素绿色高亮 + 色块 bbox + 点选取色(LAB 读数);
-- 保存写到 /my-threshold/my_64threshold.txt（组序同 main.py）,
-  主程序订阅运行中检测到 mtime 变化自动热重载、不清锁存。
+6 组阈值以 LabThresholdSession 为唯一内存事实来源（本工具只暴露组子集时,
+仍对整会话做 SAVE, 保证拆页后不互相覆盖）; 实时预览: 当前组阈值命中像素
+绿色高亮 + 色块 bbox + 点选取色(LAB 读数); 保存写到 /my-threshold/my_64threshold.txt,
+主程序订阅运行中检测到 mtime 变化自动热重载、不清锁存。
 
-文件行格式: name|Lmin,Lmax,Amin,Amax,Bmin,Bmax（第三段 hsv 本工具不写,
-消费端只读 LAB 段）。触屏 API 依 MaixPy 官方文档 touchscreen.md。
-
-绘图颜色依官方 image_ops.md: draw_rect/draw_string 的 color 需传入
-image.Color.from_rgb(...) / maix.image.COLOR_* 构造值, 不接受 RGB 元组 —
-元组会抛异常且被绘制兜底吞掉, 表现为界面静默空白。
+触屏 API 依 MaixPy 官方文档 touchscreen.md。绘图颜色依官方 image_ops.md:
+draw_rect/draw_string 的 color 需传入 image.Color.from_rgb(...) /
+maix.image.COLOR_* 构造值, 不接受 RGB 元组 — 元组会抛异常且被绘制兜底
+吞掉, 表现为界面静默空白。
 """
-import os
 import time
 
 import numpy as np
 
-from modules.zw_opencv_module.processors.gks_task_processor import (
-    load_gks_config, load_threshold_file,
+from modules.zw_opencv_module.debug.lab_session import (
+    GROUP_NAMES,
+    THRESHOLD_FILE,
+    get_threshold_session,
 )
+from modules.zw_opencv_module.processors.gks_task_processor import load_gks_config
 
-THRESHOLD_FILE = "/my-threshold/my_64threshold.txt"
-GROUP_NAMES = ["E-R", "E-G", "E-B", "T-R", "T-G", "T-B"]
-FILE_KEYS = ["exp_red", "exp_green", "exp_blue", "tgt_red", "tgt_green", "tgt_blue"]
-
-# 滑条范围: L 0..100, A/B -128..127
 SLIDERS = ["Lmin", "Lmax", "Amin", "Amax", "Bmin", "Bmax"]
 SLIDER_RANGE = {0: (0, 100), 1: (0, 100), 2: (-128, 127), 3: (-128, 127),
                 4: (-128, 127), 5: (-128, 127)}
@@ -47,21 +42,34 @@ def _pack(rgb) -> int:
 
 
 class GksThresholdTuner:
-    """触屏 LAB 调参器。
+    """触屏 LAB 调参器（组子集视图, 会话级整存整取）。
 
     独立模式: run() 阻塞运行至点 Exit / app 退出。
     页面模式(主程序内嵌): step(disp, ts, frame_bgr) 每帧调用,
     exit_requested() 为 True 表示用户点了 Exit, 由外部调用方切回主页面。
+    group_indices=None 显示全部 6 组; 指定子集时组选择条只放该子集按钮,
+    RESET/SAVE 均作用于共享会话整六组。
     """
 
-    def __init__(self, camera_source=None, width: int = 640, height: int = 480):
+    def __init__(self, camera_source=None, width: int = 640, height: int = 480,
+                 group_indices=None, get_processor=None):
         self._source = camera_source
         self._req_w, self._req_h = width, height
+        self._group_indices = tuple(group_indices) if group_indices else None
+        self._visible_names = (
+            [(i, GROUP_NAMES[i]) for i in self._group_indices]
+            if self._group_indices else
+            [(i, GROUP_NAMES[i]) for i in range(len(GROUP_NAMES))]
+        )
+        self._get_processor = get_processor
         self._stop = False
         self._C = self._build_colors()
         self._diag_logged = {}
         self._bind_disp = None
         self._bind_ts = None
+        self._session = get_threshold_session()
+        self._target_group_index_range = range(3, 6)
+        self._roi_cache = None
 
     # ---- colors (官方 API: image.Color.from_rgb / maix.image.COLOR_*) ----
 
@@ -145,10 +153,10 @@ class GksThresholdTuner:
         self._reset_session()
 
     def _reset_session(self) -> None:
-        self._groups = self._load_groups()
-        self._cur = 0
-        self._pick = None          # 预览区点选像素 (x, y) -> LAB 读数
-        self._toast = ""           # 操作提示（1.5s 消失）
+        self._groups = self._session.groups()
+        self._cur = self._group_indices[0] if self._group_indices else 0
+        self._pick = None
+        self._toast = ""
         self._toast_until = 0.0
         self._pressed_last = False
         self._session_stop = False
@@ -190,46 +198,81 @@ class GksThresholdTuner:
             if self._in(x, y, act["exit"]):
                 self._session_stop = True
             if self._in(x, y, act["save"]):
-                self._save(self._groups)
+                self._sync_current_to_session()
+                self._session.save()
                 self._toast = "SAVED -> " + THRESHOLD_FILE
                 self._toast_until = time.time() + 1.5
             if self._in(x, y, act["reset"]):
-                self._groups = self._load_groups()
+                self._session.reload()
+                self._groups = self._session.groups()
                 self._toast, self._toast_until = "RELOADED", time.time() + 1.0
+            if "mirror" in act and self._in(x, y, act["mirror"]):
+                self._toggle_mirror()
             px, py = int(x / sx), int(y / sy)
             if 0 <= px < frame_bgr.shape[1] and 0 <= py < frame_bgr.shape[0] \
                     and y > _UI_GROUP_H + _UI_ACTION_H:
                 self._pick = (px, py)
 
         self._draw_sliders(img, self._groups[self._cur], x, y, pressed)
+        self._sync_current_to_session()
         self._draw_info(img, blobs, mask, self._pick, frame_bgr, sx, sy)
+        self._draw_roi_lines(img, cur, sx, sy)
         if self._toast and time.time() < self._toast_until:
             self._text(img, 8, img.height() - 24, self._toast,
                        self._C["yellow"], 1.2)
         return img
 
+    def _draw_pit_status(self, img) -> None:
+        processor = self._get_processor() if self._get_processor else None
+        if processor is None:
+            return
+        pit = processor.pit_status
+        y = _UI_GROUP_H + _UI_ACTION_H + 20
+        if any(g < 3 for g in self._visible_names_idx()):
+            text = (f"PIT:{pit.get('pit', 0)} "
+                    f"LOCK {pit.get('pending', 0)}/{int(processor.config.get('pit_latch_frames', 2))}")
+            color = self._C["green"] if pit.get("pit_flag") else self._C["yellow"]
+            self._text(img, 8, y, text, color, 1.0)
+
+    def _draw_roi_lines(self, img, group_idx: int, sx, sy) -> None:
+        """靶标组时按 target.roi 画上/下两条横线（与主 HUD 同源处理器配置）。"""
+        if self._target_group_index_range is None:
+            return
+        if group_idx not in self._target_group_index_range:
+            return
+        roi = None
+        processor = self._get_processor() if self._get_processor else None
+        if processor is not None:
+            roi = processor.target_roi()
+        if roi is None:
+            roi = self._roi_from_config_cache()
+        if roi is None:
+            return
+        h = img.height()
+        color = self._C["yellow"]
+        for fraction in (float(roi[1]), float(roi[3])):
+            line_y = max(0, min(h - 1, int(fraction * h)))
+            self._rect(img, 0, line_y, img.width(), 1, color=color, thickness=-1)
+
+    def _roi_from_config_cache(self):
+        if self._roi_cache is None:
+            try:
+                roi = load_gks_config().get("target", {}).get("roi")
+                if isinstance(roi, (list, tuple)) and len(roi) == 4:
+                    self._roi_cache = tuple(float(v) for v in roi)
+            except Exception as e:
+                self._diag("roi_cfg", e)
+        return self._roi_cache
+
     # ---- data ----
 
-    def _load_groups(self) -> list:
-        cfg = load_gks_config()
-        exp = cfg["explosive"]["lab"]
-        tgt = cfg["target"]["lab"]
-        groups = [list(exp["red"]), list(exp["green"]), list(exp["blue"]),
-                  list(tgt["red"]), list(tgt["green"]), list(tgt["blue"])]
-        if os.path.exists(THRESHOLD_FILE):
-            saved = load_threshold_file(THRESHOLD_FILE)
-            for i in range(min(6, len(saved))):
-                groups[i] = list(saved[i])
-        return groups
+    def _sync_current_to_session(self) -> None:
+        self._session.set_group(self._cur, self._groups[self._cur])
 
-    def _save(self, groups: list) -> None:
-        parent = os.path.dirname(THRESHOLD_FILE)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        lines = [f"{FILE_KEYS[i]}|{','.join(str(v) for v in groups[i])}"
-                 for i in range(6)]
-        with open(THRESHOLD_FILE, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+    def reset_session_from_file(self) -> None:
+        """从配置+阈值文件整载（覆盖未保存的内存态）。"""
+        self._session.reload()
+        self._groups = self._session.groups()
 
     # ---- cv helpers ----
 
@@ -301,13 +344,14 @@ class GksThresholdTuner:
 
     def _draw_groups(self, img, cur: int):
         rects = []
-        bw = img.width() // 6
-        for i, name in enumerate(GROUP_NAMES):
+        buttons = self._visible_names
+        bw = img.width() // max(1, len(buttons))
+        for i, (group_idx, name) in enumerate(buttons):
             rect = (i * bw + 2, 2, bw - 4, _UI_GROUP_H - 6)
-            color = self._C["green"] if i == cur else self._C["gray_off"]
+            color = self._C["green"] if group_idx == cur else self._C["gray_off"]
             self._rect(img, rect[0], rect[1], rect[2], rect[3], color=color)
             self._text(img, rect[0] + 8, rect[1] + 4, name, color, 1.2)
-            rects.append((rect, i))
+            rects.append((rect, group_idx))
         return rects
 
     def _draw_actions(self, img):
@@ -324,7 +368,36 @@ class GksThresholdTuner:
         self._text(img, rects["exit"][0] + 8, y + 6, "< Exit", self._C["white"], 1.2)
         self._text(img, rects["save"][0] + 8, y + 6, "SAVE", self._C["green"], 1.2)
         self._text(img, rects["reset"][0] + 8, y + 6, "RESET", self._C["yellow"], 1.2)
+        if self._mirror_available():
+            rects["mirror"] = (rects["exit"][0] + rects["exit"][2] + 6, y, 110, h - 4)
+            self._rect(img, *rects["mirror"], color=self._C["cyan"])
+            self._text(img, rects["mirror"][0] + 8, y + 6,
+                       f"MIR:{'L' if self._mirror_state() else 'R'}", self._C["cyan"], 1.2)
         return rects
+
+    def _mirror_available(self) -> bool:
+        processor = self._get_processor() if self._get_processor else None
+        return processor is not None and any(g < 3 for g in self._visible_names_idx())
+
+    def _visible_names_idx(self):
+        return [group_idx for group_idx, _name in self._visible_names]
+
+    def _mirror_state(self) -> bool:
+        processor = self._get_processor()
+        return bool(processor.config.get("pit_left_is_1", True)) if processor else True
+
+    def _toggle_mirror(self) -> None:
+        processor = self._get_processor()
+        if processor is None:
+            return
+        new_value = not self._mirror_state()
+        try:
+            processor.set_runtime_param("pit_left_is_1", "pit_left_is_1", new_value)
+        except ValueError as e:
+            self._diag("mirror_toggle", e)
+            return
+        self._toast = f"MIRROR={'LEFT=1' if new_value else 'RIGHT=1'}"
+        self._toast_until = time.time() + 1.5
 
     def _draw_sliders(self, img, lab: list, tx, ty, pressed) -> bool:
         """2 列 x 3 行滑条; 按住拖动直接设值。返回是否发生修改。"""
@@ -358,6 +431,7 @@ class GksThresholdTuner:
             info += f" max:{b['area']}px ({b['x']},{b['y']},{b['w']},{b['h']})"
         self._text(img, 8, _UI_GROUP_H + _UI_ACTION_H + 4, info,
                    self._C["white"], 1.0)
+        self._draw_pit_status(img)
         for b in blobs:
             self._rect(img, int(b["x"] * sx), int(b["y"] * sy),
                        int(b["w"] * sx), int(b["h"] * sy),

@@ -46,5 +46,18 @@
 
 ## 5. 回归基线
 
-- PC: `python -m pytest tests/` 全绿（74 用例: C 库向量移植 + md §6 + Brain 对拍 + 门控/锁存语义）。
+- PC: `python -m pytest tests/` 全绿（83 用例: C 库向量移植 + md §6 + Brain 对拍 + 门控/锁存语义）。
 - 台架: 本清单 3.1~3.8 全部通过后再连整机联调。
+
+## 6. 四页调试 UI 与告警横幅（2026-09 新增, 设备端人工验证）
+
+| # | 检查 | 预期 |
+|---|---|---|
+| 1 | KEY_OK 从 MAIN 释放沿按三下 | 依序进 EXPLOSIVE → TARGET → RESCUE, 再按回 MAIN |
+| 2 | 进任一调试页 | 画面为该调参页独占（视觉暂停推流零值心跳兜底） |
+| 3 | 爆炸物页 3 组 LAB 滑条 + 点取色 + MIRROR 开关 | 阈值即时生效到识别预览; MIR 切换立即影响 left_is_1 |
+| 4 | 靶标页 ROI 两黄横线 | 画在 target.roi 对应高度, 与 HUD 一致 |
+| 5 | 靶标页中线刻度（HUD） | 中线 + ±20/40/80% 刻度, found 时变绿 |
+| 6 | SAVE | 写 /my-threshold 热重载, 主链路锁存不清 |
+| 7 | 人质页 conf/iou/xcrop 滑条 + RESET | 立即生效; RESET 回代码默认 |
+| 8 | 告警横幅 | RESCUE 无模型/LAB 阈值文件缺失/相机停摆 => 红条文案; NACK 后 5s 内显示 reason |

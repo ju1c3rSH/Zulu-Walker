@@ -132,7 +132,7 @@ class VisionManager:
             try:
                 self._wdt_feed()
                 self._wdt_count += 1
-                if self._wdt_count % 100 == 0:
+                if self._wdt_count % 600 == 0:
                     log_print(f"[WDT] viz feed #{self._wdt_count}")
 
                 if self._paused:

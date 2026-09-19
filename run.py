@@ -5,12 +5,6 @@ Zulu-Walker 启动器
 使用方法:
     python run.py main                          # 运行主程序
     python run.py debug color                   # 设备端 LAB 阈值调参器（触屏）
-    python run.py debug cargo                   # 物料块检测调试器
-    python run.py debug circle                  # 圆靶检测调试器
-    python run.py debug ring                    # 环检测调试器
-    python run.py debug line                    # 黑线循迹调试器
-    python run.py debug cargo -c 1              # 指定摄像头
-    python run.py debug cargo -W 1280 -H 720    # 指定分辨率
 """
 import argparse
 import importlib
@@ -26,10 +20,6 @@ from utils.debug_console import DebugConsole
 
 _RUNNER_MAP = {
     "color":  ("modules.zw_opencv_module.debug.threshold_tuner", "GksThresholdTuner"),
-    "cargo":  ("modules.zw_opencv_module.detectors.cargo_detector.debug.runner", "CargoDebugRunner"),
-    "circle": ("modules.zw_opencv_module.detectors.circle_target_detector.debug.runner", "CircleTargetDebugRunner"),
-    "ring":   ("modules.zw_opencv_module.detectors.ring_detector.debug.runner", "RingDebugRunner"),
-    "line":   ("modules.zw_opencv_module.detectors.line_detector.debug.runner", "LineDebugRunner"),
 }
 
 

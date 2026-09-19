@@ -38,7 +38,7 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读 API 参考; 不确�
   经 `MaixCam2AI` nick 热切换; 缺失时 RESCUE 回 NACK NOT_READY 不崩溃
 - 阈值: `eod_config.yaml` `gks:` 段 + 运行时覆盖文件 `/my-threshold/my_64threshold.txt`
   （mtime 变化热重载不清锁存）; 设备端调参器 `python run.py debug color`（触屏 GUI）
-- 测试（PC 端 pytest, 74 用例）: `python -m pytest tests/`
+- 测试（PC 端 pytest, 83 用例）: `python -m pytest tests/`
   - `test_protocol_gks.py`: C 自测向量移植 + md §6 业务向量 + Brain interrupt.c 消费偏移对拍
   - `test_gks_task_processor.py` / `test_coordinator_gks.py`: 照搬逻辑行为等价 + 订阅语义
 
@@ -56,6 +56,10 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读 API 参考; 不确�
 | `modules/zw_opencv_module/display/hud.py` | 显示 HUD |
 | `framework/hal/machine.py` | 依赖注入容器，读取 `project_config.yaml` 创建平台实例 |
 | `modules/zw_opencv_module/vision_manager.py` | 视觉管道管理器 (Pipeline → Task → Processor) |
+| `app/subscription_sm.py` | 订阅门控四态状态机（IDLE/EXPLOSIVE/TARGET/RESCUE, StateMachine 引擎承载） |
+| `app/page_sm.py` + `app/page_router.py` | UI 四页状态机（MAIN/EXPLOSIVE/TARGET/RESCUE）+ KEY_OK 循环切页路由 |
+| `modules/zw_opencv_module/debug/lab_session.py` | 六组 LAB 阈值共享会话（调参页按组拆分后的内存事实来源） |
+| `modules/zw_opencv_module/debug/rescue_tuner.py` | 人质调试页（conf_th/iou_th/x_crop 滑条 + 模型状态） |
 
 ## 开发命令
 
@@ -76,6 +80,17 @@ python -c "import py_compile; py_compile.compile('app/coordinator.py', doraise=T
 - **不设主机静默自动 idle**（与旧上端一致）: Brain 看门狗是"收不到 CAM 数据 >1s 才
   重订阅"，健康推流期间主站本就静默; Brain 侧异常由 STOP/超时兜底。视觉结果陈旧
   >1s（相机停帧/处理器异常）自动归零心跳，不透传陈旧 found=1。
-- `app/line_follow_sm.py`、`processors/cargo_processor.py` 等遗留文件未删除但不参与
-  流水线（vision_config.yaml 只注册 GksTaskProcessor）。
+- KEY_OK **顺序循环**切四页: MAIN → EXPLOSIVE → TARGET → RESCUE → MAIN（释放沿,
+  0.5s 防抖; 进调试页需相机存在, 调试页独占相机 set_paused）。
+- 调试页 UI: 爆/靶页各自 3 组 LAB 滑条+点取色, 靶页画 ROI 横线, 爆/靶页有
+  MIRROR 开关（pit_left_is_1 运行时切换, 不落盘）与锁存进度; 人质页 conf/iou/
+  x_crop 滑条+模型状态; Exit/OK 均回 MAIN。
+- HUD 引导叠加: TARGET 模式画 ROI 两横线+水平中线±误差刻度; 告警横幅
+  （阈值缺失/模型未加载/相机停摆/NACK 5s TTL）数据源 coordinator.get_info()。
+- 运行时参数: GksTaskProcessor.set_runtime_param(section, key, value) 设备端
+  立即生效不落盘; LAB 阈值仍走 /my-threshold 热重载。
+- 遗留代码已归档 `archive/legacy/`（line_follow_sm、cargo/circle/ring/line 检测链、
+  eod_shape、visual_state_machine、legacy handlers 等），整体退出 app.yaml 打包
+  （exclude: archive）；`run.py debug` 仅保留 color 调参路由。
+- `eod_config.yaml` 只剩 `gks:` 段（旧 `eod:` 段随遗留管线归档删除）。
 - 台架部署/验证清单: `docs/competition/gks_bench_checklist.md`。

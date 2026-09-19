@@ -1,61 +1,6 @@
-# EOD2026 vision configuration — loaded by EodAlignProcessor over code defaults.
-# Every threshold here is a STARTING POINT copied from MaixPy reference docs;
-# per 2025 provincial-first-prize practice, re-calibrate ALL of them on site
-# with the competition lighting (see docs/eod/calibration.md). Keep two sets
-# per color if the venue lighting differs between areas.
-eod:
-  # MaixCAM2 hardware-accelerated paths (PC / USB-camera debug falls back to cv2)
-  accel:
-    color_fast_path: true   # maix Image.find_blobs (MaixCV C++, ~11ms@640x480)
-    qr_engine: auto         # auto | npu | zbar | cv2  (npu = image.QRCodeDetector, MaixPy>=4.7.9)
-    qr_min_valid_frames: 2
-  # competition colors (bomb + target candidates); LAB [L_min,L_max,A_min,A_max,B_min,B_max]
-  colors:
-    - {id: 1, name: red,   lab: [0, 80, 40, 80, 10, 80]}
-    - {id: 2, name: green, lab: [0, 80, -120, -10, 0, 30]}
-    - {id: 3, name: blue,  lab: [0, 80, 30, 100, -120, -60]}
-  # hostage block color; empty -> fallback to colors above (现场标定)
-  hostage_colors: []
-  # black EOD bucket (排爆桶)
-  bucket: {id: 1, name: black, lab: [0, 45, -128, 128, -128, 128]}
-  # return-zone marker color; empty -> fallback to colors above (现场标定)
-  home_colors: []
-
-  blob:
-    min_area_px: 400
-    max_area_px: 300000
-    edge_margin_px: 4
-    morph_open: 3
-    morph_close: 7
-
-  # normalized zones (x0, y0, x1, y1) in frame fractions — 现场标定
-  zones:
-    grab:  [0.35, 0.45, 0.65, 0.85]   # bomb/hostage gripper reach zone
-    place: [0.35, 0.40, 0.65, 0.85]   # bucket/home placement zone
-
-  latch:
-    frames: 5            # N consecutive stable frames to latch FOUND/MATCH/READY
-    lost_hold_ms: 300    # continuous dropout longer than this clears FOUND latch
-
-  shape:                 # contour-geometry classifier (eod_shape)
-    waist_ratio_max: 0.88
-    cone_small_end_max: 0.70
-    cone_slope_min: 0.30
-    cylinder_end_min: 0.82
-    min_confidence: 0.25
-
-  target:
-    ref_target_width_px: 200        # target bbox width at calibration distance
-    ring_radii_px: {r10: 220, r9: 150, r8: 85}   # ring radii at same distance
-    hit_detect_enabled: false       # enable ONLY after on-site validation
-    lock_frames: 15                 # stable frames before hit-arming
-    hit_lost_frames: 12             # lost frames after lock that count as a fall
-    hit_area_ratio: 0.45            # area collapse ratio that counts as a fall
-
-  # =====================================================================
-  # 工科赛近端三任务（GksTaskProcessor）— 识别逻辑照搬 工科赛上端 main.py
-  # =====================================================================
-  gks:
+# GKS2026 near-cam 配置 — 仅 gks: 段；GksTaskProcessor.load_gks_config 浅合并覆盖代码默认值。
+# LAB 阈值现场标定经 run.py debug color 调参页写入 /my-threshold 热重载, 此处为兜底/初值。
+gks:
     pit_left_is_1: true   # True=画面左(小x)=坑1; 摄像头镜像/背装导致左右相反时改 false
     pit_latch_frames: 2   # 连续 N 帧左右序一致才锁存坑位（main.py 硬编码 2）
     # 脱机调阈值工具产出的运行时阈值文件（组序: 0..2 爆红/爆绿/爆蓝, 3..5 靶红/靶绿/靶蓝）;
@@ -66,8 +11,8 @@ eod:
       area_threshold: 10000
       lab:                # 兜底阈值（阈值文件缺失时用; 现场标定后覆盖）
         red:   [0, 80, 40, 80, 10, 80]
-        green: [0, 80, -120, -10, 0, 30]
-        blue:  [0, 80, 30, 100, -120, -60]
+        green: [0, 100, -128, -5, -40, 60]
+        blue:  [0, 100, 5, 127, -128, -20]
     target:               # 0x02 靶标: ROI 内最大色块 -> 归一化误差
       pixels_threshold: 1000
       area_threshold: 1000
