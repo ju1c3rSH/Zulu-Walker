@@ -330,6 +330,14 @@ class GksCoordinator:
             self._task_enabled = True
         if processor is not None:
             processor.set_task(mode, tuple(codes))
+            # 任务/模式真的变了 → 顺手清结果缓存。原因: RX 线程在收到订阅帧时立即改 _sub_id,
+            # 而 processor 的 mode 要等主循环这一拍才改; 中间存在 1~2 帧窗口, 旧任务的
+            # 载荷会被按新 data_id 打包推出 —— 切到 TARGET 会推 found=1/err=0(正好被底盘判成
+            # "已收敛")、切到 RESCUE 会推 found=1/pos=0。清掉后这段窗口推零值心跳(found=0),
+            # 是安全方向。同模式同码的幂等重订阅不清, 保证 steady-state 不丢帧。
+            if prev_task != (mode, tuple(codes)):
+                self._latest_task = {}
+                self._latest_task_ts = 0.0
             # 判重描述需覆盖 STOP 清锁存保留模式的情况: STOP reset() 清锁存
             # 但 _mode/_codes 不变, 同码重订 prev 会命中现值, 实际锁存非"保留"
             if prev_task == (mode, tuple(codes)):
