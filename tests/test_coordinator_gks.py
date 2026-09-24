@@ -166,7 +166,7 @@ def _pump(coord):
 def test_stream_matches_md6_vector():
     coord, vm, proc, sent = make_coordinator()
     subscribe(coord, DATA_EXPLOSIVE, 50, codes=(2, 1, 3))
-    vm.queue_result({"cx": 1234, "pit": 2, "found": True})
+    vm.queue_result({"mode": "EXPLOSIVE", "cx": 1234, "pit": 2, "found": True})
     coord._stream_seq = 0x2A
     _pump(coord)
     expected = build_data_stream_frame(0x2A, DATA_EXPLOSIVE,
@@ -190,7 +190,7 @@ def test_zero_heartbeat_when_no_result():
 def test_stream_payload_target_and_rescue():
     coord, vm, proc, sent = make_coordinator()
     subscribe(coord, DATA_TARGET, 50, codes=(0, 2, 0))
-    vm.queue_result({"err_fixed": -2500, "found": True})
+    vm.queue_result({"mode": "TARGET", "err_fixed": -2500, "found": True})
     _pump(coord)
     assert sent[-1] == build_data_stream_frame(0, DATA_TARGET,
                                                build_target_sub_payload(-2500, True))
@@ -198,7 +198,7 @@ def test_stream_payload_target_and_rescue():
     coord.set_ai(SimpleNamespace(active_model="eod_hostage",
                                  switch=lambda nick: True))
     subscribe(coord, DATA_RESCUE, 50, codes=(0, 0, 2))
-    vm.queue_result({"pos": 2, "found": True})
+    vm.queue_result({"mode": "RESCUE", "pos": 2, "found": True})
     _pump(coord)
     assert sent[-1] == build_data_stream_frame(0, DATA_RESCUE,
                                                build_rescue_sub_payload(2, True))
@@ -227,17 +227,43 @@ def test_seq_wraps_255():
 
 # ---------- STOP / 静默 / 锁存 ----------
 
-def test_stop_disables_and_resets():
+def test_stop_disables_and_keeps_latch():
+    """STOP 只停推, **不清锁存**(对齐 main.py handle_stop 只置 sub_id=0/seq=0)。
+
+    锁存是否作废交给下次订阅判定: STOP 把"上次订阅 id"归零, 于是 STOP 后的
+    完整帧重订阅必然命中"data_id 变了"而清 —— 时机与基准一致。
+    """
     coord, vm, proc, sent = make_coordinator()
     subscribe(coord, DATA_EXPLOSIVE, 50, codes=(2, 1, 3))
     coord.loop()
     proc._pos_flag = 1                          # 模拟已锁存
+    before = proc.resets                        # 首次订阅已清过一次(与基准同)
     coord._on_cmd_stop(CmdStopEvent())
     coord.loop()                                # 门控 idle 在主循环应用
     assert not vm.enabled
-    assert proc.resets == 1                     # 处理器清锁存
+    assert proc.resets == before                # STOP 当场不清锁存
+    assert proc._pos_flag == 1                  # 锁存仍在
     _pump(coord)
     assert len(sent) == 2                       # ACK + 订阅期一帧; STOP 后不再推流
+
+    # STOP 后的完整帧重订阅: 与归零后的基准比较, data_id 不同 -> 清锁存
+    subscribe(coord, DATA_EXPLOSIVE, 50, codes=(2, 1, 3))
+    coord.loop()
+    assert proc.resets == before + 1
+
+
+def test_stop_then_short_resubscribe_keeps_latch():
+    """STOP 后短帧重订阅(无任务码)沿用旧码, 不清锁存。"""
+    coord, vm, proc, sent = make_coordinator()
+    subscribe(coord, DATA_EXPLOSIVE, 50, codes=(2, 1, 3))
+    coord.loop()
+    coord._on_cmd_stop(CmdStopEvent())
+    coord.loop()
+    before = proc.resets
+    subscribe(coord, DATA_EXPLOSIVE, 50)        # 短帧重订阅
+    coord.loop()
+    assert proc.resets == before                # 短帧不清锁存
+    assert proc.codes == (2, 1, 3)              # 沿用旧任务码
 
 
 def test_master_silence_does_not_idle():
@@ -261,7 +287,7 @@ def test_stale_vision_result_streams_zero():
     coord, vm, proc, sent = make_coordinator()
     subscribe(coord, DATA_EXPLOSIVE, 50, codes=(1, 0, 0))
     coord.loop()
-    vm.queue_result({"cx": 1234, "pit": 2, "found": True})
+    vm.queue_result({"mode": "EXPLOSIVE", "cx": 1234, "pit": 2, "found": True})
     coord._last_send_time = 0.0
     coord.loop()
     assert sent[-1][6:8] == b"\xD2\x04"                # 新鲜结果正常透传
@@ -269,6 +295,33 @@ def test_stale_vision_result_streams_zero():
     coord._last_send_time = 0.0
     coord.loop()
     assert sent[-1][6:14] == b"\x00" * 8               # 归零心跳不断流
+
+
+def test_cross_mode_residual_frame_never_streamed():
+    """切任务后的异步残留帧不得按新 data_id 打包推出。
+
+    视觉结果由后台线程异步产出, 而 RX 线程在收到订阅帧那一刻就改了 _sub_id:
+    切到 TARGET 后, 上一模式"正在处理的那一帧"仍带 mode=EXPLOSIVE, 且会在模式
+    切换之后才落进结果缓存。若按 TARGET 打包, 就会推出 err=0 且 found=1 ——
+    底盘据此判"已收敛"并刹停。归属校验必须把它拦成零值心跳。
+    """
+    coord, vm, proc, sent = make_coordinator()
+    subscribe(coord, DATA_EXPLOSIVE, 50, codes=(2, 1, 3))
+    coord.loop()
+    subscribe(coord, DATA_TARGET, 50, codes=(0, 2, 0))   # 切到打靶
+    coord.loop()
+
+    # 残留帧: 旧模式的 found=1 结果, 在切换之后才到达
+    vm.queue_result({"mode": "EXPLOSIVE", "cx": 1234, "pit": 2, "found": True})
+    _pump(coord)
+    assert sent[-1][3] == 0x24
+    assert sent[-1][6:14] == b"\x00" * 8                # 未采纳: 零值心跳(不断流)
+
+    # 新模式自己的结果照常透传
+    vm.queue_result({"mode": "TARGET", "err_fixed": -2500, "found": True})
+    _pump(coord)
+    assert sent[-1] == build_data_stream_frame(sent[-1][4], DATA_TARGET,
+                                               build_target_sub_payload(-2500, True))
 
 
 def test_latch_preserved_across_resubscribe():
@@ -290,16 +343,17 @@ def test_data_id_change_resets():
     subscribe(coord, DATA_EXPLOSIVE, 50, codes=(2, 1, 3))
     coord.loop()
     proc._pos_flag = 1
+    before = proc.resets
     subscribe(coord, DATA_TARGET, 50, codes=(0, 2, 0))   # 换 data_id
     coord.loop()
     assert proc.set_task_calls[-1] == ("TARGET", (0, 2, 0))
-    assert proc.resets == 0                     # 换 id 由 set_task 清锁存（非 reset()）
+    assert proc.resets == before + 1            # 换 data_id: 由统一判据显式清锁存
 
 
 def test_get_info_shape():
     coord, vm, proc, sent = make_coordinator()
     subscribe(coord, DATA_EXPLOSIVE, 50, codes=(2, 1, 3))
-    vm.queue_result({"cx": 320, "pit": 2, "found": True})
+    vm.queue_result({"mode": "EXPLOSIVE", "cx": 320, "pit": 2, "found": True})
     _pump(coord)
     info = coord.get_info()
     assert info["state"] == "EXPLOSIVE"

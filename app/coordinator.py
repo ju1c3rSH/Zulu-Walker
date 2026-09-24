@@ -76,6 +76,9 @@ _DATA_ID_MODES = {
     DATA_RESCUE:    "RESCUE",
 }
 
+# 反查: 模式 -> data_id（锁存清理判据需要以 data_id 比较, 见 _latch_reset_needed）
+_MODE_DATA_IDS = {v: k for k, v in _DATA_ID_MODES.items()}
+
 # data_id -> (optional) AI model nickname to hot-switch before ACKing
 _DATA_ID_MODEL = {
     DATA_RESCUE: "eod_hostage",
@@ -114,7 +117,11 @@ class GksCoordinator:
         # task gating cache (avoid redundant TaskManager calls)
         self._task_enabled = False
 
-        self._latch_cleared_by_idle = False
+        # 上次订阅门控快照: 锁存清理判据的"上一次"基准。
+        # STOP 时 _prev_gate_id 归零(等价 main.py 的 sub_id=0), 使 STOP 之后的
+        # 完整帧重订阅必定命中"data_id 变了"而清锁存; 短帧重订阅则保留。
+        self._prev_gate_id = 0
+        self._prev_gate_codes: tuple = (0, 0, 0)
 
         self._running = False
         self._wdt_feed: Callable[[], None] = lambda: None
@@ -281,7 +288,8 @@ class GksCoordinator:
             self._last_send_time = 0.0   # 新订阅立即推一帧
             codes_snapshot = self._codes
 
-        self._enqueue(GateSignal(state_name=mode, codes=codes_snapshot))
+        self._enqueue(GateSignal(state_name=mode, codes=codes_snapshot,
+                                 has_codes=bool(event.has_codes)))
 
         log_print(f"[UART TX] CMD_ACK type={dt_name} freq={ACK_MAX_FREQ_HZ}Hz "
                   f"size={ACK_PAYLOAD_SIZE}B interval={self._interval_ms}ms "
@@ -308,70 +316,116 @@ class GksCoordinator:
         task = pipe.task_manager.get_task(_TASK_GKS)
         return task.processor if task else None
 
-    def apply_gate_task(self, mode: str, codes: tuple) -> None:
+    def _latch_reset_needed(self, data_id: int, codes: tuple, has_codes: bool) -> bool:
+        """本次订阅是否清视觉锁存 —— 判据与基准 main.py reset_task_latch 完全对齐:
+
+            清锁存 ⟺ 完整订阅帧(带任务码) AND (data_id 变了 OR 任务码变了)
+
+        两个细节都来自基准, 缺一就不等价:
+          - 短帧重订阅(无任务码)沿用旧码, **不清**锁存, 否则 Brain 1s 看门狗的
+            同参重订阅会周期性清掉辛苦锁上的坑位;
+          - 比较基准是"上次订阅的 data_id", 而 STOP 会把它归零(见 apply_gate_idle),
+            于是 STOP 后的完整帧重订阅必然命中"data_id 变了" → 清。
+        """
+        if not has_codes:
+            return False
+        return (data_id != self._prev_gate_id) or (tuple(codes) != tuple(self._prev_gate_codes))
+
+    def apply_gate_task(self, mode: str, codes: tuple, has_codes: bool = False) -> None:
         """启用 gks_task 并切换模式（codes 为订阅帧快照）。
 
-        处理器 set_task 内部判重: 同模式同码的重订阅不清锁存,
-        换 data_id / 换任务码才清（main.py reset_task_latch 时机）。
+        锁存清理的唯一决策点是 _latch_reset_needed, 且只在**完整订阅帧**上发生;
+        处理器 set_task 自身的判重只负责切模式, 不再兼任锁存语义。
+
+        注: set_task 在"mode 真的变了"时仍会自清一次, 那是处理器的下限自保护,
+        覆盖 coordinator 判不清的边缘 —— "短帧重订阅却换了 data_id"(无任务码,
+        判据直接返回 False)。基准 main.py 在这个边缘会残留上一模式的锁存, 属于
+        基准自身的隐患; 这里多清一次幂等无害, 方向与"宁可多清也不跨模式残留"
+        一致, 故保留。
         """
         task_enabled_before = self._task_enabled
-        prev_task = None
-        processor = self._get_gks_processor()
-        if processor is not None:
-            getter = getattr(processor, "current_task", None)
-            if callable(getter):
-                try:
-                    prev_task = getter()
-                except Exception:
-                    prev_task = None
+        data_id = _MODE_DATA_IDS.get(mode, 0)
+        reset_latch = self._latch_reset_needed(data_id, codes, has_codes)
+
         if not task_enabled_before:
             if self._vision_manager:
                 self._vision_manager.enable_task(_PIPELINE_ID, _TASK_GKS)
             self._task_enabled = True
+
+        processor = self._get_gks_processor()
         if processor is not None:
+            # 先清再切: set_task 对"同模式同码"会提前返回, 若把 reset 放后面,
+            # STOP(清过锁存但保留 _mode/_codes) 后的同码重订阅就再也清不掉。
+            if reset_latch:
+                processor.reset()
             processor.set_task(mode, tuple(codes))
-            # 任务/模式真的变了 → 顺手清结果缓存。原因: RX 线程在收到订阅帧时立即改 _sub_id,
-            # 而 processor 的 mode 要等主循环这一拍才改; 中间存在 1~2 帧窗口, 旧任务的
-            # 载荷会被按新 data_id 打包推出 —— 切到 TARGET 会推 found=1/err=0(正好被底盘判成
-            # "已收敛")、切到 RESCUE 会推 found=1/pos=0。清掉后这段窗口推零值心跳(found=0),
-            # 是安全方向。同模式同码的幂等重订阅不清, 保证 steady-state 不丢帧。
-            if prev_task != (mode, tuple(codes)):
-                self._latest_task = {}
-                self._latest_task_ts = 0.0
-            # 判重描述需覆盖 STOP 清锁存保留模式的情况: STOP reset() 清锁存
-            # 但 _mode/_codes 不变, 同码重订 prev 会命中现值, 实际锁存非"保留"
-            if prev_task == (mode, tuple(codes)):
-                latch_desc = ("cleared(锁存已被STOP清)" if self._latch_cleared_by_idle
-                              else "kept(幂等重订阅)")
-            else:
-                latch_desc = "cleared(换任务/换模式)"
-            self._latch_cleared_by_idle = False
-            setup = "任务首次启用" if not task_enabled_before else "任务已启用"
-            log_print(f"[UART ACTION] gate={mode} codes={list(codes)} "
-                      f"latch={latch_desc} ({setup})")
+
+        self._prev_gate_id = data_id
+        self._prev_gate_codes = tuple(codes)
+
+        latch_desc = ("cleared(换任务/换码/STOP后重订阅)" if reset_latch
+                      else "kept(幂等重订阅)")
+        setup = "任务首次启用" if not task_enabled_before else "任务已启用"
+        log_print(f"[UART ACTION] gate={mode} codes={list(codes)} "
+                  f"has_codes={int(bool(has_codes))} "
+                  f"latch={latch_desc} ({setup})")
 
     def apply_gate_idle(self) -> None:
-        """停推: 关任务门, 清处理器锁存与结果缓存。"""
+        """停推: 关任务门 + 清结果缓存, **不清处理器锁存**(对齐 main.py handle_stop)。
+
+        基准的 handle_stop 只置 sub_id=0 / seq=0, 不碰 reset_task_latch; 锁存是否
+        作废由**下次订阅**的判据决定。这里同样只把 _prev_gate_id 归零 —— 于是
+        STOP 后再订阅的行为与基准逐条一致:
+            完整帧重订阅 -> data_id 与 0 不同 -> 清锁存
+            短帧重订阅   -> has_codes=False   -> 保留锁存继续累积
+        结果缓存仍要清: 已停推, 缓存里的旧结果不该在下一次订阅的首帧被透出。
+        """
         was_active = self._task_enabled
         if self._task_enabled:
             if self._vision_manager:
                 self._vision_manager.disable_task(_PIPELINE_ID, _TASK_GKS)
             self._task_enabled = False
-        processor = self._get_gks_processor()
-        if processor is not None:
-            processor.reset()
+        self._prev_gate_id = 0        # 等价 main.py handle_stop 的 sub_id = 0
         self._latest_task = {}
-        self._latch_cleared_by_idle = True   # reset() 清锁存但保留 _mode/_codes
+        self._latest_task_ts = 0.0
         setup = "任务已停用" if was_active else "已是空闲"
-        log_print(f"[UART ACTION] gate=IDLE latch=cleared ({setup})")
+        log_print(f"[UART ACTION] gate=IDLE latch=kept(是否清理由下次订阅判定) ({setup})")
 
     # ===== streaming payload builders =====
 
-    def _build_stream_payload(self, data_id: int, now: Optional[float] = None) -> bytes:
-        """恒返回 8B 子载荷: 无结果/缺阈值/结果陈旧都推零值心跳（Brain 1s stale 判定）。"""
-        data = self._latest_task if self._task_enabled else {}
+    def _active_result(self, data_id: int, now: Optional[float] = None) -> dict:
+        """本拍可上报的视觉结果; 返回 {} 表示推零值心跳。
+
+        两道判据集中在这一个方法里, 推送与日志共用同一份, 免得两处判据分叉:
+
+        1) 陈旧: 超过 _TASK_STREAM_STALE_S 未刷新 -> 不透传陈旧的 found=1。
+        2) 归属: result_data["mode"] 必须等于"产生它的模式"。
+
+        第 2 条是切任务脏帧的根治手段。视觉结果由后台线程异步产出, RX 线程却在
+        收到订阅帧的那一刻就改了 _sub_id —— 于是"正在处理的那一帧"仍带旧 mode,
+        且会在主循环切完模式之后才落进 _latest_task。若按新 data_id 打包, 切到
+        TARGET 会推出 err=0 且 found=1(底盘恰好据此判"已收敛"并刹停), 切到
+        RESCUE 会推出 found=1/pos=0。
+
+        选择在**数据消费点**验归属, 而不是"切换瞬间清空缓存"那种时序手段:
+        后者对"清空之后才到达的异步残留帧"无效, 且要靠清空时机碰运气。校验 mode
+        则对任意到达时刻的残留帧都成立, 同时天然放行同模式的幂等重订阅。
+        """
+        expected = _DATA_ID_MODES.get(data_id)
+        if expected is None or not self._task_enabled:
+            return {}
+        data = self._latest_task
+        if not data:
+            return {}
         if now is not None and (now - self._latest_task_ts) > _TASK_STREAM_STALE_S:
-            data = {}   # 相机停帧/处理器异常: 不透传陈旧 found=1
+            return {}
+        if data.get("mode") != expected:
+            return {}
+        return data
+
+    def _build_stream_payload(self, data_id: int, now: Optional[float] = None) -> bytes:
+        """恒返回 8B 子载荷: 无结果/陈旧/模式不匹配都推零值心跳（Brain 1s stale 判定）。"""
+        data = self._active_result(data_id, now)
         if data_id == DATA_EXPLOSIVE:
             return build_explosive_sub_payload(
                 int(data.get("cx", 0)), int(data.get("pit", 0)),

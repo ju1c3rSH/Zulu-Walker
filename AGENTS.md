@@ -26,9 +26,22 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读 API 参考; 不确�
   - 订阅期**零值心跳不断流**（Brain 1s stale 判定硬要求）
   - 解析器 = C `Protocol_ParserFeed` 四态状态机 1:1 移植（`zw_uart_module/parser.py`），
     含 AA-AA-55 重同步与坏帧整帧丢弃
-- 近端视觉核心: `processors/gks_task_processor.py`（EXPLOSIVE/TARGET/RESCUE 单激活,
-  识别逻辑照搬 `F:\2026工科赛\maixcam\工科赛上端\main.py` task1/2/3: 三色同帧排序 +
-  两帧同序锁存 + `pit_left_is_1` 镜像开关 + 归一化误差定点 ×10000）
+- 近端视觉核心: `processors/gks_task_processor.py`（EXPLOSIVE/TARGET/RESCUE 单激活）。
+  识别本源 = `2025视觉方案\maixcam\工科赛上端\main.py` task1/2/3
+  （`F:\2026工科赛资料汇总\04_2025视觉方案_MaixCam\`）; 打靶为归一化误差定点 ×10000。
+  - **坑位定序（task1 爆炸物 / task3 人质 共用, 与 2025 方案一致）**:
+    顺序 = **首次检出先后**（比赛流程固定、相机按 pit1→pit3 扫过 ⇒ 最先看见的那个就在
+    pit1）; **同一帧里同时检出多个时帧内按画面左右定序**（`pit_left_is_1` 决定方向),
+    保证结果不受 find_blobs/YOLO 的输出顺序影响。
+    2025 原版写法: `position[2] = 6 - position[0] - position[1]` / `6 - sum(found_shapes)`。
+  - **未见者补位**: 三色/三形状互不相同 ⇒ 见到 2 个即可推出第 3 个"是什么", 补在顺序尾部。
+    补位只推出"是什么"、推不出"在第几坑"——位置靠定序规则给; 前提不成立会**静默锁出错误
+    坑位**（转台打错坑→抓错), 比"锁不上"更危险。台架必须用日志 `latch … inferred=True`
+    核对 POS/PIT 与实物一致。
+  - 两个开关按任务分开配（`eod_config.yaml`）: `order_by` = `first_seen`(默认) / `x`
+    (旧 main.py 的"全程画面 x 排序 + 镜像翻转"); `infer_missing` = `tail`(允许两色/两形状
+    即锁, **人质默认**) / `none`(齐见才锁, **排爆默认** —— 排爆车停稳三坑同屏, 少一色
+    通常是阈值/遮挡, 位置无从推断)。
 - 显示 HUD: `modules/zw_opencv_module/display/hud.py`（状态栏/检测叠加/锁存进度,
   不依赖 AI 模型加载）
 - MaixPy 加速层: `detectors/eod_color/maix_accel.py`（设备走 C++ find_blobs, PC 自动回退

@@ -12,8 +12,8 @@ class StubCoordinator:
     def __init__(self):
         self.applied = []
 
-    def apply_gate_task(self, mode, codes):
-        self.applied.append(("task", mode, codes))
+    def apply_gate_task(self, mode, codes, has_codes=False):
+        self.applied.append(("task", mode, codes, has_codes))
 
     def apply_gate_idle(self):
         self.applied.append(("idle",))
@@ -40,7 +40,8 @@ def test_subscription_sm_same_state_direct_apply():
     assert machine.current_state == "TARGET"
     machine.dispatch(GateSignal(state_name="TARGET", codes=(1, 2, 3)))
     assert machine.current_state == "TARGET"
-    assert (len(stub.applied), stub.applied[-1]) == (first_calls + 1, ("task", "TARGET", (1, 2, 3)))
+    assert (len(stub.applied), stub.applied[-1]) == (first_calls + 1,
+                                                     ("task", "TARGET", (1, 2, 3), False))
 
 
 def test_page_state_machine_pause_on_debug_pages():

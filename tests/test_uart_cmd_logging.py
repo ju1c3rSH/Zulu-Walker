@@ -141,13 +141,18 @@ def test_gate_log_stop_idle(monkeypatch):
 
     gate = [m for m in logs if "[UART ACTION]" in m]
     assert len(gate) == 2
-    assert "gate=IDLE" in gate[1] and "cleared" in gate[1]
+    # STOP 只停推, 锁存是否清理由下次订阅判定
+    assert "gate=IDLE" in gate[1] and "kept" in gate[1]
     assert "任务已停用" in gate[1]
-    assert proc.resets == 1
+    assert proc.resets == 1                  # 首次订阅那次; STOP 未再清
 
 
 def test_gate_log_resubscribe_after_stop_not_kept(monkeypatch):
-    """STOP reset() 清锁存但保留 _mode/_codes: 同码重订阅不得报 kept。"""
+    """STOP 把"上次订阅 id"归零: 之后的完整帧重订阅必须报 cleared, 不得报 kept。
+
+    （旧实现靠 STOP 当场 reset() 达到同一效果, 但那会让"STOP 后短帧重订阅"也
+    丢掉锁存, 与基准 main.py 不等价。）
+    """
     logs = []
     coord, proc = make_coord(logs, monkeypatch)
     coord._on_cmd_request(request_event(DATA_EXPLOSIVE, codes=(2, 1, 3)))
@@ -161,7 +166,7 @@ def test_gate_log_resubscribe_after_stop_not_kept(monkeypatch):
     gate = [m for m in logs if "[UART ACTION]" in m]
     assert len(gate) == 3
     assert "kept" not in gate[2]
-    assert "锁存已被STOP清" in gate[2]
+    assert "cleared" in gate[2]
 
 
 def test_nack_log_has_action_desc(monkeypatch):

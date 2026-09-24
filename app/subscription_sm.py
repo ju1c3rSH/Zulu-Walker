@@ -24,9 +24,14 @@ def request_event_name(state_name: str) -> str:
 
 @dataclass
 class GateSignal:
-    """门控指令: 订阅(REQ)或停推(STOP), 附任务码快照。"""
+    """门控指令: 订阅(REQ)或停推(STOP), 附任务码快照。
+
+    has_codes 标识本次订阅帧是否携带任务码(5B 完整帧)。它是锁存清理判据的
+    组成部分: 短帧重订阅沿用旧任务码、不清锁存(幂等), 只有完整帧才可能清。
+    """
     state_name: Optional[str] = None
     codes: Tuple[int, int, int] = (0, 0, 0)
+    has_codes: bool = False
     is_stop: bool = False
 
 
@@ -60,7 +65,8 @@ class TaskGateState(State):
     def on_enter(self, context: SubscriptionContext, from_state: str) -> None:
         signal = context.signal
         codes = signal.codes if signal else (0, 0, 0)
-        context.coordinator.apply_gate_task(self._state_name, codes)
+        has_codes = bool(signal.has_codes) if signal else False
+        context.coordinator.apply_gate_task(self._state_name, codes, has_codes)
 
     def on_execute(self, context: SubscriptionContext):
         return None
@@ -96,7 +102,7 @@ class SubscriptionStateMachine(BaseStateMachine):
         else:
             if self.current_state == signal.state_name:
                 self.context.coordinator.apply_gate_task(
-                    signal.state_name, signal.codes)
+                    signal.state_name, signal.codes, signal.has_codes)
                 return
             event = request_event_name(signal.state_name)
         if not self.trigger(event, signal):
@@ -104,4 +110,4 @@ class SubscriptionStateMachine(BaseStateMachine):
                 self.context.coordinator.apply_gate_idle()
             else:
                 self.context.coordinator.apply_gate_task(
-                    signal.state_name, signal.codes)
+                    signal.state_name, signal.codes, signal.has_codes)

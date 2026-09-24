@@ -14,10 +14,19 @@ task1_explosive / task2_target / task3_rescue（锁存/去抖/映射语义不变
   回零值结果（心跳不断流），不崩溃。
 - 像素常量全部入 eod_config.yaml `gks:` 段；`/my-threshold/my_64threshold.txt`
   （脱机调阈值工具产出）作运行时覆盖，mtime 变化自动重载、不清锁存。
+- 排爆扫描可降采样: `explosive.scan_scale`（0.5 = 320x240 扫描）—— 全帧三色串行
+  find_blobs 是排爆帧率瓶颈（台架实测 12~19fps, 低于 50ms 推流节奏）。降采样后
+  面积门槛按 scale² 折算、cx/框按 1/scale 还原到全帧坐标; 缩放用 INTER_NEAREST
+  （不做插值, 避免把边缘像素混成中间色 —— 那正是运动模糊掉色的同一机理）。
 
-锁存语义（与 main.py 一致，经审查报告 §5.3 幂等性确认）:
-- 坑位锁存 = 同帧三色/三形状齐 + 连续 pit_latch_frames(2) 帧左右序一致；
-  一旦锁存不再重锁，直到 set_task 换 data_id/换任务码或 reset()。
+锁存语义（task1/task3 同一套，与 2025 视觉方案 task1/task3 一致）:
+- 坑位顺序 = **首次检出先后**（相机按 pit1→pit3 扫过, 最先看见的那个就在 pit1）;
+  某帧同时检出多个时帧内先按画面左右定序（`pit_left_is_1` 决定方向）;
+- 三色/三形状互不相同 → 见到 2 个即可推出第 3 个"是什么", 补在顺序尾部
+  （2025 原版写法: `position[2] = 6 - position[0] - position[1]`）;
+- 顺序连续 `pit_latch_frames(2)` 帧一致才锁存；一旦锁存不再重锁, 直到
+  set_task 换 data_id/换任务码或 reset()。
+- 每任务的顺序来源与是否允许补位可分别配置: `<task>.order_by` / `<task>.infer_missing`。
 - set_task 幂等：同模式同任务码的重订阅不清锁存（Brain 掉线 1s 重订阅安全）。
 
 纯 cv2/numpy + 注入时钟 — 设备与 PC(pytest) 双端可运行。
@@ -50,11 +59,30 @@ _DEFAULT_CONFIG = {
     "explosive": {
         "pixels_threshold": 10000,
         "area_threshold": 10000,
-        # 兜底 LAB 阈值（阈值文件缺失时用; 现场用调阈值工具标定后覆盖）
+        # 顺序来源 / 未见者补位, 语义同 rescue: 2025 方案 task1 也是"首次检出先后 +
+        # 缺色用 6-a-b 推出来"。这里默认 require-3（infer_missing: none）:
+        # 排爆作业时车已停稳、三坑同屏, 少一色通常是阈值/遮挡问题, 位置无从推断 ——
+        # 宁可不锁存(超时 FAULT 可见) 也不静默把缺色按到 pit3。要复刻 2025 的
+        # "两色即锁"把它置 tail 即可。
+        "order_by": "first_seen",
+        "infer_missing": "none",
+        # 兜底 LAB 阈值（阈值文件缺失时用）; 2026-09-23 台架回写, 与设备
+        # /my-threshold/my_64threshold.txt 逐字一致 —— 文件在时以文件为准, 两者同值。
+        # 取值原则（纯色目标）: A/B 负责色相与饱和度判别, L 只当噪声地板 ——
+        # 不用 L 上限去排除高光（白/高光 a*≈b*≈0, 靠 A/B 天然排除; 用 L 上限切
+        # 只会连物体亮面一起切掉, 色块被切成半块 -> 面积/质心双失准）。
+        # ⚠ 这组值偏保守, 已知代价（现场"看得见却锁不上 / 色块切半"时按下表放开）:
+        #   1) L 上限 red 80 / green 67 / blue 80: 高饱和纯色本身 L 就高(纯绿 87.7,
+        #      受光面 74+; 实测绿球亮面 L 到 81) —— green 67 尤其紧, 优先放到 90~95;
+        #   2) 红 A 下界 40: 砍掉红暗面(实测 A=37);
+        #   3) 靶标段与本段逐字同值 —— 改这里记得同步 target["lab"]。
+        # ⚠ 两盒交叠: explosive 的 green ∩ blue ≠ ∅（L 8~67、A -83~-10、B -47~-10）,
+        #   暗青/灰蓝像素会同时落进两盒, 同一目标可能被报成两种颜色, 影响坑位定序;
+        #   要恢复互斥: green 的 Bmin 抬到 0, 或 blue 的 Bmax 收到 -47 以下。
         "lab": {
             "red":   [0, 80, 40, 80, 10, 80],
-            "green": [0, 80, -120, -10, 0, 30],
-            "blue":  [0, 80, 30, 100, -120, -60],
+            "green": [8, 67, -83, -10, -47, 71],
+            "blue":  [0, 80, -110, 100, -66, -10],
         },
     },
     "target": {
@@ -63,10 +91,13 @@ _DEFAULT_CONFIG = {
         "merge": True,
         # ROI 帧比例 (x0, y0, x1, y1); 默认值 = main.py [0,169,640,197] @640x480
         "roi": [0.0, 169 / 480, 1.0, 366 / 480],
+        # 与 explosive 段同值（"什么是红/绿/蓝"不随任务变）; 现场可按 ROI 内实际光比
+        # 分头标定 —— 物理条件不同（爆: 全帧三坑 + 10000 面积门槛; 靶: 窄 ROI + 1000）,
+        # 同一组值只是起点而非最优; 要分开标定先改这里。
         "lab": {
             "red":   [0, 80, 40, 80, 10, 80],
-            "green": [0, 80, -120, -10, 0, 30],
-            "blue":  [0, 80, 30, 100, -120, -60],
+            "green": [8, 67, -83, -10, -47, 71],
+            "blue":  [0, 80, -110, 100, -66, -10],
         },
     },
     "rescue": {
@@ -74,6 +105,18 @@ _DEFAULT_CONFIG = {
         "iou_th": 0.45,
         # 旧版 obj.x>240 (320 宽画面) 过滤; cam1 已消亡, 0 = 关闭; 台架复现旧行为可设像素值
         "x_crop_px": 0,
+        # 未见形状的补位规则（三坑形状互不相同, 见到 2 个即可推出第 3 个"是什么"）:
+        #   "tail" = 未见者就是顺序上的最后一个 = 最后遇到的那个坑, 补在顺序尾部（默认）;
+        #   "none"/"" = 不补位, 必须三形状齐见才锁存（旧 main.py 语义, 退路）。
+        # 补位只能推出"是什么", 推不出"在第几坑" —— 位置靠 order_by 给。
+        "infer_missing": "tail",
+        # 坑位顺序的来源:
+        #   "first_seen" (默认) = 首次被检测到的先后。比赛流程固定、相机按 pit1→pit3
+        #       方向扫过, 所以"最先看见的那个就在 pit1"; 该顺序是物理顺序, 与图像左右
+        #       无关, 故 **pit_left_is_1 不参与跨帧定序**（它只用于同帧内的左右定序, 见下）。
+        #   "x" = 按画面 x 从左到右排序（旧 main.py 语义; 三坑同屏时用; 背装镜像需
+        #       把 pit_left_is_1 置 false 做整体翻转）。
+        "order_by": "first_seen",
         # 模型标签 -> 形状号（model.mud labels: yao_gu, yuan_zhu, yuan_tai）
         "labels": {"yuan_zhu": 1, "yuan_tai": 2, "yao_gu": 3},
     },
@@ -253,6 +296,7 @@ class GksTaskProcessor(Processor):
             "pending": self._pending_count,
             "pit2": self._position2,
             "pending2": self._pending_count2,
+            "inferred": self._latch_inferred,
             "shapes_seen": dict(self._shape_seen),
             "seen_order": list(self._seen_order),
         }
@@ -272,6 +316,7 @@ class GksTaskProcessor(Processor):
         # task3 人质坑位状态
         self._position2 = [0, 0, 0]
         self._shape_seen = {}     # 形状号 -> 最近一次画面中心 x（跨帧刷新）
+        self._latch_inferred = False   # 本次锁存是否用了"未见形状补位"（现场核对用）
         # 两帧一致去抖（task1 / task3 各一套）
         self._pending_order: list = []
         self._pending_count = 0
@@ -415,11 +460,68 @@ class GksTaskProcessor(Processor):
             "latched_order": latched_order,
             "pending_count": pending_count,
             "thresholds_ok": thresholds_ok,
+            "inferred": bool(result.get("inferred", False)),
             "hits": hits,
         }
         return VisionResult(task_name=self.name, success=True, result_data=data)
 
-    # ---- task1 爆炸物 (main.py task1_explosive 逐行移植) ----
+    # ---- 坑位定序（task1 爆炸物 / task3 人质 共用一套, 与 2025 视觉方案一致）----
+    #
+    # 2025 方案 task1/task3 的坑位映射是同一个套路：
+    #   task3: `found_shapes` 累积, 第 1 个 -> position2[0], 第 2 个 -> position2[1],
+    #          第 3 个直接算出来 position2[2] = 6 - sum(found_shapes)
+    #   task1: `position_count` 累积, 同理 position[2] = 6 - position[0] - position[1]
+    # 即：**顺序 = 首次检出先后**（相机按 pit1→pit3 扫过, 最先看见的那个就在 pit1）,
+    # 且**三色/三形状互不相同 -> 见到 2 个即可推出第 3 个"是什么"**, 补在顺序尾部。
+    #
+    # 补位只解决"是什么"、不解决"在第几坑"——位置由顺序来源给出。某帧同时检出多个时,
+    # 帧内先按画面左右定序（`pit_left_is_1` 决定方向）, 保证结果不受 find_blobs/YOLO
+    # 的输出顺序影响（输出序不是空间序）。
+    # 锁存仍走"连续 pit_latch_frames 帧同序"去抖, 与 main.py 同语义。
+
+    @staticmethod
+    def _flag_on(value, default: str) -> bool:
+        """字符串开关判定: none/off/0/false/空 -> False。"""
+        if isinstance(value, str):
+            return value.strip().lower() not in ("", "none", "off", "0", "false")
+        return bool(value if value is not None else default)
+
+    def _infer_missing(self, section: str = "rescue") -> bool:
+        """section.infer_missing: 是否允许"只见 2 个即锁存"(未见者补到顺序尾部)。"""
+        return self._flag_on(self._cfg[section].get("infer_missing", "tail"), "tail")
+
+    def _order_by_x(self, section: str = "rescue") -> bool:
+        """section.order_by == x 时用"全程画面 x 排序"(旧 main.py 语义)。"""
+        value = self._cfg[section].get("order_by", "first_seen")
+        if isinstance(value, str):
+            return value.strip().lower() in ("x", "cx", "image_x", "by_x")
+        return bool(value)
+
+    def _ordered_pits(self, section: str, seen):
+        """首次出现顺序 seen -> (完整坑位表 | None, 是否用了补位)。
+
+        数量不足（见 infer_missing）返回 None; 缺 1 个时补到顺序尾部。
+        """
+        if len(seen) < (2 if self._infer_missing(section) else 3):
+            return None, False
+        ordered = list(seen)
+        inferred = False
+        if len(ordered) < 3:
+            ordered = ordered + [s for s in (1, 2, 3) if s not in seen]
+            inferred = True
+        return ordered, inferred
+
+    def _latch_debounce(self, ordered, pending_order, pending_count):
+        """连续 pit_latch_frames 帧同序才认。-> (pending_order, pending_count, locked)"""
+        if ordered == pending_order:
+            pending_count += 1
+        else:
+            pending_order = list(ordered)
+            pending_count = 1
+        return pending_order, pending_count, \
+            pending_count >= int(self._cfg["pit_latch_frames"])
+
+    # ---- task1 爆炸物 ----
 
     def _process_explosive(self, frame, maix_img, hits):
         labs = [self._lab_for(MODE_EXPLOSIVE, c) for c in (1, 2, 3)]
@@ -442,50 +544,39 @@ class GksTaskProcessor(Processor):
                 color_cx[i + 1] = largest["cx"]
         if self._codes[0] in color_cx:
             self._explosive_cx = int(color_cx[self._codes[0]])
-        # 跨帧累积: 同帧内按 cx 排序(摄像头从左到右, 同帧 cx 序=空间序),
-        # 首次出现的颜色追加到 _seen_order 末尾
+        # 每色连续命中帧数: 现在只作观测(调阈值时看闪烁用), 不再参与锁存判定
         for c in (1, 2, 3):
             self._color_hits[c] = self._color_hits[c] + 1 if c in color_cx else 0
 
-        same_frame = sorted(color_cx.keys(), key=lambda c: color_cx[c])
-        if not self._cfg["pit_left_is_1"]:
-            same_frame.reverse()
-
-        # 一致性: 本帧已见色的相对序必须与 _seen_order 一致, 否则丢本帧
-        prev = [c for c in self._seen_order if c in color_cx]
-        if prev and prev != same_frame[:len(prev)]:
-            return ({"cx": int(self._explosive_cx), "pit": self._pos,
-                     "found": bool(self._pos_flag)},
-                    hits, list(self._position), self._pending_count, True)
-
-        # 只把确认过连续帧的颜色写入 _seen_order
+        # 本帧检出色块的空间序 = 扫掠方向上的先后; 首次出现的颜色按该序追加到 _seen_order
+        same_frame = sorted(color_cx.keys(), key=lambda c: color_cx[c],
+                            reverse=not self._cfg["pit_left_is_1"])
         for color_num in same_frame:
-            if (self._color_hits[color_num] >= 2
-                    and color_num not in self._seen_order):
+            if color_num not in self._seen_order:
                 self._seen_order.append(color_num)
                 log_print(f"[GKS] seen += {color_num} -> {self._seen_order}")
 
-        # 锁存: 已见 >=2 色即可推断完整顺序(缺色补末尾)
-        if self._pos_flag == 0 and len(self._seen_order) >= 2:
-            missing = [c for c in (1, 2, 3) if c not in self._seen_order]
-            ordered = self._seen_order + missing
-            if ordered == self._pending_order:
-                self._pending_count += 1
-            else:
-                self._pending_order = ordered
-                self._pending_count = 1
-            if self._pending_count >= int(self._cfg["pit_latch_frames"]):
-                for j, color_num in enumerate(ordered):
-                    self._position[j] = color_num
-                if self._codes[0] in ordered:
-                    self._pos = ordered.index(self._codes[0]) + 1
-                    self._pos_flag = 1
+        # 锁存: 已见 >=2 色(或 >=3, 由 infer_missing 定)即可补出完整顺序
+        if self._pos_flag == 0:
+            ordered, inferred = self._ordered_pits("explosive", self._seen_order)
+            if ordered is not None:
+                self._pending_order, self._pending_count, locked = self._latch_debounce(
+                    ordered, self._pending_order, self._pending_count)
+                if locked:
+                    for j, color_num in enumerate(ordered):
+                        self._position[j] = color_num
+                    self._latch_inferred = inferred
+                    if self._codes[0] in ordered:
+                        self._pos = ordered.index(self._codes[0]) + 1
+                        self._pos_flag = 1
                     log_print(f"[GKS] latch pit={self._pos} seen={self._seen_order} "
-                    f"ordered={ordered} codes={list(self._codes)}")
+                              f"ordered={ordered} codes={list(self._codes)} "
+                              f"inferred={self._latch_inferred}")
         result = {
             "cx": self._explosive_cx,
             "pit": self._pos,
             "found": bool(self._pos_flag),
+            "inferred": self._latch_inferred,
         }
         return result, hits, list(self._position), self._pending_count, True
 
@@ -517,16 +608,21 @@ class GksTaskProcessor(Processor):
             return {"err_fixed": err_fixed, "found": True}, hits, True
         return {"err_fixed": 0, "found": False}, hits, True
 
-    # ---- task3 人质 (main.py task3_rescue 逐行移植) ----
+    # ---- task3 人质 ----
 
     def _process_rescue(self, frame, hits):
         ai = self._ai
         if ai is None or not getattr(ai, "loaded", False):
             # 模型缺失优雅降级: 零值心跳不断流, 不崩溃
-            return {"pos": 0, "found": False}, hits, list(self._position2), self._pending_count2
+            return ({"pos": 0, "found": False, "inferred": self._latch_inferred},
+                    hits, list(self._position2), self._pending_count2)
 
         objs = ai.detect(frame, conf_th=self._cfg["rescue"]["conf_th"],
                          iou_th=self._cfg["rescue"]["iou_th"])
+        # 同一帧内可能同时检出多个形状: 此时"时间先后"无意义, 先按画面左右关系定序
+        # (镜像时反向), 保证入表顺序**不受模型输出顺序影响**(YOLO 的输出序不是空间序)。
+        # 跨帧仍保持"首次检出先后"—— 比赛流程固定, 相机按 pit1→pit3 扫过。
+        objs = sorted(objs, key=lambda o: o.x, reverse=not self._cfg["pit_left_is_1"])
         labels = getattr(ai, "labels", None) or []
         label_map = self._cfg["rescue"]["labels"]
         x_crop = int(self._cfg["rescue"].get("x_crop_px") or 0)
@@ -542,26 +638,36 @@ class GksTaskProcessor(Processor):
             if shape_num == 0:
                 continue
             self._shape_seen[shape_num] = obj.x + obj.w / 2.0   # 形状中心 x, 跨帧刷新
-        # 顺序映射: 跨帧集齐三形状且连续两帧顺序一致才锁存(按画面 x 从左到右)
-        if len(self._shape_seen) == 3 and self._position2[0] == 0:
-            ordered = [s for s, _cx in sorted(self._shape_seen.items(), key=lambda kv: kv[1])]
-            if not self._cfg["pit_left_is_1"]:
-                ordered.reverse()
-            if ordered == self._pending_order2:
-                self._pending_count2 += 1
+        # ---- 顺序映射（定序规则与补位见上方"坑位定序"共用段）----
+        if self._position2[0] == 0:
+            if self._order_by_x("rescue"):
+                seq = [s for s, _cx in sorted(self._shape_seen.items(), key=lambda kv: kv[1])]
+                # 镜像翻转必须在补位之前: 未见者补在"扫掠方向的最后一个"
+                if not self._cfg["pit_left_is_1"]:
+                    seq.reverse()
             else:
-                self._pending_order2 = ordered
-                self._pending_count2 = 1
-            if self._pending_count2 >= int(self._cfg["pit_latch_frames"]):
-                for j, shape_num in enumerate(ordered):
-                    self._position2[j] = shape_num
+                # dict 保持插入顺序 = 首次检出先后 = 物理坑位顺序, 与镜像开关无关
+                seq = list(self._shape_seen)
+            ordered, inferred = self._ordered_pits("rescue", seq)
+            if ordered is not None:
+                self._pending_order2, self._pending_count2, locked = self._latch_debounce(
+                    ordered, self._pending_order2, self._pending_count2)
+                if locked:
+                    for j, shape_num in enumerate(ordered):
+                        self._position2[j] = shape_num
+                    # 只反映"真正锁存那一帧"是否用了补位(现场核对: True=锁存时有形状没看到)
+                    self._latch_inferred = inferred
+                    log_print(f"[GKS] latch pos2={self._position2} "
+                              f"seen={list(self._shape_seen)} "
+                              f"order_by={'x' if self._order_by_x('rescue') else 'first_seen'} "
+                              f"codes={list(self._codes)} inferred={self._latch_inferred}")
         pos2 = 0
         if self._codes[2] != 0:     # 守卫: 形状码未下发(0)时不得与未锁存 0 自匹配
             for j in range(3):
                 if self._codes[2] == self._position2[j]:
                     pos2 = j + 1
                     break
-        return ({"pos": pos2, "found": bool(pos2)},
+        return ({"pos": pos2, "found": bool(pos2), "inferred": self._latch_inferred},
                 hits, list(self._position2), self._pending_count2)
 
     # ---- display (PC cv2 调试; 设备端叠加由 display HUD 完成) ----
