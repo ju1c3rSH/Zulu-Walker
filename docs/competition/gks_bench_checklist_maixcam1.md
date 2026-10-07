@@ -10,7 +10,7 @@
 |---|---|---|
 | HAL 平台 | `hal/platforms/maixcam2/` | `hal/platforms/maixcam1/` |
 | UART 模块 | `maix.peripheral.uart` | `maix.uart`（`from maix import uart`） |
-| 串口/引脚 | `/dev/ttyS4` A21(TX)/A22(RX) | **`/dev/ttyS1` A19(TX)/A18(RX)** |
+| 串口/引脚 | `/dev/ttyS4` A21(TX)/A22(RX) | **`/dev/ttyS0` A16(TX)/A17(RX)** |
 | 人质模型 | `eod_hostage_320.axmodel` + `nn.YOLO11` | **`model_239147.cvimodel` + `nn.YOLOv5`** |
 | 实测帧率上限 | 推流率≈相机帧率 | **约 30fps**（固件至少双缓存，取图延时 30+ms） |
 | 镜头 | 固定焦距 | M12 手动调焦（靶标/爆炸物几何需重标） |
@@ -28,14 +28,22 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
    ```
    路径须与 `project_config.yaml` `ai.models[0].model`（`/root/models/model_239147.mud`）一致。
    缺失时 RESCUE 订阅回 NACK NOT_READY（日志可见），EXPLOSIVE/TARGET 不受影响。
-2. UART 接线: **UART1 A19(TX)/A18(RX)** ↔ Brain USART1，交叉连接，共地; `/dev/ttyS1` @ **115200**。
-   - ⚠ **不要用 UART0**（A16/A17）：那是系统终端 + maix protocol 日志口，占用会打断日志与应用退出通道。
-   - ⚠ **引脚复用已由代码自动完成**（`MaixCam1Uart` 在开串口前调
-     `pinmap.set_pin_function` 设 A19→UART1_TX / A18→UART1_RX）。A19 出厂功能是
-     GPIOA19/PWM7，**不复用则串口打开但一个字节都收不到**。CAM2 的 A21/A22 是
-     板上默认引脚所以无需这步，回移植换口后极易漏。
-     启动日志若出现 `pinmap ... 失败` / `未能确认引脚复用` → 排查接线与固件。
-   - ⚠ 若做 3.3V↔5V 电平转换，**务必确保 TX 默认不拉低**（CAM1 芯片特性，TX 拉低 = 无法开机）。
+2. UART 接线: **UART0 A16(TX)/A17(RX)** ↔ Brain USART1，交叉连接，共地; `/dev/ttyS0` @ **115200**。
+   - A16/A17 **出厂默认即 UART0_TX/UART0_RX**（`pinmap.md:42`），代码会**跳过** pinmap
+     复用。启动日志出现 `[CAM1] UART /dev/ttyS0 使用出厂默认引脚功能(A16/A17)，跳过 pinmap`
+     属正常，不是告警。
+   - ⚠⚠ **TX(A16) 是启动模式检测引脚，拉低 = 无法开机**。做 3.3V↔5V 电平转换时
+     **务必确保 TX 默认不拉低**（保持浮空或用电平转换芯片）。
+     **上电起不来时第一件事：查 A16 是否被拉低。**
+   - ⚠ **开机日志干扰**：UART0 开机打印日志直到出现 `serial ready`。Brain 侧应丢弃
+     开机段数据（协议有 `AA 55` 帧头，一般能自动丢弃，但建议显式丢弃前若干秒）。
+   - ⚠ **与 maix protocol 抢线**：UART0 同时是系统默认 maix protocol 串口，占用后
+     MaixVision IDE 调试通道会与本链路冲突。台架调试改用 **SSH**（`ssh root@<设备IP>`）
+     或断开 IDE。`app.need_exit()` 走 maix通道，占用 UART0 时应用**可能无法从 IDE
+     正常停止** —— 急停直接断电。
+   - 若日后改回 UART1（A19/A18）：A19 出厂功能是 GPIOA19/PWM7，**必须** pinmap 复用
+     （代码已内置 `A19→UART1_TX` / `A18→UART1_RX`，TX/RX 都要设），否则串口打开但
+     收不到任何字节。
 3. 阈值文件 `/my-threshold/my_64threshold.txt`:组序 = 爆红/爆绿/爆蓝/靶红/靶绿/靶蓝。
    **CAM1 传感器与 CAM2 不同，LAB 阈值必须现场重标，不可直接拷 CAM2 的值。**
    现场用 KEY_OK 切调参页（爆/靶页）或 `python run.py debug color` 触屏调参后 SAVE 生成。
@@ -112,6 +120,9 @@ HAL、没碰协议与视觉语义"的最快信号。CAM1 专属用例见
 | `test_maixcam1_read_raw_converts_new_frame` | RGB→BGR 翻转 + `last_raw` 与 numpy 同帧 |
 | `test_maixcam1_falls_back_when_firmware_lacks_block_kwarg` | 固件降级标记 + 当拍补阻塞读（否则首帧丢） |
 | `test_maixcam1_open_degrades_to_minimal_signature` | 构造逐级降级能走通 |
-| `test_maixcam1_uart_sets_pinmap_for_ttyS1` | **P0**：A19/A18 必须复用为 UART1，否则串口收到 0 字节 |
+| `test_maixcam1_uart_ttyS0_skips_pinmap` | 本项目用 UART0：A16/A17 出厂即UART0 功能，**不应**调 pinmap |
+| `test_maixcam1_uart_ttyS1_still_sets_pinmap` | 防将来误删 UART1 复用（A19/A18 出厂**不是** UART1 功能） |
 | `test_maixcam1_detect_handles_none_objects` | `detect()` 返回 None 不得崩视觉线程 |
 | `test_maixcam1_missing_model_class_fails_loudly` | 缺 YOLO11 时显式失败，不跨类型兜底吐错误坐标 |
+| `test_tuner_analyze_downscaled_matches_fullframe` | 调参页降采样与全帧语义等价（mask 尺寸/命中数/bbox/面积口径） |
+| `test_tuner_analyze_area_uses_inv_squared` | 面积还原方向：0.5 档须≈全帧值（防误乘 scale² 差 16 倍） |

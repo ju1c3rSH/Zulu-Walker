@@ -445,8 +445,13 @@ def test_maixcam1_uart_sets_pinmap_for_ttyS1(monkeypatch):
     assert ("A18", "UART1_RX") in calls
 
 
-def test_maixcam1_uart_ttyS0_not_churn_pinmap(monkeypatch):
-    """ttyS0(A16/A17) 出厂默认已是 UART0 功能，不该多动引脚。"""
+def test_maixcam1_uart_ttyS0_skips_pinmap(monkeypatch):
+    """ttyS0(A16/A17) 出厂默认即 UART0_TX/RX，**不应**调 set_pin_function。
+
+    依据 docs/doc/zh/peripheral/pinmap.md:42「A17 ... 默认功能是 UART0_RX」。
+    对已是默认功能的引脚再设复用属于多此一举，且部分固件返回非 ERR_NONE
+    造成误告警。本项目 2026-10-07 起改用 UART0 对接 Brain，这条必须锁住。
+    """
     import importlib.util
     import sys
     import types
@@ -473,9 +478,10 @@ def test_maixcam1_uart_ttyS0_not_churn_pinmap(monkeypatch):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
-    mod.MaixCam1Uart("/dev/ttyS0", 115200)
-    # 复用是幂等的，允许重复设置；这里只验证不会抛异常且能建连
-    assert all(isinstance(c[0], str) for c in calls)
+    u = mod.MaixCam1Uart("/dev/ttyS0", 115200)
+    assert u.is_connected
+    # 出厂默认功能 -> 一次都不该调
+    assert calls == [], f"ttyS0 不应设 pinmap，实际调用={calls}"
 
 
 # ---------- 审查修复: AI detect() 返回 None 不得崩（2026-10-07 P1） ----------
@@ -642,3 +648,40 @@ def test_tuner_analyze_scale_1_is_noop_and_invalid_clamped():
     for bad in (0.0, -1.0, 2.5, 1.5):
         mb, bb = T._analyze(frame, thr, scale=bad, min_area_px=200)
         assert bb[0]["area"] == b1[0]["area"], f"非法 scale={bad} 应回退全帧"
+
+
+def test_maixcam1_uart_ttyS1_still_sets_pinmap(monkeypatch):
+    """UART1(A19/A18) 出厂**不是** UART1 功能，必须复用 —— 与 ttyS0 相反。
+
+    防"把ttyS0 改成跳过 pinmap 时，顺手把 ttyS1 的复用也删掉"。
+    依据 pinmap.md:64-65：A19 功能名是 GPIOA19/PWM7，不含 UART1_TX。
+    """
+    import importlib.util
+    import sys
+    import types
+
+    calls = []
+    pinmap_mod = types.ModuleType("maix.pinmap")
+    pinmap_mod.set_pin_function = lambda pin, func: calls.append((pin, func))
+    uart_mod = types.ModuleType("maix.uart")
+    uart_mod.UART = lambda port, baud: types.SimpleNamespace(
+        write=lambda d: len(d), read=lambda len=1, timeout=0: b"",
+        available=lambda timeout=0: 0, close=lambda: None,
+        set_received_callback=lambda cb: None,
+    )
+    maix_mod = types.ModuleType("maix")
+    maix_mod.pinmap = pinmap_mod
+    maix_mod.uart = uart_mod
+    monkeypatch.setitem(sys.modules, "maix", maix_mod)
+    monkeypatch.setitem(sys.modules, "maix.pinmap", pinmap_mod)
+    monkeypatch.setitem(sys.modules, "maix.uart", uart_mod)
+
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "framework", "hal", "platforms", "maixcam1", "uart.py")
+    spec = importlib.util.spec_from_file_location("_maixcam1_uart_ut3", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    mod.MaixCam1Uart("/dev/ttyS1", 115200)
+    assert ("A19", "UART1_TX") in calls
+    assert ("A18", "UART1_RX") in calls

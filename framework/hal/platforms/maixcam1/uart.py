@@ -23,11 +23,16 @@ except (ImportError, ModuleNotFoundError):
 # 非默认引脚必须先 set_pin_function 复用，否则打不开/无收发。
 # 依据 MaixPy docs/doc/zh/peripheral/uart.md「常见代码错误」：不设引脚功能直接
 # `uart.UART("/dev/ttyS1", 115200)` 是官方点名的错误写法。
-#   UART1: A19=TX / A18=RX（出厂默认是 GPIOA19/PWM7，非 UART1 功能）
-#   UART0: A16/A17 出厂默认已是 UART0_TX/RX，无需设置
 # ⚠ TX 与 RX **都要设**，只设 TX 是常见漏项。
+#
+# **ttyS0 故意不设 pinmap**（2026-10-07）：本项目改用 UART0 对接Brain，
+# 而 A16/A17 **出厂默认就是 UART0_TX/UART0_RX**（docs/doc/zh/peripheral/pinmap.md:42
+# 「A17... 默认功能是 UART0_RX」）。对已是默认功能的引脚再调 set_pin_function
+# 属于多此一举，且部分固件会返回非 ERR_NONE 造成误告警。真正需要复用的只有
+# 非默认引脚的串口（UART1 A19/A18、UART2 B0/B1）。
 _UART_PINMAP = {
-    "ttyS0": (("A16", "UART0_TX"), ("A17", "UART0_RX")),
+    # 出厂默认即UART0 功能，**不要**调 set_pin_function（见上）
+    "ttyS0": (),
     "ttyS1": (("A19", "UART1_TX"), ("A18", "UART1_RX")),
     "ttyS2": (("B0", "UART2_TX"), ("B1", "UART2_RX")),
 }
@@ -47,13 +52,18 @@ def _ensure_pinmap(port: str) -> None:
     if not key:
         logger.warning("UART port '%s' 不在已知引脚表，未设置 pinmap", port)
         return False
+    pins = _UART_PINMAP[key]
+    if not pins:
+        # ttyS0: 出厂默认功能，跳过（不是"失败"）
+        logger.warning("[CAM1] UART %s 使用出厂默认引脚功能(A16/A17)，跳过 pinmap", port)
+        return True
     try:
         from maix import pinmap
     except (ImportError, ModuleNotFoundError):
         logger.warning("maix.pinmap 不可用：%s 可能未复用，串口将不通", port)
         return False
     ok = True
-    for pin, func in _UART_PINMAP[key]:
+    for pin, func in pins:
         try:
             pinmap.set_pin_function(pin, func)
         except Exception as e:
@@ -71,16 +81,24 @@ class MaixCam1Uart:
 
     | 串口   | TX      | RX      | 设备         | 备注                |
     |--------|---------|---------|--------------|---------------------|
-    | UART0  | A16     | A17     | /dev/ttyS0   | 系统终端/日志，勿占用 |
-    | UART1  | A19     | A18     | /dev/ttyS1   | **推荐自定义通信**   |
+    | UART0  | A16     | A17     | /dev/ttyS0   | **本项目在用**（2026-10-07 改）|
+    | UART1  | A19     | A18     | /dev/ttyS1   | 官方推荐自定义通信   |
 
-    ⚠ UART0 是 maix protocol 与系统日志串口，接线会打断日志/应用退出通道。
-      所以 CAM1 一律用 /dev/ttyS1 + A19(TX)/A18(RX)，与 CAM2 的 ttyS4 不同。
-    ⚠ A19/A18 出厂默认是 GPIOA19/PWM7，**必须先 pinmap 复用**才通（见
-      _ensure_pinmap）。CAM2 的 A21/A22 是板上默认引脚所以无需这一步，这正是
-      回移植时极易漏掉的一环。
-    ⚠ MaixPy 文档警告: 若做3.3V↔5V 电平转换，务必确保 TX 默认不拉低
-      （CAM1 芯片特性，TX 拉低 = 无法开机）。
+    **本项目用 UART0（/dev/ttyS0, A16/A17）对接 Brain**，理由：接线已固定/按现场
+    需求选择。A16/A17 出厂默认即 UART0_TX/UART0_RX（pinmap.md:42），**无需 pinmap**
+    —— 见 _ensure_pinmap 里 ttyS0 故意留空的说明。
+
+    ⚠ **UART0 的三个已知限制**（MaixPy uart.md「MaixCAM/MaixCAM-Pro 串口使用注意点」）:
+
+    1. **开机打印日志**直到出现 `serial ready`。Brain 侧应丢弃开机段数据，
+       否则可能把启动日志当协议帧（协议有 AA55 帧头，一般能丢弃，但建议显式丢弃）。
+    2. ⚠⚠ **TX(A16) 是启动模式检测引脚，拉低 = 无法开机**。做 3.3V↔5V 电平转换
+       电路时务必确保 TX 默认不拉低（保持浮空或用电平转换芯片）。若上电起不来，
+       **先查 A16 是否被拉低**。
+    3. **UART0 同时是系统默认 maix protocol 串口**：占用后 MaixVision IDE 的调试
+       通道会与本链路抢线，台架调试改用 SSH（`ssh root@<设备IP>`）或断开 IDE。
+       注意 `app.need_exit()` 走的是 maix protocol 通道，占用 UART0 时应用**可能
+       无法通过 IDE 正常停止**（急停可直接断电或用设备上的物理方式）。
     """
 
     def __init__(self, port: str, baudrate: int = 115200) -> None:
@@ -92,7 +110,7 @@ class MaixCam1Uart:
 
         if not _HAS_UART:
             return
-        # 先复用引脚再开串口（A19/A18 出厂默认不是 UART1 功能）
+        # 非默认引脚需先复用（A16/A17 出厂已是 UART0 功能，函数内会跳过）
         if not _ensure_pinmap(port):
             logger.warning("UART %s 未能确认引脚复用，链路可能不通", port)
         try:

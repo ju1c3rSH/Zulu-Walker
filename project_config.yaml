@@ -13,8 +13,16 @@ cameras:
     camera_stream_queue_size: 2   # CAM1 无需堆缓冲（延时下限由固件决定）
 
 uart_defaults:
-  port: "/dev/ttyS1"   # MaixCAM UART1 pins A19(TX)/A18(RX) -> Brain USART1
-                       # ⚠ UART0(A16/A17) 是系统终端+maix protocol 日志口，勿占用
+  # MaixCAM UART0 pins A16(TX)/A17(RX) -> Brain USART1
+  # A16/A17 出厂默认即 UART0_TX/UART0_RX（pinmap.md:42），**无需 set_pin_function**。
+  # ⚠ UART0 的三个已知限制（MaixPy uart.md「MaixCAM/MaixCAM-Pro 串口使用注意点」）:
+  #   ① 开机打印日志直到 `serial ready` —— Brain 侧必须丢弃开机段数据,
+  #      否则会把启动日志当协议帧解析（协议有 AA55 帧头, 应能丢弃, 但仍建议丢弃);
+  #   ② **TX(A16) 是启动模式检测引脚, 拉低 = 无法开机**。做 3.3V↔5V 电平转换时
+  #      务必确保 TX 默认不拉低（保持浮空或用电平转换芯片）;
+  #   ③ UART0 同时是系统默认 maix protocol 串口 —— 占用后 MaixVision IDE 的
+  #      调试通道会与本链路抢线, 台架调试需改用 SSH 或断开 IDE。
+  port: "/dev/ttyS0"
   baudrate: 115200     # keep 115200: official docs warn other baud rates are unreliable
 
 ai:

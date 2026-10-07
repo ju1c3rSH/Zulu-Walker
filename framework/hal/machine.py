@@ -34,14 +34,17 @@ class Machine:
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
         path = Path(config_path)
         # 缺省平台取project_config.yaml 的首选值（当前分支 maixcam1）；
-        # 波特率缺省一律 115200 —— 官方警告其他波特率误码率高，
-        # 且与 Brain 侧串口配置强绑定，绝不能落到 921600。
+        # 端口/波特率缺省与 project_config.yaml `uart_defaults` 保持一致
+        #（当前 CAM1 分支 = /dev/ttyS0 + 115200）—— 官方警告其他波特率误码率高，
+        # 且端口与 Brain 侧接线强绑定，配置缺失时静默用错端口等于链路不通。
         default_platform = "maixcam1"
+        default_uart = {"port": "/dev/ttyS0", "baudrate": 115200}
         if not path.exists():
-            logger.warning("%s not found, using platform=%s defaults", config_path, default_platform)
+            logger.warning("%s not found, using platform=%s defaults %s",
+                           config_path, default_platform, default_uart)
             platform = default_platform
             cameras_config = []
-            uart_config = {"port": "/dev/ttyS1", "baudrate": 115200}
+            uart_config = dict(default_uart)
             ai_config = None
         else:
             with open(path) as f:
@@ -50,8 +53,8 @@ class Machine:
             cameras_config = cfg.get("cameras", [])
             uart_defaults = cfg.get("uart_defaults", {})
             uart_config = {
-                "port": uart_defaults.get("port", "/dev/ttyS1"),
-                "baudrate": uart_defaults.get("baudrate", 115200),
+                "port": uart_defaults.get("port", default_uart["port"]),
+                "baudrate": uart_defaults.get("baudrate", default_uart["baudrate"]),
             }
             ai_config = cfg.get("ai")
             cpu_affinity_cfg = cfg.get("cpu_affinity")

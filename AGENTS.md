@@ -11,23 +11,26 @@
 | 分支 | 设备 | 说明 |
 |---|---|---|
 | `EOD2026-NearCam` | MaixCAM2 (AX630C) | 主力分支，`.axmodel` + `nn.YOLO11`，`/dev/ttyS4` |
-| `feat/maixcam1-port` | **MaixCAM-Pro** (CVI cv181x，有触屏) | 从 `0f4db9b` 切出的回移植分支，`.cvimodel` + `nn.YOLOv5`，`/dev/ttyS1` |
+| `feat/maixcam1-port` | **MaixCAM-Pro** (CVI cv181x，有触屏) | 从 `0f4db9b` 切出的回移植分支，`.cvimodel` + `nn.YOLOv5`，`/dev/ttyS0` |
 
 **协议 v2.1 两平台逐字节一致，Brain 侧无需改动。** 协议层/任务处理器/协调器与平台无关，
 换平台只需动 HAL + 配置。**协议层用例在两分支上都必须全绿** —— 这是"只改了平台、
-没碰语义"的最快信号（PC 端 `python -m pytest tests/`，maixcam1 分支 131 例）。
+没碰语义"的最快信号（PC 端 `python -m pytest tests/`，maixcam1 分支 135 例）。
 
 CAM1 平台的五处硬差异（详见 `docs/competition/gks_bench_checklist_maixcam1.md`）：
 
 - **模型格式互不通用**：CAM2 `.axmodel`(mud 键`model_npu`) ↔ CAM1 `.cvimodel`(mud 键 `model`)，
   不可跨机复用；CAM1 现有 `model_239147.cvimodel`(YOLOv5, 三类) 来自 `F:\2026工科赛\maixcam\工科赛上端`。
-- **串口换口**：CAM1 用 `from maix import uart` + `/dev/ttyS1`(A19/A18)；
-  **UART0(A16/A17) 是系统终端+maix protocol 日志口，勿占用**。⚠ 做 3.3V↔5V 转换时 TX
-  默认不可拉低（CAM1 芯片特性，拉低 = 无法开机）。
-- ⚠ **非默认引脚必须 pinmap 复用**：A19 出厂功能是 `GPIOA19/PWM7`，开串口前**必须**
-  `pinmap.set_pin_function("A19","UART1_TX")` + `("A18","UART1_RX")`，否则"串口打开了但
-  收不到任何字节"且日志无线索。CAM2 的 A21/A22 是板上默认引脚所以没这步，**回移植换口后
-  极易漏**（2026-10-07 审查 P0）。`MaixCam1Uart._ensure_pinmap` 已内置。
+- **串口用 UART0**（2026-10-07 改）：`from maix import uart` + `/dev/ttyS0`(A16/A17)。
+  A16/A17 **出厂默认即 UART0_TX/RX**（`pinmap.md:42`），代码**跳过** pinmap 复用。
+  ⚠⚠ **TX(A16) 是启动模式检测引脚，拉低 = 无法开机**——做 3.3V↔5V 电平转换时务必确保
+  TX 默认不拉低；上电起不来先查 A16。⚠ 开机打印日志直到 `serial ready`，Brain 侧丢弃开机段。
+  ⚠ UART0 同时是系统 maix protocol 串口，占用后 MaixVision IDE 抢线，台架改用 SSH、
+  `app.need_exit()` 可能无法从 IDE 停止（急停断电）。
+  （若改回 UART1：A19/A18 出厂是 `GPIOA19/PWM7`，**必须** pinmap 复用否则收不到字节。）
+- **非默认引脚必须 pinmap 复用**：`MaixCam1Uart._ensure_pinmap` 只对**非出厂默认**的串口
+  设复用（ttyS1 A19/A18、ttyS2 B0/B1）；ttyS0 故意留空跳过。CAM2 的 A21/A22 是板上默认
+  引脚所以没这步，**换口后极易漏**（2026-10-07 审查 P0）。
 - **模块布局不同**：`wdt` 在 CAM1 是 `maix.wdt`、CAM2 是 `maix.peripheral.wdt`；`uart` 同理。
   只写 CAM2 路径会被 `except` 吞掉 → **看门狗静默失效**（线程死锁无硬件复位兜底）。
 - **帧率上限约 30fps**：MaixPy 文档明确 CAM1 即使 `buff_num=1` 也至少双缓存、取图延时
@@ -51,7 +54,8 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读 API 参考; 不确�
 
 - `platform: maixcam1`（当前工作分支）— 实现见 `framework/hal/platforms/maixcam1/`
   - CAM2 分支上为 `platform: maixcam2` — 实现见 `framework/hal/platforms/maixcam2/`
-- 通信（CAM1 分支）: UART **`/dev/ttyS1`** @ **115200**（官方警告其他波特率不可靠，勿改），UART1 引脚 A19(TX)/A18(RX) → Brain USART1
+- 通信（CAM1 分支）: UART **`/dev/ttyS0`** @ **115200**（官方警告其他波特率不可靠，勿改），UART0 引脚 A16(TX)/A17(RX) → Brain USART1
+  （⚠ A16 是启动模式检测引脚，**TX 拉低 = 无法开机**；UART0 开机有日志，Brain 侧需丢弃开机段）
 - 协议 v2.1（帧格式与 serial_protocol C 库逐字节一致）:
   - 帧型 0x20 REQUEST / 0x21 ACK / 0x22 NACK / 0x23 STOP / 0x24 DATA_STREAM；
     CRC16-CCITT 高字节在前；payload 恒 10B = seq + data_id + 8B 子载荷
