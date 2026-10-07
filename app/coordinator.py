@@ -13,6 +13,10 @@ Brain (panzer_Brain, 主站) 通过 USART1 驱动本端:
 v2.1 关键语义（对照 Brain interrupt.c 实际消费逻辑）:
 - 订阅期**零值心跳不断流**: 阈值缺失/无结果也按 interval 推全零帧,
   否则 Brain 1s 帧龄 stale 判定 + 1s 看门狗重订阅; 结果陈旧 >1s 同样归零。
+- **结果驱动推流（2026-09-28）**: 视觉每产出一帧结果立即推一帧, 不受
+  min_interval_ms 限制 —— 误差"有一帧就实时输出"。interval 语义降级为
+  "无新结果时的心跳周期", 见 _push_allowed。策略可用 project_config.yaml
+  `gks_stream.push_on_new_result` 回退到纯 interval 限速。
 - 同 data_id 同任务码的重订阅幂等, 不清视觉锁存（set_task 内部判重）;
   换 data_id / 换任务码才清（对应审查报告 §5.3 锁存语义）。
 - ACK [did,60,10] / NACK [did,reason] 照发保协议一致性
@@ -111,8 +115,19 @@ class GksCoordinator:
         self._gate_lock = threading.Lock()
         self._gating = SubscriptionStateMachine(self)
 
-        self._stream_log_count = 0
-        self._last_streamed_id = 0
+        # 推流策略（结果驱动 + 心跳兜底, 见 _push_allowed）:
+        #   视觉每产出一帧结果 -> _result_seq 前进 -> 立即推一帧（不受 interval 限制）
+        #   无新结果 -> 按 interval 推心跳（保 Brain 1s stale 判定 / 1s 看门狗）
+        # main.py 从 project_config.yaml `gks_stream:` 段注入（缺省即本处默认值）。
+        self._result_seq = 0             # 已收到的 gks_task 结果数（仅主循环线程读写）
+        self._sent_result_seq = 0        # 最近一次推流时已消费到第几个结果
+        self._push_on_new_result = True
+        self._min_push_interval_s = 0.0  # 两条放行路径的硬保护, 0 = 不限
+
+        # 推流统计窗口（按秒汇总打一条; 结果驱动后可达相机帧率, 逐帧打印会刷屏）
+        self._tx_window_start = 0.0
+        self._tx_window_count = 0
+        self._tx_hz = 0.0                # 最近一个统计窗口的实测推流率（HUD/台架对拍）
 
         # task gating cache (avoid redundant TaskManager calls)
         self._task_enabled = False
@@ -154,6 +169,20 @@ class GksCoordinator:
     def set_ai(self, ai) -> None:
         self._ai = ai
 
+    def set_stream_policy(self, push_on_new_result: Optional[bool] = None,
+                          min_push_interval_ms: Optional[float] = None) -> None:
+        """注入推流策略（main.py 从 project_config.yaml `gks_stream:` 读取）。
+
+        None = 保持当前值（配置缺段/缺键时即用类内默认: 结果驱动、无硬保护间隔），
+        push_on_new_result=False 可一键回到旧的"纯 interval 限速"语义。
+        """
+        if push_on_new_result is not None:
+            self._push_on_new_result = bool(push_on_new_result)
+        if min_push_interval_ms is not None:
+            self._min_push_interval_s = max(0.0, float(min_push_interval_ms) / 1000.0)
+        log_print(f"[UART CFG] stream: push_on_new_result={int(self._push_on_new_result)} "
+                  f"min_push_interval={self._min_push_interval_s * 1000:.0f}ms")
+
     def _send(self, frame: bytes) -> bool:
         if self._uart_sender:
             try:
@@ -194,29 +223,69 @@ class GksCoordinator:
 
         if sub_id != 0:
             payload = self._build_stream_payload(sub_id, now)   # 恒非 None: 零值心跳
-            if self._send_allowed(now):
+            if self._push_allowed(now):
                 current_seq = self._stream_seq
                 frame = build_data_stream_frame(current_seq, sub_id, payload)
+                result_seq = self._result_seq
                 if self._send(frame):
                     self._stream_seq = (current_seq + 1) & 0xFF
                     self._last_send_time = now
-                    self._stream_log_count += 1
-                    if sub_id != self._last_streamed_id or self._stream_log_count >= 30:
-                        self._stream_log_count = 0
-                        self._last_streamed_id = sub_id
-                        type_name = DATA_ID_NAMES.get(sub_id, f"0x{sub_id:02X}")
-                        log_print(f"[UART TX] DATA_STREAM seq={current_seq} "
-                                  f"type={type_name} {self._stream_payload_desc()}")
+                    self._sent_result_seq = result_seq
+                    self._note_streamed(sub_id, now)
 
         self._mem_log_counter += 1
         if self._mem_log_counter >= 900:
             self._mem_log_counter = 0
             self._log_memory()
 
-    def _send_allowed(self, now: float) -> bool:
-        """min_interval 节流（main.py push_ok 等价; 协议下限 30ms）。"""
+    def _push_allowed(self, now: float) -> bool:
+        """推流闸门 —— 结果驱动 + 心跳兜底（"一帧误差一帧输出"的实现点）。
+
+        两条放行路径, 缺一不可:
+
+        1) **新结果**: 视觉又产出了一帧结果（_result_seq 前进）-> 立即推, 不受
+           min_interval_ms 限制。这就是"有一帧就实时输出": 延迟只有一个主循环
+           tick（ModuleManager.MAIN_LOOP_DELAY = 2ms, 远小于相机帧间隔 16.7ms），
+           不再被时间闸门吞掉中间帧（旧实现里 Brain 下发 50ms 而相机 60fps 时,
+           约 2/3 帧的误差根本没发）。
+
+        2) **心跳**: 没有新结果时按 interval 推一帧。interval 的语义因此从
+           "每帧最小间隔"变为"心跳周期"—— Brain 的 1s 帧龄 stale 判定 + 1s
+           看门狗要求订阅期必须持续有帧, 停推即被重订阅。下限仍为
+           MIN_INTERVAL_MS(30ms), 即心跳最快 ~33Hz（协议"建议 30~50ms"）。
+
+        两条路径都受 min_push_interval（项目配置, 默认 0 = 不限）保护, 用于压制
+        相机恢复瞬间的突发连推; 上限天然由相机帧率封顶。push_on_new_result=False
+        则退化为旧的纯 interval 限速。
+        """
+        if (now - self._last_send_time) < self._min_push_interval_s:
+            return False
+        if self._push_on_new_result and self._result_seq != self._sent_result_seq:
+            return True
         interval = max(self._interval_ms, MIN_INTERVAL_MS) / 1000.0
         return (now - self._last_send_time) >= interval
+
+    def _note_streamed(self, sub_id: int, now: float) -> None:
+        """推流日志按秒汇总一条（含实测 Hz）。
+
+        结果驱动后推流率可达相机帧率, 逐帧打印会刷屏; 但"推流率是否等于帧率"
+        正是这套改动的核心验收项, 所以要打出来, 只是按秒打 —— 台架上一眼就能
+        看出是 60Hz 还是掉到 20Hz（`[FPS] pipeline` 可对照）。
+        """
+        if self._tx_window_start == 0.0:
+            self._tx_window_start = now
+        self._tx_window_count += 1
+        elapsed = now - self._tx_window_start
+        if elapsed < 1.0:
+            return
+        hz = self._tx_window_count / elapsed
+        self._tx_hz = hz
+        type_name = DATA_ID_NAMES.get(sub_id, f"0x{sub_id:02X}")
+        last_seq = (self._stream_seq - 1) & 0xFF
+        log_print(f"[UART TX] DATA_STREAM {hz:.1f}Hz seq={last_seq} "
+                  f"type={type_name} {self._stream_payload_desc()}")
+        self._tx_window_start = now
+        self._tx_window_count = 0
 
     def start(self) -> None:
         self._running = True
@@ -233,11 +302,19 @@ class GksCoordinator:
     # ===== vision results =====
 
     def _process_vision_results(self, all_results: dict) -> None:
+        """消费视觉结果: 覆盖最新缓存 + 结果计数前进（结果驱动推流的"有新帧"判据）。
+
+        计数在**每收到一个 gks_task 结果**时 +1, 不在这里判归属/新鲜度 —— 那两道
+        判据统一在 _active_result 里做, 免得同一语义分叉两处。归属不符的结果也会
+        消耗一个计数, 代价只是切任务瞬间多推一两帧零值（本来就是真话: 新模式还没有
+        有效结果）, 不会漏推。
+        """
         for _pipeline_id, results in all_results.items():
             for task_name, vision_result in results.items():
                 if task_name == _TASK_GKS and isinstance(vision_result, VisionResult):
                     self._latest_task = vision_result.result_data or {}
                     self._latest_task_ts = time.monotonic()
+                    self._result_seq += 1
 
     # ===== master events =====
 
@@ -388,6 +465,10 @@ class GksCoordinator:
         self._prev_gate_id = 0        # 等价 main.py handle_stop 的 sub_id = 0
         self._latest_task = {}
         self._latest_task_ts = 0.0
+        # 推流统计窗口归零: 停推期间没有发送, 不归零的话下次订阅的首帧会把整段
+        # 空闲时间算进分母, 打出一条毫无意义的低 Hz 日志。
+        self._tx_window_start = 0.0
+        self._tx_window_count = 0
         setup = "任务已停用" if was_active else "已是空闲"
         log_print(f"[UART ACTION] gate=IDLE latch=kept(是否清理由下次订阅判定) ({setup})")
 
@@ -495,6 +576,7 @@ class GksCoordinator:
             "pending_count": data.get("pending_count", 0),
             "thresholds_ok": data.get("thresholds_ok", True),
             "fps": self._last_fps,
+            "tx_hz": self._tx_hz,
             "ai_loaded": ai_loaded,
             "ai_model": active_model,
             "last_nack": self._last_nack,

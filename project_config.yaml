@@ -28,3 +28,16 @@ ai:
 streaming:
   wifi_ssid: ""
   wifi_password: ""
+
+# 近端推流策略（GksCoordinator，v2.1 DATA_STREAM）
+#   push_on_new_result: true  = 结果驱动：视觉每产出一帧结果立即推一帧，不受订阅帧
+#                               min_interval_ms 限制 —— 误差/坑位"有一帧就实时输出"。
+#                               interval 语义降级为"无新结果时的心跳周期"（保 Brain
+#                               1s 帧龄 stale 判定 + 1s 看门狗不重订阅）。
+#                               false = 回到旧的纯 interval 限速（丢中间帧，只保节奏）。
+#   min_push_interval_ms: 两条放行路径共用的硬保护间隔，0 = 不限（上限由相机帧率封顶）。
+#                         相机恢复/队列积压时出现突发连推就把这里调到 10~16。
+# 冒烟判据: 日志 `[UART TX] DATA_STREAM <Hz>Hz` 的 Hz 应≈ `[FPS] pipeline` 的帧率。
+gks_stream:
+  push_on_new_result: true
+  min_push_interval_ms: 0

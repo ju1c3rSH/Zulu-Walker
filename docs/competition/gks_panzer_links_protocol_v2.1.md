@@ -68,7 +68,7 @@ CRC16-CCITT：poly `0x1021`，init `0xFFFF`，无反射、无终异或，
 ```
 中控 → CAM:  CMD_REQUEST [data_id, min_interval_ms, reserved]
              data_id ∈ {0x01 爆炸物, 0x02 靶标, 0x03 人质}
-             min_interval_ms: 推送最小间隔，建议 30~50ms
+             min_interval_ms: 心跳周期（无新结果时的推送间隔），建议 30~50ms
 CAM → 中控:  CMD_ACK [data_id, max_freq_hz, payload_size=10]
              或 CMD_NACK [data_id, reason]（未知 data_id / 忙）
 CAM → 中控:  DATA_STREAM [seq, data_id, sub_payload] 持续推送
@@ -77,6 +77,16 @@ CAM → 中控:  DATA_STREAM [seq, data_id, sub_payload] 持续推送
 
 - **切换任务 = 直接发新的 CMD_REQUEST**，无需先 STOP；CAM 切换识别分支后回 ACK。
 - 中控侧参考 26-electric 摆杆订阅逻辑：WAIT_ACK → ACTIVE，1s 无数据判掉线重订阅。
+- **推送节奏 = 结果驱动（2026-09-28，近端 CAM 侧实现）**：视觉每产出一帧结果就
+  立即推一帧，**不受 `min_interval_ms` 限制** —— 打靶误差/坑位"有一帧就实时输出"，
+  推流率因此≈相机帧率（上限即 `CMD_ACK` 的 `max_freq_hz`）。`min_interval_ms`
+  的语义相应收窄为**心跳周期**：仅在"没有新结果"时按它补帧，用于满足中控 1s
+  帧龄 stale 判定与 1s 看门狗（下限 30ms，即心跳最快 ~33Hz）。
+  - 中控**不需要**为拿到逐帧结果而下调 `min_interval_ms`；维持 30~50ms 即可。
+  - 中控若吃不下这个速率，只能由 CAM 侧改配置
+    （`project_config.yaml` → `gks_stream.push_on_new_result: false` 回到纯
+    interval 限速），协议层无协商手段。
+  - 无新结果 / 结果陈旧 >1s / 模式归属不符 → 零值帧，**心跳不断流**。
 - **订阅帧扩展（v1.3）**：USART1 的 CMD_REQUEST 完整 payload 为 5 字节
   `[data_id, min_interval_ms, 爆炸物色, 靶标色, 人质形状]`——三个任务码随
   （重）订阅一并下发（原点长焦扫码后主控已持有任务参数）。只带

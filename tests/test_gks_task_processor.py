@@ -91,8 +91,25 @@ def test_explosive_same_frame_order_is_spatial_not_color_index(cfg):
     assert r.result_data["inferred"] is False
 
 
-def test_explosive_default_requires_three_colors(cfg):
-    """默认 infer_missing=none: 只有两色永不锁存(排爆作业时三坑同屏, 少色即异常)。"""
+def test_explosive_default_infers_third_color(cfg):
+    """默认 infer_missing=tail(2026-09-24 台架决策, 与 2025 方案一致): 两色即锁。
+
+    ⚠ 补位只推出"是什么"、推不出"在第几坑" —— 日志出现 inferred=True 时必须用实物
+    核对 PIT/POS(见 gks_bench_checklist 台架必做项); 要退回保守行为置 none。
+    """
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_EXPLOSIVE, (3, 0, 0))        # 目标 = 蓝色
+    frame = make_pit_frame([(BLUE, 533), (GREEN, 320)])
+    for _ in range(3):
+        r = proc.process(frame)
+    assert r.result_data["found"] and r.result_data["inferred"] is True
+    assert r.result_data["latched_order"] == [2, 3, 1]   # 画面左起 绿、蓝 -> 红补尾部
+    assert r.result_data["pit"] == 2                     # 蓝排第二坑
+
+
+def test_explosive_infer_missing_none_never_latches_two_colors(cfg):
+    """显式 infer_missing=none: 退回保守行为 —— 只有两色永不锁存(锁不上会超时可见)。"""
+    cfg["explosive"]["infer_missing"] = "none"
     proc = GksTaskProcessor(config=cfg)
     proc.set_task(MODE_EXPLOSIVE, (3, 0, 0))
     frame = make_pit_frame([(BLUE, 533), (GREEN, 320)])
@@ -100,6 +117,138 @@ def test_explosive_default_requires_three_colors(cfg):
         r = proc.process(frame)
     assert not r.result_data["found"] and r.result_data["pit"] == 0
     assert r.result_data["inferred"] is False
+
+
+def test_explosive_scan_scale_half(cfg, pit_frame):
+    """scan_scale=0.5: 320x240 扫描 —— 面积门槛按 scale² 折算, cx/框还原到全帧坐标。"""
+    cfg["explosive"]["scan_scale"] = 0.5
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_EXPLOSIVE, (2, 1, 3))   # 订阅绿色 -> 中坑
+    for _ in range(2):
+        r = proc.process(pit_frame)
+    assert r.result_data["found"], "降采样后仍应检出(门槛已按 scale² 折算)"
+    assert r.result_data["pit"] == 2
+    assert 300 < r.result_data["cx"] < 340     # 全帧坐标 ≈320, 不是小图的 160
+    blob = [h for h in r.result_data["hits"] if h["text"] == "C2"][0]
+    assert blob["w"] > 100 and blob["x"] > 250  # HUD 框同样还原到全帧
+
+
+class _FakeMaixImage:
+    """记录 cv2image 入参的假 maix.image 模块（PC 端验证通道序）。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def cv2image(self, array, bgr=True, copy=True):   # noqa: A002 - 对齐固件签名
+        self.calls.append((np.array(array, copy=True), bool(bgr), bool(copy)))
+        return object()
+
+
+def _install_fake_maix(monkeypatch):
+    import sys
+    import types
+    fake = _FakeMaixImage()
+    maix_mod = types.ModuleType("maix")
+    image_mod = types.ModuleType("maix.image")
+    image_mod.cv2image = fake.cv2image
+    maix_mod.image = image_mod
+    monkeypatch.setitem(sys.modules, "maix", maix_mod)
+    monkeypatch.setitem(sys.modules, "maix.image", image_mod)
+    return fake
+
+
+def test_downscale_hands_maix_rgb_not_bgr(cfg, monkeypatch):
+    """降采样小图必须交 RGB 字节序（2026-09-26 台架事故回归）。
+
+    机理: MaixCDK convert_to_imlib_image() 对 FMT_BGR888 是 fall-through 到
+    PIXFORMAT_RGB888、不做通道交换 —— 交 BGR 就会被当 RGB 算 LAB，红蓝互换：
+    蓝色目标命中"红色"阈值盒，HUD 把蓝色框标成 C1、坑位定序连带全错。
+    """
+    cfg["explosive"]["scan_scale"] = 0.5
+    proc = GksTaskProcessor(config=cfg)
+    fake = _install_fake_maix(monkeypatch)
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    frame[:, :] = BLUE                                   # 整帧纯蓝: BGR=(255,0,0)
+
+    small, small_maix = proc._downscale(frame, None, 0.5)
+
+    assert small_maix is not None, "假 maix 已就绪, 小图应构造成功"
+    arr, bgr_flag, _copy = fake.calls[-1]
+    assert bgr_flag is False, "必须 bgr=False（FMT_BGR888 会被 imlib 当 RGB888 用）"
+    assert tuple(arr[0, 0]) == (0, 0, 255), "小图应是 RGB 字节序（蓝 = 第三通道）"
+    assert small.shape == (240, 320, 3)
+    assert tuple(small[0, 0]) == (255, 0, 0), "cv2 回退路径的小图仍必须是 BGR"
+
+
+def test_downscale_maix_failure_falls_back_to_cv2(cfg, monkeypatch):
+    """maix 构造失败时返回 None, 调用方走 cv2（BGR 小图 + COLOR_BGR2LAB）。"""
+    import sys
+    import types
+    cfg["explosive"]["scan_scale"] = 0.5
+    proc = GksTaskProcessor(config=cfg)
+    image_mod = types.ModuleType("maix.image")
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("no maix")
+
+    image_mod.cv2image = _boom
+    maix_mod = types.ModuleType("maix")
+    maix_mod.image = image_mod
+    monkeypatch.setitem(sys.modules, "maix", maix_mod)
+    monkeypatch.setitem(sys.modules, "maix.image", image_mod)
+
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    frame[:, :] = BLUE
+    small, small_maix = proc._downscale(frame, None, 0.5)
+    assert small_maix is None
+    assert tuple(small[0, 0]) == (255, 0, 0)
+
+
+
+def _blocks_frame(colors, size):
+    """色块边长 size（中心 y=240）的 640x480 帧。"""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    half = size // 2
+    for bgr, cx in colors:
+        frame[240 - half:240 + half, cx - half:cx + half] = bgr
+    return frame
+
+
+def test_explosive_area_threshold_4000(cfg):
+    """面积门槛 10000 -> 4000: 70x70(=4900px) 的色块现在算检出（旧门槛不够）。
+
+    背景: 10000 是 2025 main.py 原值（≈100x100），对应他们那套机位/距离；我们机位
+    目标更小 + 运动模糊先啃边缘 —— 调参页看得见（只要 area>=200）主流程却 found=0。
+    """
+    import copy
+
+    frame = _blocks_frame([(RED, 107), (GREEN, 320), (BLUE, 533)], 70)
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_EXPLOSIVE, (2, 1, 3))
+    for _ in range(2):
+        r = proc.process(frame)
+    assert r.result_data["found"], "4900px 的色块应够 4000 门槛"
+    assert r.result_data["pit"] == 2
+
+    old = copy.deepcopy(cfg)
+    old["explosive"]["pixels_threshold"] = 10000
+    old["explosive"]["area_threshold"] = 10000
+    proc_old = GksTaskProcessor(config=old)
+    proc_old.set_task(MODE_EXPLOSIVE, (2, 1, 3))
+    for _ in range(2):
+        r_old = proc_old.process(frame)
+    assert not r_old.result_data["found"], "同样的色块在旧门槛 10000 下不够"
+
+
+def test_explosive_scan_scale_full_is_unchanged(cfg, pit_frame):
+    """scan_scale=1.0: 与降采样前行为完全一致(默认口径)。"""
+    cfg["explosive"]["scan_scale"] = 1.0
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_EXPLOSIVE, (2, 1, 3))
+    for _ in range(2):
+        r = proc.process(pit_frame)
+    assert r.result_data["found"] and r.result_data["pit"] == 2
+    assert 300 < r.result_data["cx"] < 340
 
 
 def test_explosive_two_frame_latch(cfg, pit_frame):
@@ -133,6 +282,8 @@ def test_explosive_mirror_switch(cfg, pit_frame):
 
 
 def test_explosive_incomplete_colors_never_latch(cfg, pit_frame):
+    """infer_missing=none 时: 抹掉一色后永不锁存(保守退路, 锁不上会超时可见)。"""
+    cfg["explosive"]["infer_missing"] = "none"
     frame = pit_frame.copy()
     frame[:, 400:] = 0                          # 抹掉蓝色: 只有红绿
     proc = GksTaskProcessor(config=cfg)

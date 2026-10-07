@@ -3,9 +3,12 @@
 
 - 改动1: PipelineCamera.enable_task 重注 set_ai（STOP 后 RESCUE 不永久失效）
 - 改动2: 相机停帧时 process_frame 不产出结果（陈旧归零可达）
-- 改动3: 各平台 read_raw/last_raw 接口一致（linux/mock 可跑主流水线）
+- 改动3: 各平台 read_raw/last_raw 接口一致（linux/mock 可跑主流水线;
+          maixcam2 停帧不得回退旧帧 —— 2026-09-28 补）
 - 改动4: AI 为 None 时订阅 RESCUE 回 NACK NOT_READY（不误导 Brain）
 """
+import os
+
 import numpy as np
 import pytest
 
@@ -151,6 +154,95 @@ def test_linux_camera_read_raw_empty_queue_returns_none():
     assert callable(getattr(cam, "read_raw", None))
     assert cam.last_raw is None
     assert cam.read_raw() is None      # 空队列 = 停帧语义
+
+
+# ---------- 改动3b: maixcam2 停帧不得回退旧帧（2026-09-28） ----------
+
+_MAIXCAM2_CAMERA_PY = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "framework", "hal", "platforms", "maixcam2", "camera.py")
+
+
+class _FakeRawCam:
+    """maix.camera.Camera 桩: read(block=False) 的返回值可控。"""
+
+    def __init__(self, frame):
+        self._frame = frame
+
+    def read(self, block=True):        # noqa: A002 - 对齐固件签名
+        return self._frame
+
+
+def _load_maixcam2_camera(monkeypatch, image2cv):
+    """注入假 maix 后按文件路径加载相机模块。
+
+    不走 `framework.hal.platforms.maixcam2` 包（其 __init__ 还拉 .ai/.display/.uart
+    等一堆 maix 依赖），直接按文件 exec —— 这样 PC 端也能测设备平台实现。
+    """
+    import importlib.util
+    import sys
+    import types
+
+    image_mod = types.ModuleType("maix.image")
+    image_mod.image2cv = image2cv
+    camera_mod = types.ModuleType("maix.camera")
+    camera_mod.Camera = object
+    maix_mod = types.ModuleType("maix")
+    maix_mod.image = image_mod
+    maix_mod.camera = camera_mod
+    monkeypatch.setitem(sys.modules, "maix", maix_mod)
+    monkeypatch.setitem(sys.modules, "maix.camera", camera_mod)
+    monkeypatch.setitem(sys.modules, "maix.image", image_mod)
+
+    spec = importlib.util.spec_from_file_location("_maixcam2_camera_ut",
+                                                  _MAIXCAM2_CAMERA_PY)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_maixcam2_read_raw_returns_none_on_stall(monkeypatch):
+    """空队列（相机停帧）必须返回 None, **不得回退 _last_frame**。
+
+    回退旧帧会让 PipelineCamera 的"停帧不复用旧帧"早退在设备上失效: 视觉线程
+    把同一帧反复当新帧算（any_fresh 恒真、只 sleep(0) 忙转），结果时间戳持续
+    刷新 -> coordinator 的 1s 陈旧归零永不触发 -> 相机挂死时错误结果会以
+    found=1 的姿态被持续推给主站。显示侧仍读 last_raw 画旧画面, 不受影响。
+    """
+    mod = _load_maixcam2_camera(
+        monkeypatch, lambda raw, **kw: np.zeros((4, 4, 3), np.uint8))
+    cam = object.__new__(mod.MaixCam2Camera)
+    cam._last_frame = np.full((4, 4, 3), 7, np.uint8)   # 上一帧仍在缓存
+    cam._last_raw = object()
+    cam._cam = _FakeRawCam(None)                        # 队列空 = 停帧
+
+    assert cam.read_raw() is None
+    assert cam.last_raw is not None                     # 显示侧照旧
+    assert int(cam._last_frame[0, 0, 0]) == 7           # 缓存未被旧帧刷新
+
+
+def test_maixcam2_read_raw_converts_new_frame(monkeypatch):
+    """有新帧时返回 RGB->BGR 翻转后的 numpy, 并同步 last_raw。"""
+    raw = object()
+    seen = []
+
+    def image2cv(img, **kw):
+        seen.append((img, kw))
+        arr = np.zeros((2, 2, 3), np.uint8)
+        arr[:, :, 0] = 10          # image2cv 交回 RGB 序
+        return arr
+
+    mod = _load_maixcam2_camera(monkeypatch, image2cv)
+    cam = object.__new__(mod.MaixCam2Camera)
+    cam._last_frame = None
+    cam._last_raw = None
+    cam._cam = _FakeRawCam(raw)
+
+    frame = cam.read_raw()
+    assert [s[0] for s in seen] == [raw]
+    assert cam.last_raw is raw
+    assert frame is cam._last_frame
+    assert tuple(frame[0, 0]) == (0, 0, 10)   # 通道翻转到 BGR
 
 
 # ---------- 改动4: AI 为 None 时 NACK ----------

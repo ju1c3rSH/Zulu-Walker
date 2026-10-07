@@ -75,6 +75,7 @@ def _push_coordinator_status(coordinator) -> None:
     dc.set("codes", str(info.get("codes", [0, 0, 0])))
     dc.set("pending", str(info.get("pending_count", 0)))
     dc.set("fps", f"{info.get('fps', 0.0):.1f}")
+    dc.set("tx_hz", f"{info.get('tx_hz', 0.0):.1f}")
 
 
 class DebugPageFactory:
@@ -309,6 +310,19 @@ def _load_exit_icon():
         return None
 
 
+def _apply_stream_policy(coordinator, config: dict) -> None:
+    """把 project_config.yaml `gks_stream:` 段注入 coordinator（缺段即用类内默认）。
+
+    默认即结果驱动（每帧结果立即推）; 现场若发现主站吃不下这个速率，改配置即可
+    回退到旧的 interval 限速，不必重新烧固件。
+    """
+    section = config.get("gks_stream") or {}
+    coordinator.set_stream_policy(
+        push_on_new_result=section.get("push_on_new_result"),
+        min_push_interval_ms=section.get("min_push_interval_ms"),
+    )
+
+
 def _init_streamer(vision_manager) -> None:
     from modules.zw_wifi_stream import get_streamer
     streamer = get_streamer()
@@ -367,6 +381,7 @@ def main():
         coordinator.set_uart_sender(uart_interface.send_raw)
 
     coordinator.set_ai(machine.ai)
+    _apply_stream_policy(coordinator, config)
     _init_streamer(vision_manager)
 
     exit_icon = _load_exit_icon()

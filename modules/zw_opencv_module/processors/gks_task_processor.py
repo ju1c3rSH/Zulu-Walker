@@ -18,6 +18,8 @@ task1_explosive / task2_target / task3_rescue（锁存/去抖/映射语义不变
   find_blobs 是排爆帧率瓶颈（台架实测 12~19fps, 低于 50ms 推流节奏）。降采样后
   面积门槛按 scale² 折算、cx/框按 1/scale 还原到全帧坐标; 缩放用 INTER_NEAREST
   （不做插值, 避免把边缘像素混成中间色 —— 那正是运动模糊掉色的同一机理）。
+  ⚠ 降采样小图必须交 **RGB 字节序**（2026-09-26 台架实测: 交 BGR 会红蓝互换,
+  蓝色目标被框成 C1、坑位定序连带全错）—— 机理见 `_downscale` 注释。
 
 锁存语义（task1/task3 同一套，与 2025 视觉方案 task1/task3 一致）:
 - 坑位顺序 = **首次检出先后**（相机按 pit1→pit3 扫过, 最先看见的那个就在 pit1）;
@@ -57,32 +59,52 @@ _DEFAULT_CONFIG = {
     "pit_latch_frames": 2,      # 连续 N 帧左右序一致才锁存（main.py 硬编码 2）
     "thresholds_file": "/my-threshold/my_64threshold.txt",
     "explosive": {
-        "pixels_threshold": 10000,
-        "area_threshold": 10000,
+        # 面积门槛 2026-09-26 下调: 10000 -> 4000（10000 px ≈ 100x100 ≈ 画面 3.3%,
+        # 是 2025 main.py 原值, 对应他们那套机位; 我们机位目标更小, 且运动模糊会先啃掉
+        # 边缘一圈 —— 调参页看得见(只要 area>=200)但主流程 found=0 就是这个门槛卡住）。
+        # 与 scan_scale 叠加时按 scale² 折算(0.5 -> 小图 1000 像素), 物理口径不变。
+        # 精调: 静止读调参页 `max:{area}px` 取 40~50%; 背景成块误检时往回加, 或先收紧 A/B 轴。
+        "pixels_threshold": 4000,
+        "area_threshold": 4000,
         # 顺序来源 / 未见者补位, 语义同 rescue: 2025 方案 task1 也是"首次检出先后 +
-        # 缺色用 6-a-b 推出来"。这里默认 require-3（infer_missing: none）:
-        # 排爆作业时车已停稳、三坑同屏, 少一色通常是阈值/遮挡问题, 位置无从推断 ——
-        # 宁可不锁存(超时 FAULT 可见) 也不静默把缺色按到 pit3。要复刻 2025 的
-        # "两色即锁"把它置 tail 即可。
+        # 缺色用 6-a-b 推出来"。2026-09-24 台架决策: 排爆**使用推断**(infer_missing: tail,
+        # 与 2025 方案一致) —— 见到 2 色即锁, 未见者补到顺序尾部。
+        # ⚠ 代价(台架必核对): 补位只推出"是什么"、推不出"在第几坑"; 一旦"未见者 =
+        #   最后一个坑"不成立, 会**静默锁错坑 -> 转台打错坑 -> 抓错**, 比锁不上更危险。
+        #   核对手段: 日志 `latch … inferred=True` 出现时必须拿实物核对 PIT/POS。
+        #   要退回保守行为把它置 none(三色齐见才锁, 锁不上会超时 FAULT 可见)。
         "order_by": "first_seen",
-        "infer_missing": "none",
+        "infer_missing": "tail",
+        # 排爆扫描降采样系数: 1.0 = 原分辨率(640x480) 全帧扫描; 0.5 = 320x240。
+        # 全帧三色串行 find_blobs 是排爆帧率瓶颈(台架实测 12~19fps, 慢于 50ms 推流节奏)。
+        # 降采样后: 面积门槛按 scale² 折算, cx/框按 1/scale 还原到全帧坐标。
+        # 置 1.0 即回到原分辨率。
+        "scan_scale": 1.0,
         # 兜底 LAB 阈值（阈值文件缺失时用）; 2026-09-23 台架回写, 与设备
         # /my-threshold/my_64threshold.txt 逐字一致 —— 文件在时以文件为准, 两者同值。
         # 取值原则（纯色目标）: A/B 负责色相与饱和度判别, L 只当噪声地板 ——
         # 不用 L 上限去排除高光（白/高光 a*≈b*≈0, 靠 A/B 天然排除; 用 L 上限切
         # 只会连物体亮面一起切掉, 色块被切成半块 -> 面积/质心双失准）。
         # ⚠ 这组值偏保守, 已知代价（现场"看得见却锁不上 / 色块切半"时按下表放开）:
-        #   1) L 上限 red 80 / green 67 / blue 80: 高饱和纯色本身 L 就高(纯绿 87.7,
-        #      受光面 74+; 实测绿球亮面 L 到 81) —— green 67 尤其紧, 优先放到 90~95;
+        #   1) L 上限 red 80 / green 85 / blue 60: 高饱和纯色本身 L 就高(纯绿 87.7,
+        #      受光面 74+; 实测绿球亮面 L 到 81) —— 绿球高光面仍可能出界, 可放到 95;
+        #      蓝 60 是"只要深蓝"的代价, 蓝目标受光变亮时先放开到 80;
         #   2) 红 A 下界 40: 砍掉红暗面(实测 A=37);
         #   3) 靶标段与本段逐字同值 —— 改这里记得同步 target["lab"]。
-        # ⚠ 两盒交叠: explosive 的 green ∩ blue ≠ ∅（L 8~67、A -83~-10、B -47~-10）,
-        #   暗青/灰蓝像素会同时落进两盒, 同一目标可能被报成两种颜色, 影响坑位定序;
-        #   要恢复互斥: green 的 Bmin 抬到 0, 或 blue 的 Bmax 收到 -47 以下。
+        # 绿(2026-09-26 收紧): 旧 [8,67,-83,-10,-47,71] 太松 —— 全帧误命中 18570 px 中
+        #   15658 px 是低饱和淡绿/灰绿(A -10~-25、B 0~35)。现靠两根色度轴收口:
+        #   Amax -10→-25(同时挡哑光黄 A≈-12~-20)、Bmin -47→30(挡低饱和偏青绿);
+        #   代价用 Lmax 67→85 补回(球心 ROI 覆盖 28→48px, 正检 548→525 基本不掉)。
+        #   要更狠的选择性: [8,67,-83,-25,30,71](误命中 954, 但球内少约 20%)。
+        # 蓝(2026-09-26 收紧): 旧 [0,80,-110,100,-66,-10] 只靠 B 一维且 Bmax=-10 离中性灰
+        #   只有 10 —— 全帧误命中 5365 px 中 3644 px 是浅蓝/淡蓝(B -25~-5)。现按"只要深蓝"
+        #   收口: Bmax -10→-25、Lmax 80→60、A 由全开 [-110,100] 收到 [-8,45](挡紫/青,
+        #   让 A 参与判别)、Bmin -66→-75(补住暗面 -69)。代价: 球内 401→341(-15%),
+        #   换误命中 -69% 且淡蓝归零。蓝目标受光变亮导致切块时先放开 Lmax 到 80。
         "lab": {
             "red":   [0, 80, 40, 80, 10, 80],
-            "green": [8, 67, -83, -10, -47, 71],
-            "blue":  [0, 80, -110, 100, -66, -10],
+            "green": [25, 85, -80, -25, 30, 85],
+            "blue":  [0, 60, -8, 45, -75, -25],
         },
     },
     "target": {
@@ -96,8 +118,8 @@ _DEFAULT_CONFIG = {
         # 同一组值只是起点而非最优; 要分开标定先改这里。
         "lab": {
             "red":   [0, 80, 40, 80, 10, 80],
-            "green": [8, 67, -83, -10, -47, 71],
-            "blue":  [0, 80, -110, 100, -66, -10],
+            "green": [25, 85, -80, -25, 30, 85],
+            "blue":  [0, 60, -8, 45, -75, -25],
         },
     },
     "rescue": {
@@ -203,6 +225,7 @@ class GksTaskProcessor(Processor):
         self._ai = None
 
         self._kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        self._scan_path: str = ""     # 当前 blob 扫描引擎(maix C++ / cv2), 变化时打一次日志
 
         self._mode: Optional[str] = None
         self._codes: Tuple[int, int, int] = (0, 0, 0)
@@ -232,6 +255,7 @@ class GksTaskProcessor(Processor):
         self._mode = mode
         self._codes = codes
         self._reset_latch()
+        self._log_lab_slots()
 
     def current_task(self) -> Tuple[Optional[str], Tuple[int, int, int]]:
         """当前订阅模式与任务码快照（coordinator 命令日志判重描述用）。"""
@@ -363,6 +387,25 @@ class GksTaskProcessor(Processor):
         lab = table.get(key[1])
         return list(lab) if lab else None
 
+    def _log_lab_slots(self) -> None:
+        """订阅切换时打一条"色号 -> 实际生效的 LAB 盒"日志（每次 set_task 一条）。
+
+        为什么需要: 阈值文件只按**行序**绑定颜色（`load_threshold_file` 忽略 name
+        前缀: row0→红/row1→绿/row2→蓝, 靶标 3~5）。文件若被别的工具按其它顺序写出,
+        "C1 槽跑着蓝色的阈值"这种错位是静默的 —— 屏幕上看蓝色被框成 C1, 与
+        R/B 通道序错误症状极像。有这行日志, 一眼就能分辨是文件行序问题还是通道序问题。
+        """
+        if self._mode == MODE_EXPLOSIVE:
+            slots = []
+            for code in (1, 2, 3):
+                slots.append(f"C{code}={COLOR_KEYS[code][1]}{self._lab_for(MODE_EXPLOSIVE, code)}")
+            log_print("[GKS] explosive LAB slots: " + "  ".join(slots))
+        elif self._mode == MODE_TARGET:
+            code = self._codes[1]
+            name = COLOR_KEYS.get(code, (None, "?"))[1]
+            log_print(f"[GKS] target LAB slot: code={code}({name}) "
+                      f"{self._lab_for(MODE_TARGET, code)}")
+
     # ---- blob scan (accel fast path + cv2 fallback) ----
 
     @staticmethod
@@ -378,7 +421,11 @@ class GksTaskProcessor(Processor):
 
     def _scan_blobs(self, frame_bgr: np.ndarray, maix_img, lab: list, roi_px,
                     pixels_threshold: int, area_threshold: int, merge: bool) -> list:
-        """find_blobs 一次单色扫描, 返回 [{x,y,w,h,cx,cy,pixels}]（像素面积降序不保证）。"""
+        """find_blobs 一次单色扫描, 返回 [{x,y,w,h,cx,cy,pixels}]（像素面积降序不保证）。
+
+        设备优先 maix C++ find_blobs; 引擎**变化时**打一次日志（台架据此确认到底是
+        快路径还是 cv2 回退 —— 两者的帧率差好几倍, 别靠猜）。
+        """
         if maix_img is not None:
             blobs = find_blobs_maix(
                 maix_img, lab, roi=roi_px,
@@ -386,10 +433,17 @@ class GksTaskProcessor(Processor):
                 pixels_threshold=pixels_threshold,
                 merge=merge)
             if blobs is not None:
+                self._note_scan_path("maix(C++ find_blobs)")
                 return blobs
             # maix 不可用/失败 -> cv2 回退
+        self._note_scan_path("cv2 回退(maix 不可用或 find_blobs 失败, 帧率明显偏低)")
         return self._scan_blobs_cv(frame_bgr, lab, roi_px,
                                    pixels_threshold, area_threshold)
+
+    def _note_scan_path(self, path: str) -> None:
+        if path != self._scan_path:
+            self._scan_path = path
+            log_print(f"[GKS] blob scan engine = {path}")
 
     def _scan_blobs_cv(self, frame_bgr: np.ndarray, lab: list, roi_px,
                        pixels_threshold: int, area_threshold: int) -> list:
@@ -523,6 +577,46 @@ class GksTaskProcessor(Processor):
 
     # ---- task1 爆炸物 ----
 
+    @staticmethod
+    def _scan_scale(cfg) -> float:
+        """排爆扫描降采样系数 `explosive.scan_scale`: 0.5 = 320x240 扫描。"""
+        try:
+            value = float(cfg.get("scan_scale", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        return value if 0.0 < value <= 1.0 else 1.0
+
+    def _downscale(self, frame, maix_img, scale):
+        """按 scale 降采样, 返回 (frame_bgr_small, maix_small)。
+
+        INTER_NEAREST: 不插值 —— 双线性会把目标边缘像素与背景混成中间色, 那正是
+        运动模糊让色块掉出阈值的同一机理。maix 缩放失败时返回 None(自动走 cv2 回退)。
+
+        ⚠ 通道序（2026-09-26 台架实测踩坑, 见 AGENTS.md「已知边界」）: 交给 C++
+        find_blobs 的小图必须是 **RGB 字节序 + FMT_RGB888 标记**。MaixCDK 的
+        convert_to_imlib_image()（components/vision/src/maix_image_ops.cpp）把
+        FMT_BGR888 直接 fall-through 成 PIXFORMAT_RGB888、**不做通道交换**，
+        于是 BGR 数据被当 RGB 算 LAB → 红蓝互换: 蓝色目标命中"红色"阈值盒,
+        HUD 框写 C1、坑位定序连带全错。故这里 resize 出 BGR 后转 RGB 再以
+        bgr=False 包图（cv2 回退路径继续用 BGR 小图, 与 COLOR_BGR2LAB 匹配）。
+        """
+        if scale >= 1.0:
+            return frame, maix_img
+        h, w = frame.shape[:2]
+        sw, sh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+        small = cv2.resize(frame, (sw, sh), interpolation=cv2.INTER_NEAREST)
+        # 小图重新包成 maix Image: 走 C++ find_blobs 快路径且像素与上面 NEAREST 结果
+        # 逐字节一致（不用 img.resize(): 固件默认插值会把边缘混成中间色）。
+        small_maix = None
+        try:
+            import maix.image
+            small_rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+            small_maix = maix.image.cv2image(small_rgb, bgr=False, copy=True)
+        except Exception as e:
+            log_print(f"[GKS] maix 小图构造失败({w}x{h}->{sw}x{sh}): "
+                      f"{type(e).__name__}: {e} (回退 cv2 路径)")
+        return small, small_maix
+
     def _process_explosive(self, frame, maix_img, hits):
         labs = [self._lab_for(MODE_EXPLOSIVE, c) for c in (1, 2, 3)]
         if not all(labs) or frame is None:
@@ -530,18 +624,24 @@ class GksTaskProcessor(Processor):
             return ({"cx": 0, "pit": 0, "found": False},
                     hits, list(self._position), self._pending_count, False)
         cfg = self._cfg["explosive"]
-        color_cx = {}   # 本帧各色最大色块 {色号1红/2绿/3蓝: cx}
+        scale = self._scan_scale(cfg)
+        frame_s, maix_s = self._downscale(frame, maix_img, scale)
+        # 面积门槛按 scale² 折算（同一物理目标在小图里的像素数是 scale² 倍）
+        pixels_th = max(1, int(cfg["pixels_threshold"] * scale * scale))
+        area_th = max(1, int(cfg["area_threshold"] * scale * scale))
+        color_cx = {}   # 本帧各色最大色块 {色号1红/2绿/3蓝: cx}(已还原到全帧坐标)
         for i in range(3):
-            blobs = self._scan_blobs(frame, maix_img, labs[i], None,
-                                     cfg["pixels_threshold"],
-                                     cfg["area_threshold"], merge=False)
+            blobs = self._scan_blobs(frame_s, maix_s, labs[i], None,
+                                     pixels_th, area_th, merge=False)
             if blobs:
                 largest = max(blobs, key=lambda b: b["pixels"])
-                hits.append({"x": int(largest["x"]), "y": int(largest["y"]),
-                             "w": int(largest["w"]), "h": int(largest["h"]),
+                hits.append({"x": int(largest["x"] / scale),
+                             "y": int(largest["y"] / scale),
+                             "w": int(largest["w"] / scale),
+                             "h": int(largest["h"] / scale),
                              "text": f"C{i + 1}",
                              "color": (0, 255, 0)})
-                color_cx[i + 1] = largest["cx"]
+                color_cx[i + 1] = largest["cx"] / scale
         if self._codes[0] in color_cx:
             self._explosive_cx = int(color_cx[self._codes[0]])
         # 每色连续命中帧数: 现在只作观测(调阈值时看闪烁用), 不再参与锁存判定

@@ -40,8 +40,18 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读 API 参考; 不确�
     核对 POS/PIT 与实物一致。
   - 两个开关按任务分开配（`eod_config.yaml`）: `order_by` = `first_seen`(默认) / `x`
     (旧 main.py 的"全程画面 x 排序 + 镜像翻转"); `infer_missing` = `tail`(允许两色/两形状
-    即锁, **人质默认**) / `none`(齐见才锁, **排爆默认** —— 排爆车停稳三坑同屏, 少一色
-    通常是阈值/遮挡, 位置无从推断)。
+    即锁, **排爆与人质都用**, 与 2025 方案一致; 2026-09-24 台架决策) / `none`(齐见才锁,
+    保守退路 —— 锁不上会超时 FAULT, 可见可诊断)。
+  - **台架硬要求**: 排爆既然用补位, 每次出现日志 `latch … inferred=True` 都必须核对 PIT
+    与实物一致（2026-09-24 实测: `seen=[2,3]` 即锁 `pit=2`，红色全程未见也照样锁）。
+- 排爆扫描降采样: `gks.explosive.scan_scale`（**当前 0.5 = 320×240 扫描**）—— 全帧三色串行
+  find_blobs 是排爆帧率瓶颈（台架实测 12~19fps，慢于 Brain 的 50ms 推流节奏）。降采样后
+  面积门槛按 scale² 折算、cx/框按 1/scale 还原到全帧坐标，识别语义不变；缩放用
+  INTER_NEAREST 不插值（插值会把边缘混成中间色，等价于人为运动模糊）。置 1.0 回全分辨率。
+  ⚠ **降采样小图必须交 RGB 字节序**：固件 `convert_to_imlib_image()` 把 `FMT_BGR888`
+  直接当 `PIXFORMAT_RGB888`（源码 `// fall through`，不做通道交换），交 BGR 数据会被
+  当 RGB 算 LAB → **红蓝互换**（蓝色目标被框成 C1、坑位定序连带全错，2026-09-26 台架实测）。
+  `_downscale` 用 `cvtColor(BGR2RGB)+bgr=False`，`maix_accel._as_rgb888()` 兜底转换。
 - 显示 HUD: `modules/zw_opencv_module/display/hud.py`（状态栏/检测叠加/锁存进度,
   不依赖 AI 模型加载）
 - MaixPy 加速层: `detectors/eod_color/maix_accel.py`（设备走 C++ find_blobs, PC 自动回退
@@ -51,7 +61,7 @@ F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读 API 参考; 不确�
   经 `MaixCam2AI` nick 热切换; 缺失时 RESCUE 回 NACK NOT_READY 不崩溃
 - 阈值: `eod_config.yaml` `gks:` 段 + 运行时覆盖文件 `/my-threshold/my_64threshold.txt`
   （mtime 变化热重载不清锁存）; 设备端调参器 `python run.py debug color`（触屏 GUI）
-- 测试（PC 端 pytest, 83 用例）: `python -m pytest tests/`
+- 测试（PC 端 pytest, 116 用例）: `python -m pytest tests/`
   - `test_protocol_gks.py`: C 自测向量移植 + md §6 业务向量 + Brain interrupt.c 消费偏移对拍
   - `test_gks_task_processor.py` / `test_coordinator_gks.py`: 照搬逻辑行为等价 + 订阅语义
 
@@ -93,6 +103,19 @@ python -c "import py_compile; py_compile.compile('app/coordinator.py', doraise=T
 - **不设主机静默自动 idle**（与旧上端一致）: Brain 看门狗是"收不到 CAM 数据 >1s 才
   重订阅"，健康推流期间主站本就静默; Brain 侧异常由 STOP/超时兜底。视觉结果陈旧
   >1s（相机停帧/处理器异常）自动归零心跳，不透传陈旧 found=1。
+- **推流 = 结果驱动 + 心跳兜底**（2026-09-28）: 视觉每产出一帧结果立即推一帧，
+  **不受订阅帧 min_interval_ms 限制**（"一帧误差一帧输出"，推流率≈相机帧率）；
+  `min_interval_ms` 降级为"无新结果时的心跳周期"（下限 30ms）。闸门在
+  `coordinator._push_allowed`，判据 `_result_seq != _sent_result_seq`。
+  一个主循环迭代内到达多帧结果时只推**最新**那帧（不排队、不补推陈旧）。
+  退路: `project_config.yaml` `gks_stream.push_on_new_result: false` 回到纯 interval
+  限速；`min_push_interval_ms` 可压制突发连推。验收看日志 `[UART TX] DATA_STREAM
+  <Hz>Hz` 与 `[FPS] pipeline` 是否一致（DebugConsole 的 `TX` 行同义）。
+- ⚠ **相机停帧契约**（2026-09-28 修正）: `maixcam2` 的 `read_raw()` 曾在此前"空队列
+  回退 `_last_frame`"，使 `pipeline_camera` 的"停帧不复用旧帧"在设备上失效 ——
+  视觉线程把同一帧反复当新帧算、结果时间戳持续刷新，1s 陈旧归零永不触发，
+  相机挂死时冻结结果会以 found=1 持续喂主站。现已在 `_ingest_raw` 处改为返回
+  None（与 `read()`/mock/linux 及 `interface/camera.py` 契约一致）。
 - KEY_OK **顺序循环**切四页: MAIN → EXPLOSIVE → TARGET → RESCUE → MAIN（释放沿,
   0.5s 防抖; 进调试页需相机存在, 调试页独占相机 set_paused）。
 - 调试页 UI: 爆/靶页各自 3 组 LAB 滑条+点取色, 靶页画 ROI 横线, 爆/靶页有

@@ -164,6 +164,7 @@ class DebugConsole:
             ("State",      s.get("state", "-"), "white"),
             ("Link",       self._link_str(s), self._link_color(s)),
             ("FPS",        s.get("fps", "-"), "white"),
+            ("TX",         s.get("tx_hz", "-"), "white"),
             ("Detections", s.get("det_count", "0"), "white"),
             ("Error",      f"{self._error_count}", "red" if self._error_count > 0 else "green"),
         ]

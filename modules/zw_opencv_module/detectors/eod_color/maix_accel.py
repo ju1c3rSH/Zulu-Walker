@@ -22,6 +22,11 @@ back to the cv2 path unchanged. Engine selection lives in
 Threshold convention note: maix find_blobs uses the SAME OpenMV-style LAB
 thresholds as `eod_config.yaml` (L 0..100, A/B signed) — passed through
 1:1, no conversion (the cv2 path converts internally instead).
+
+Channel-order note: imlib's convert_to_imlib_image treats FMT_BGR888 as
+PIXFORMAT_RGB888 (fall-through, no swap), so pixels handed to find_blobs
+MUST be real RGB888. Feed BGR data and red/blue silently trade places —
+`_as_rgb888()` converts defensively, callers should still pass RGB888.
 """
 import logging
 from typing import Optional
@@ -54,6 +59,41 @@ def maix_image_from_context(context: Optional[dict]):
     return raw
 
 
+_BGR_GUARD_LOGGED = False
+
+
+def _as_rgb888(img):
+    """BGR 标记图 -> 真正的 RGB888（避免 imlib 侧红蓝互换）。
+
+    MaixCDK `convert_to_imlib_image()`（components/vision/src/maix_image_ops.cpp）对
+    FMT_BGR888 是 fall-through 到 PIXFORMAT_RGB888 —— 源码注释原文就是
+    `case Format::FMT_BGR888:    // fall through`，**只认标记、不做通道交换**。
+    于是 BGR 字节会被 imlib 当 RGB 去算 LAB: 蓝色目标落进"红色"阈值盒
+    （HUD 把蓝色框标成 C1）、红色落进"蓝色"盒、绿色不受影响。
+    调用方最好直接交 RGB888（如 gks_task_processor._downscale）; 这里兜底转一次,
+    比错一整场的坑位定序便宜。
+    """
+    global _BGR_GUARD_LOGGED
+    fmt_fn = getattr(img, "format", None)
+    formats = getattr(_maix_image, "Format", None)
+    if not callable(fmt_fn) or formats is None:
+        return img
+    try:
+        bgr_like = [f for f in (getattr(formats, "FMT_BGR888", None),
+                               getattr(formats, "FMT_BGRA8888", None)) if f is not None]
+        if bgr_like and fmt_fn() in bgr_like and hasattr(img, "to_format"):
+            converted = img.to_format(formats.FMT_RGB888)
+            if converted is not None:
+                if not _BGR_GUARD_LOGGED:
+                    _BGR_GUARD_LOGGED = True
+                    logger.warning("find_blobs_maix: BGR 标记图已转 RGB888 "
+                                   "(imlib 把 FMT_BGR888 当 RGB888, 不转会红蓝互换)")
+                return converted
+    except Exception as e:
+        logger.warning("BGR->RGB888 转换失败(%s), 用原图继续", e)
+    return img
+
+
 def find_blobs_maix(img, thresholds: list, roi=None,
                     area_threshold: int = 400,
                     pixels_threshold: int = 100,
@@ -70,6 +110,7 @@ def find_blobs_maix(img, thresholds: list, roi=None,
     """
     if not _HAVE_MAIX or img is None:
         return None
+    img = _as_rgb888(img)
     try:
         # roi 是 list[int] 参数, 传 None 会被 pybind11 拒绝(TypeError) —— 全帧
         # 检测必须整体省略该 kwargs（EXPLOSIVE 三色扫描即此形态）

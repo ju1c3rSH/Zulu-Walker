@@ -110,16 +110,28 @@ class MaixCam2Camera:
             logger.warning("Camera read failed: %s", e)
             return None
 
+    def _ingest_raw(self, raw) -> Optional[np.ndarray]:
+        """新 raw 帧 -> 更新 last_raw/_last_frame 并返回 BGR numpy; None = 停帧。
+
+        停帧必须返回 None（**不得回退 _last_frame**）: 接口契约见
+        framework/hal/interface/camera.py::read_raw，mock/linux 两个平台都按此实现。
+        这里曾经在空队列时返回上一帧 numpy，后果是 pipeline_camera 的"停帧不复用
+        旧帧"早退在设备上失效 —— 视觉线程会把同一帧反复当新帧算（any_fresh 恒真、
+        只 sleep(0) 忙转），推流侧据此认为"一直有新结果"，1s 陈旧归零永远不触发，
+        相机真的挂死时会以冻结误差持续喂主站。2026-09-28 修正为与契约一致。
+        """
+        if raw is None:
+            return None
+        self._last_raw = raw
+        np_img = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
+        self._last_frame = np_img[:, :, ::-1]
+        return self._last_frame
+
     def read_raw(self):
         if self._cam is None:
             return None
         try:
-            raw = self._cam.read(block=False)
-            if raw is not None:
-                self._last_raw = raw
-                np_img = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
-                self._last_frame = np_img[:, :, ::-1]
-            return self._last_frame
+            return self._ingest_raw(self._cam.read(block=False))
         except Exception as e:
             logger.warning("Camera read_raw failed: %s", e)
             return None

@@ -46,3 +46,60 @@ def test_detector_with_maix_img_none_uses_cv2_path():
         min_area_px=100)
     result = det.detect(frame, maix_img=None)
     assert result.target_found and result.dev_id == 1
+
+
+# ---------- BGR -> RGB888 兜底（imlib 把 FMT_BGR888 当 RGB888 用） ----------
+
+class _Format:
+    FMT_RGB888 = 1
+    FMT_BGR888 = 2
+    FMT_BGRA8888 = 4
+
+
+class _FakeImg:
+    def __init__(self, fmt):
+        self._fmt = fmt
+        self.conversions = 0
+
+    def format(self):
+        return self._fmt
+
+    def to_format(self, fmt):
+        self.conversions += 1
+        self._fmt = fmt
+        return self
+
+
+@pytest.fixture()
+def fake_maix_formats(monkeypatch):
+    import types
+    monkeypatch.setattr(maix_accel, "_maix_image",
+                        types.SimpleNamespace(Format=_Format()))
+    monkeypatch.setattr(maix_accel, "_BGR_GUARD_LOGGED", False)
+
+
+def test_as_rgb888_converts_bgr_marked_image(fake_maix_formats):
+    """BGR 标记图必须转成真 RGB888, 否则 find_blobs 里红蓝互换（台架 blue->C1）。"""
+    img = _FakeImg(_Format.FMT_BGR888)
+    out = maix_accel._as_rgb888(img)
+    assert out is img
+    assert img.conversions == 1
+    assert img.format() == _Format.FMT_RGB888
+
+
+def test_as_rgb888_converts_bgra_marked_image(fake_maix_formats):
+    img = _FakeImg(_Format.FMT_BGRA8888)
+    maix_accel._as_rgb888(img)
+    assert img.conversions == 1 and img.format() == _Format.FMT_RGB888
+
+
+def test_as_rgb888_keeps_rgb888_untouched(fake_maix_formats):
+    img = _FakeImg(_Format.FMT_RGB888)
+    out = maix_accel._as_rgb888(img)
+    assert out is img and img.conversions == 0
+
+
+def test_as_rgb888_without_format_attribute(fake_maix_formats):
+    """老固件 / 非 Image 对象: 不抛异常, 原样返回。"""
+    assert maix_accel._as_rgb888(object()) is not None
+

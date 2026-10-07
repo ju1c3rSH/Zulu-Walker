@@ -204,14 +204,107 @@ def test_stream_payload_target_and_rescue():
                                                build_rescue_sub_payload(2, True))
 
 
-def test_interval_throttles_push():
+def test_heartbeat_throttled_by_interval():
+    """无新结果时按 interval 推心跳（interval = 心跳周期, 不是每帧最小间隔）。"""
     coord, vm, proc, sent = make_coordinator()
     subscribe(coord, DATA_EXPLOSIVE, 200, codes=(1, 0, 0))
     _pump(coord)
     n_after_first = len(sent)
     coord._last_send_time = time.monotonic()   # 刚推过
-    coord.loop()                               # 200ms 内: 不推
+    coord.loop()                               # 200ms 内 + 无新结果: 不推
     assert len(sent) == n_after_first
+    coord._last_send_time = 0.0
+    coord.loop()                               # 到点 -> 心跳
+    assert len(sent) == n_after_first + 1
+
+
+# ---------- 结果驱动推流（"有一帧误差就实时输出"） ----------
+
+def test_new_result_pushes_immediately_within_interval():
+    """有一帧新结果就立即推一帧, **不受 interval 限制**。
+
+    旧实现是纯时间闸门: Brain 下发 50ms 而相机 60fps 时, 约 2/3 帧的误差
+    根本没发（不是延迟, 是丢失）。这里把 interval 拉到 1s 都无法阻止新结果推送,
+    即证明闸门已由"时间"改为"结果"。
+    """
+    coord, vm, proc, sent = make_coordinator()
+    subscribe(coord, DATA_TARGET, 1000, codes=(0, 2, 0))   # 心跳周期 1s
+    _pump(coord)
+    n = len(sent)
+
+    coord._last_send_time = time.monotonic()               # 刚推过, 离 1s 还远
+    vm.queue_result({"mode": "TARGET", "err_fixed": -2500, "found": True})
+    coord.loop()
+    assert len(sent) == n + 1
+    assert sent[-1][6:14] == build_target_sub_payload(-2500, True)
+
+
+def test_no_new_result_does_not_repush():
+    """没有新结果时不得重复推同一帧（旧实现每 interval 就重发一次）。"""
+    coord, vm, proc, sent = make_coordinator()
+    subscribe(coord, DATA_TARGET, 1000, codes=(0, 2, 0))
+    _pump(coord)
+    n = len(sent)
+
+    coord._last_send_time = time.monotonic()
+    for _ in range(5):
+        coord.loop()                                       # 无新结果
+    assert len(sent) == n
+
+
+def test_batched_results_collapse_to_latest_frame():
+    """一次主循环迭代内到达多帧结果时只推一帧, 且是**最新**那帧。
+
+    推流侧不排队: 主循环被拖慢时宁可漏掉中间帧, 也不送陈旧误差 —— 载荷永远
+    取 _latest_task 快照, 与 Brain 的控制环只关心"当前误差"一致。
+    """
+    coord, vm, proc, sent = make_coordinator()
+    subscribe(coord, DATA_TARGET, 1000, codes=(0, 2, 0))
+    _pump(coord)
+    n = len(sent)
+
+    coord._last_send_time = time.monotonic()
+    vm.queue_result({"mode": "TARGET", "err_fixed": 100, "found": True})
+    vm.queue_result({"mode": "TARGET", "err_fixed": 200, "found": True})
+    vm.queue_result({"mode": "TARGET", "err_fixed": 300, "found": True})
+    coord.loop()
+    assert len(sent) == n + 1
+    assert sent[-1][6:14] == build_target_sub_payload(300, True)   # 只推最新
+
+
+def test_min_push_interval_floor_limits_burst():
+    """min_push_interval_ms 硬保护: 相机恢复瞬间的突发连推被压住（新结果也压）。"""
+    coord, vm, proc, sent = make_coordinator()
+    coord.set_stream_policy(min_push_interval_ms=200)
+    subscribe(coord, DATA_TARGET, 1000, codes=(0, 2, 0))
+    _pump(coord)
+    n = len(sent)
+
+    coord._last_send_time = time.monotonic()
+    for err in (100, 200, 300):
+        vm.queue_result({"mode": "TARGET", "err_fixed": err, "found": True})
+        coord.loop()
+    assert len(sent) == n                                  # floor 内一帧都不推
+
+    coord._last_send_time = time.monotonic() - 0.3         # 超过 floor
+    vm.queue_result({"mode": "TARGET", "err_fixed": 400, "found": True})
+    coord.loop()
+    assert len(sent) == n + 1
+    assert sent[-1][6:14] == build_target_sub_payload(400, True)
+
+
+def test_policy_can_fall_back_to_interval_throttle():
+    """push_on_new_result=False -> 回到旧的纯 interval 限速（现场退路）。"""
+    coord, vm, proc, sent = make_coordinator()
+    coord.set_stream_policy(push_on_new_result=False)
+    subscribe(coord, DATA_TARGET, 1000, codes=(0, 2, 0))
+    _pump(coord)
+    n = len(sent)
+
+    coord._last_send_time = time.monotonic()
+    vm.queue_result({"mode": "TARGET", "err_fixed": 100, "found": True})
+    coord.loop()
+    assert len(sent) == n                                  # 新结果也等 interval
 
 
 def test_seq_wraps_255():
