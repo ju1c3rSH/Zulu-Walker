@@ -70,13 +70,24 @@ class MaixCam1Camera:
 
         CAM1 官方示例是 `camera.Camera(640, 480)`（位置参数、无 buff_num），
         老固件对 `device=` / `buff_num=` / `open=` 的支持程度不一，这里不假设
-        固件版本，直接降级到最小可用签名。
+        固件版本，降级到最小可用签名。
+
+        ⚠ **降级会丢参数**：命中 level3/4 时 fps/buff_num 根本没传进去。按
+        docs/doc/zh/vision/camera.md:163，分辨率<=1280x720 时 MaixPy 会把帧率
+        设成 **80fps**，于是 project_config 的 `fps: 60` 被静默忽略、实际跑 80fps。
+        每级成功都打日志记录命中级别与被丢弃的参数，否则台架无法判断实际状态。
         """
         device = str(source) if source is not None else None
 
         # 1) 全参数（新版固件）
+        # 降级只做"**关键字逐步减少**"，不猜位置参数顺序。
+        # 依据：docs/doc/zh/vision/camera.md 只验证到 3 位位置参数
+        # (640,480) / (640,480,FORMAT)；device/fps/buff_num/open 一律以关键字
+        # 出现。若这里写 6 位位置参数而真实签名是 (w,h,format,buff_num,fps,..)，
+        # 会**静默把 buff_num 当 fps、fps 当 buff_num** —— 不报错、行为全错。
+        # 1) 全参数（新版固件）—— 命中即所有参数生效
         try:
-            return maix.camera.Camera(
+            cam = maix.camera.Camera(
                 width=width,
                 height=height,
                 format=maix.image.Format.FMT_RGB888,
@@ -85,32 +96,55 @@ class MaixCam1Camera:
                 buff_num=buff_num,
                 open=True,
             )
+            # warning 而非 info: root logger 被basicConfig 钉在 WARNING，
+            # 台架要靠这行判断相机实际命中哪级构造（info 不会被打印）
+            logger.warning("[CAM1] camera open level=1 (full kwargs, fps=%s buff_num=%s)",
+                        fps, buff_num)
+            return cam
         except TypeError:
             pass
         except Exception as e:
-            logger.warning("Camera open(full kwargs) failed: %s", e)
+            logger.warning("Camera open(level1 full kwargs) failed: %s", e)
 
-        # 2) 位置参数 w/h/format + buff_num
+        # 2) 去掉 open=
         try:
-            return maix.camera.Camera(
-                width, height, maix.image.Format.FMT_RGB888, device, fps, buff_num
+            cam = maix.camera.Camera(
+                width=width,
+                height=height,
+                format=maix.image.Format.FMT_RGB888,
+                device=device,
+                fps=fps,
+                buff_num=buff_num,
             )
+            logger.warning("[CAM1] camera open level=2 (no open=, fps=%s buff_num=%s)",
+                        fps, buff_num)
+            return cam
         except TypeError:
             pass
         except Exception as e:
-            logger.warning("Camera open(positional+buff) failed: %s", e)
+            logger.warning("Camera open(level2 no-open) failed: %s", e)
 
-        # 3) 位置参数 w/h/format（CAM1 官方示例签名）
+        # 3) 官方示例已验证的位置参数签名 (w, h, format) —— **fps/buff_num 被丢弃**
         try:
-            return maix.camera.Camera(width, height, maix.image.Format.FMT_RGB888)
+            cam = maix.camera.Camera(width, height, maix.image.Format.FMT_RGB888)
+            logger.warning("[CAM1] camera open DEGRADED level=3: fps=%s buff_num=%s "
+                           "未生效（MaixPy 对 <=1280x720 默认 80fps），实际帧率以实测为准",
+                           fps, buff_num)
+            return cam
+        except TypeError:
+            pass
         except Exception as e:
-            logger.warning("Camera open(positional) failed: %s", e)
+            logger.warning("Camera open(level3 positional) failed: %s", e)
 
-        # 4) 最小签名
+        # 4) 最小签名 (w, h) —— 同上，fps/buff_num 全丢
         try:
-            return maix.camera.Camera(width, height)
+            cam = maix.camera.Camera(width, height)
+            logger.warning("[CAM1] camera open DEGRADED level=4: fps=%s buff_num=%s "
+                           "未生效（MaixPy 对 <=1280x720 默认 80fps），实际帧率以实测为准",
+                           fps, buff_num)
+            return cam
         except Exception as e:
-            logger.error("Camera open(minimal) failed: %s", e)
+            logger.error("Camera open(level4 minimal) failed: %s", e)
             return None
 
     # ------------------------------------------------------------------ #
@@ -291,4 +325,9 @@ class MaixCam1Camera:
             except Exception:
                 pass
             self._cam = None
+        # 一并清掉帧缓存: _last_raw 持有已释放相机的 Image 引用，
+        # vision_manager._update_display_frame 只判raw_img is None，
+        # 残留会让显示侧继续拿释放后的帧画 HUD。
+        self._last_raw = None
+        self._last_frame = None
         self._opened = False

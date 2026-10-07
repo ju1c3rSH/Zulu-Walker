@@ -30,6 +30,11 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
    缺失时 RESCUE 订阅回 NACK NOT_READY（日志可见），EXPLOSIVE/TARGET 不受影响。
 2. UART 接线: **UART1 A19(TX)/A18(RX)** ↔ Brain USART1，交叉连接，共地; `/dev/ttyS1` @ **115200**。
    - ⚠ **不要用 UART0**（A16/A17）：那是系统终端 + maix protocol 日志口，占用会打断日志与应用退出通道。
+   - ⚠ **引脚复用已由代码自动完成**（`MaixCam1Uart` 在开串口前调
+     `pinmap.set_pin_function` 设 A19→UART1_TX / A18→UART1_RX）。A19 出厂功能是
+     GPIOA19/PWM7，**不复用则串口打开但一个字节都收不到**。CAM2 的 A21/A22 是
+     板上默认引脚所以无需这步，回移植换口后极易漏。
+     启动日志若出现 `pinmap ... 失败` / `未能确认引脚复用` → 排查接线与固件。
    - ⚠ 若做 3.3V↔5V 电平转换，**务必确保 TX 默认不拉低**（CAM1 芯片特性，TX 拉低 = 无法开机）。
 3. 阈值文件 `/my-threshold/my_64threshold.txt`:组序 = 爆红/爆绿/爆蓝/靶红/靶绿/靶蓝。
    **CAM1 传感器与 CAM2 不同，LAB 阈值必须现场重标，不可直接拷 CAM2 的值。**
@@ -43,8 +48,15 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
 | 1 | 屏幕显示 HUD | 状态栏 `MODE:IDLE  LINK:--`，无黑屏（显示不依赖模型加载） |
 | 2 | 日志 `cam w:640 h:480` | 相机 640×480 开启成功 |
 | 3 | **无降级告警** | 启动日志**不得**出现 `camera.read(block=...) unsupported` —— 出现即表示固件老到不认非阻塞读，停帧保护已降级为阻塞读（见 §5） |
-| 4 | 日志 AI 注册 | `Registered model 'eod_hostage' -> /root/models/model_239147.mud` + `Switched to model`；缺失仅告警不崩溃 |
-| 5 | 协议向量对拍（PC 侧已测） | 订阅 `AA 55 06 20 01 32 00 E7 49` → ACK `AA 55 06 21 01 3C 0A 13 B8` |
+| 4 | 相机构造级别 | 日志 `[CAM1] camera open level=1` 表示 fps/buff_num 生效；若出现 `DEGRADED level=3/4` 则 fps 被丢弃（MaixPy 对 ≤1280x720 默认 80fps），实际帧率以实测为准 |
+| 5 | 引脚复用 | 不得出现 `pinmap ... 失败` / `未能确认引脚复用`；出现则 UART1 不通，优先查接线与固件 |
+| 6 | 硬件看门狗 | 不得出现 `[WDT] init FAIL` —— 出现说明 WDT 未生效，线程死锁将无自动复位（CAM1 用 `maix.wdt`，CAM2 用 `maix.peripheral.wdt`，代码已做双路径） |
+| 7 | 人质模型 | 日志 `[CAM1] Switched to model 'eod_hostage' (/root/models/model_239147.mud) labels=['yao_gu', 'yuan_zhu', 'yuan_tai']`；缺失仅告警不崩溃，RESCUE 订阅会回 NACK NOT_READY |
+| 8 | 协议向量对拍（PC 侧已测） | 订阅 `AA 55 06 20 01 32 00 E7 49` → ACK `AA 55 06 21 01 3C 0A 13 B8` |
+
+> **关于日志级别**：`app/main.py` 把 root logger 钉在 `logging.WARNING`，
+> `logger.info` 在设备上**不会打印**。因此上述 AI 注册/切换、相机构造级别、
+> pinmap 结果都刻意用 `warning` 级别输出—— 台架 grep 不到时先确认日志级别。
 
 ## 3. 订阅链路（接 Brain 或 USB-TTL 模拟主站）
 
@@ -84,9 +96,19 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
 ## 6. 回归测试（PC 端，改平台后必跑）
 
 ```bash
-python -m pytest tests/          # 期望 127 passed
+python -m pytest tests/          # 期望 131 passed
 ```
 
 协议层/任务处理器/协调器用例与平台无关，**换平台后应全部继续通过** —— 这是"只改了
 HAL、没碰协议与视觉语义"的最快信号。CAM1 专属用例见
-`tests/test_gks_review_fixes.py::test_maixcam1_*`（停帧契约、固件降级、最小签名构造）。
+`tests/test_gks_review_fixes.py::test_maixcam1_*`：
+
+| 用例 | 守住什么 |
+|---|---|
+| `test_maixcam1_read_raw_returns_none_on_stall` | 停帧不得回退旧帧（CAM2 的 2026-09-28 教训） |
+| `test_maixcam1_read_raw_converts_new_frame` | RGB→BGR 翻转 + `last_raw` 与 numpy 同帧 |
+| `test_maixcam1_falls_back_when_firmware_lacks_block_kwarg` | 固件降级标记 + 当拍补阻塞读（否则首帧丢） |
+| `test_maixcam1_open_degrades_to_minimal_signature` | 构造逐级降级能走通 |
+| `test_maixcam1_uart_sets_pinmap_for_ttyS1` | **P0**：A19/A18 必须复用为 UART1，否则串口收到 0 字节 |
+| `test_maixcam1_detect_handles_none_objects` | `detect()` 返回 None 不得崩视觉线程 |
+| `test_maixcam1_missing_model_class_fails_loudly` | 缺 YOLO11 时显式失败，不跨类型兜底吐错误坐标 |

@@ -15,19 +15,29 @@
 
 **协议 v2.1 两平台逐字节一致，Brain 侧无需改动。** 协议层/任务处理器/协调器与平台无关，
 换平台只需动 HAL + 配置。**协议层用例在两分支上都必须全绿** —— 这是"只改了平台、
-没碰语义"的最快信号（PC 端 `python -m pytest tests/`，maixcam1 分支 127 例）。
+没碰语义"的最快信号（PC 端 `python -m pytest tests/`，maixcam1 分支 131 例）。
 
-CAM1 平台的三处硬差异（详见 `docs/competition/gks_bench_checklist_maixcam1.md`）：
+CAM1 平台的五处硬差异（详见 `docs/competition/gks_bench_checklist_maixcam1.md`）：
 
 - **模型格式互不通用**：CAM2 `.axmodel`(mud 键`model_npu`) ↔ CAM1 `.cvimodel`(mud 键 `model`)，
   不可跨机复用；CAM1 现有 `model_239147.cvimodel`(YOLOv5, 三类) 来自 `F:\2026工科赛\maixcam\工科赛上端`。
 - **串口换口**：CAM1 用 `from maix import uart` + `/dev/ttyS1`(A19/A18)；
   **UART0(A16/A17) 是系统终端+maix protocol 日志口，勿占用**。⚠ 做 3.3V↔5V 转换时 TX
   默认不可拉低（CAM1 芯片特性，拉低 = 无法开机）。
+- ⚠ **非默认引脚必须 pinmap 复用**：A19 出厂功能是 `GPIOA19/PWM7`，开串口前**必须**
+  `pinmap.set_pin_function("A19","UART1_TX")` + `("A18","UART1_RX")`，否则"串口打开了但
+  收不到任何字节"且日志无线索。CAM2 的 A21/A22 是板上默认引脚所以没这步，**回移植换口后
+  极易漏**（2026-10-07 审查 P0）。`MaixCam1Uart._ensure_pinmap` 已内置。
+- **模块布局不同**：`wdt` 在 CAM1 是 `maix.wdt`、CAM2 是 `maix.peripheral.wdt`；`uart` 同理。
+  只写 CAM2 路径会被 `except` 吞掉 → **看门狗静默失效**（线程死锁无硬件复位兜底）。
 - **帧率上限约 30fps**：MaixPy 文档明确 CAM1 即使 `buff_num=1` 也至少双缓存、取图延时
   30+ms ⇒ "推流率≈相机帧率" 在 CAM1 上不成立，勿按 60fps 验收。
   ⚠ `read(block=False)` 若被固件拒绝会降级为阻塞读（停帧保护失效），
   启动日志出现 `camera.read(block=...) unsupported` 即须升级固件。
+
+⚠ **日志级别坑**：`app/main.py` 把 root logger 钉在 `logging.WARNING`，
+`logger.info` 在设备上**不打印**。台架要 grep 的状态（AI 注册/切换、相机构造级别、
+pinmap 结果、WDT 状态）一律用 `warning` 级别。
 
 ## 核心架构
 

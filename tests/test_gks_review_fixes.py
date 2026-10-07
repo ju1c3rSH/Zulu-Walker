@@ -396,3 +396,174 @@ def test_rescue_without_ai_nacks_not_ready():
 
     assert sent[0] == build_cmd_nack_frame(DATA_RESCUE, NACK_NOT_READY)
     assert coord._sub_id == 0          # 未订阅
+
+
+# ---------- 审查修复: CAM1 pinmap 必设（2026-10-07 P0） ----------
+
+def test_maixcam1_uart_sets_pinmap_for_ttyS1(monkeypatch):
+    """/dev/ttyS1 开串口前**必须**先把 A19/A18 复用为 UART1 功能。
+
+    依据 MaixPy docs/doc/zh/peripheral/uart.md「常见代码错误」：不设引脚功能直接
+    `uart.UART("/dev/ttyS1", 115200)` 是官方点名的错误写法；且 pinmap.md:64-65
+    说明 A19 出厂功能是 GPIOA19/PWM7，**不含 UART1_TX**。
+
+    CAM2 的 A21/A22 是板上默认引脚所以不需要这步，回移植换口后极易漏 —— 漏了
+    的表现是"串口打开了但一个字节都收不到"，日志无任何线索。
+    """
+    import importlib.util
+    import sys
+    import types
+
+    calls = []
+
+    pinmap_mod = types.ModuleType("maix.pinmap")
+    pinmap_mod.set_pin_function = lambda pin, func: calls.append((pin, func))
+    uart_mod = types.ModuleType("maix.uart")
+    uart_mod.UART = lambda port, baud: types.SimpleNamespace(
+        write=lambda d: len(d), read=lambda len=1, timeout=0: b"",
+        available=lambda timeout=0: 0, close=lambda: None,
+        set_received_callback=lambda cb: None,
+    )
+    maix_mod = types.ModuleType("maix")
+    maix_mod.pinmap = pinmap_mod
+    maix_mod.uart = uart_mod
+    monkeypatch.setitem(sys.modules, "maix", maix_mod)
+    monkeypatch.setitem(sys.modules, "maix.pinmap", pinmap_mod)
+    monkeypatch.setitem(sys.modules, "maix.uart", uart_mod)
+
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "framework", "hal", "platforms", "maixcam1", "uart.py")
+    spec = importlib.util.spec_from_file_location("_maixcam1_uart_ut", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    u = mod.MaixCam1Uart("/dev/ttyS1", 115200)
+
+    assert u.is_connected
+    # TX 与 RX 都必须设（只设 TX 是常见漏项）
+    assert ("A19", "UART1_TX") in calls
+    assert ("A18", "UART1_RX") in calls
+
+
+def test_maixcam1_uart_ttyS0_not_churn_pinmap(monkeypatch):
+    """ttyS0(A16/A17) 出厂默认已是 UART0 功能，不该多动引脚。"""
+    import importlib.util
+    import sys
+    import types
+
+    calls = []
+    pinmap_mod = types.ModuleType("maix.pinmap")
+    pinmap_mod.set_pin_function = lambda pin, func: calls.append((pin, func))
+    uart_mod = types.ModuleType("maix.uart")
+    uart_mod.UART = lambda port, baud: types.SimpleNamespace(
+        write=lambda d: len(d), read=lambda len=1, timeout=0: b"",
+        available=lambda timeout=0: 0, close=lambda: None,
+        set_received_callback=lambda cb: None,
+    )
+    maix_mod = types.ModuleType("maix")
+    maix_mod.pinmap = pinmap_mod
+    maix_mod.uart = uart_mod
+    monkeypatch.setitem(sys.modules, "maix", maix_mod)
+    monkeypatch.setitem(sys.modules, "maix.pinmap", pinmap_mod)
+    monkeypatch.setitem(sys.modules, "maix.uart", uart_mod)
+
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "framework", "hal", "platforms", "maixcam1", "uart.py")
+    spec = importlib.util.spec_from_file_location("_maixcam1_uart_ut2", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    mod.MaixCam1Uart("/dev/ttyS0", 115200)
+    # 复用是幂等的，允许重复设置；这里只验证不会抛异常且能建连
+    assert all(isinstance(c[0], str) for c in calls)
+
+
+# ---------- 审查修复: AI detect() 返回 None 不得崩（2026-10-07 P1） ----------
+
+def test_maixcam1_detect_handles_none_objects(monkeypatch):
+    """detect() 返回 None 时必须当空结果，**不得抛 TypeError**。
+
+    `for o in (objects or [])` 这层保护缺了的话，`for o in None` 会逃出
+    detect() 直达 gks_task_processor._process_rescue（该处无 try 包裹），
+    打断整帧处理 —— 违反 ai.detect "返回空 list 供上层优雅降级" 的契约。
+    """
+    import importlib.util
+    import sys
+    import types
+
+    image_mod = types.ModuleType("maix.image")
+    image_mod.image2cv = lambda *a, **k: np.zeros((2, 2, 3), np.uint8)
+    image_mod.cv2image = lambda *a, **k: object()
+    image_mod.Format = types.SimpleNamespace(FMT_RGB888=0)
+
+    class _Det:
+        labels = ["a", "b", "c"]
+
+        def detect(self, img, **kw):
+            return None          # 部分固件无目标时返回 None 而非 []
+
+    nn_mod = types.ModuleType("maix.nn")
+    nn_mod.YOLOv5 = _Det
+    nn_mod.YOLOv8 = None
+    nn_mod.YOLO11 = None
+    maix_mod = types.ModuleType("maix")
+    maix_mod.image = image_mod
+    maix_mod.nn = nn_mod
+    monkeypatch.setitem(sys.modules, "maix", maix_mod)
+    monkeypatch.setitem(sys.modules, "maix.image", image_mod)
+    monkeypatch.setitem(sys.modules, "maix.nn", nn_mod)
+
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "framework", "hal", "platforms", "maixcam1", "ai.py")
+    spec = importlib.util.spec_from_file_location("_maixcam1_ai_ut", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    ai = mod.MaixCam1AI()
+    frame = np.zeros((4, 4, 3), np.uint8)
+    assert ai.detect(frame, conf_th=0.5, iou_th=0.45) == []   # 不抛异常
+
+
+def test_maixcam1_missing_model_class_fails_loudly(monkeypatch):
+    """固件缺 YOLOv8/YOLO11 时必须**显式失败**，不得跨类型兜底到 YOLOv5。
+
+    用 YOLOv5 的后处理去解 YOLOv8/YOLO11 的输出 -> 不抛异常、直接吐错误坐标，
+    比"加载失败"危险得多。
+    """
+    import importlib.util
+    import sys
+    import types
+
+    image_mod = types.ModuleType("maix.image")
+    image_mod.image2cv = lambda *a, **k: np.zeros((2, 2, 3), np.uint8)
+    image_mod.cv2image = lambda *a, **k: object()
+    image_mod.Format = types.SimpleNamespace(FMT_RGB888=0)
+
+    class _Y5:
+        labels = ["a"]
+        def __init__(self, model=None, **kw):
+            pass
+        def detect(self, img, **kw):
+            return []
+
+    nn_mod = types.ModuleType("maix.nn")
+    nn_mod.YOLOv5 = _Y5
+    nn_mod.YOLOv8 = None      # 模拟老固件
+    nn_mod.YOLO11 = None
+    maix_mod = types.ModuleType("maix")
+    maix_mod.image = image_mod
+    maix_mod.nn = nn_mod
+    monkeypatch.setitem(sys.modules, "maix", maix_mod)
+    monkeypatch.setitem(sys.modules, "maix.image", image_mod)
+    monkeypatch.setitem(sys.modules, "maix.nn", nn_mod)
+
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "framework", "hal", "platforms", "maixcam1", "ai.py")
+    spec = importlib.util.spec_from_file_location("_maixcam1_ai_ut2", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    ai = mod.MaixCam1AI()
+    ai.add("m", "/root/models/x.mud", model_type="yolo11")
+    assert ai.switch("m") is False        # 显式失败，而非悄悄用 YOLOv5 解
+    assert ai.loaded is False

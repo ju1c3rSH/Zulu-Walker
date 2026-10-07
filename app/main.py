@@ -268,8 +268,25 @@ class MainUiShell:
 
 
 def _make_wdt_feed():
+    # CAM1(MaixCAM-Pro) 的模块布局是 `maix.wdt`，CAM2 才是 `maix.peripheral.wdt`
+    # （docs/doc/zh/peripheral/wdt.md:15 官方示例 `from maix import wdt`）。
+    # 两条路径都试：只写 CAM2 那条会让 CAM1 上 ImportError 被下面的 except 吞掉，
+    # 看门狗**静默失效** —— 应用照常跑、协议照常通，只有日志一行不起眼的 FAIL，
+    # 视觉/串口线程死锁时没有硬件复位兜底，现场表现为"设备卡死需断电"。
+    maix_wdt = None
     try:
-        from maix.peripheral import wdt as maix_wdt
+        from maix import wdt as _wdt_mod
+        maix_wdt = _wdt_mod
+    except (ImportError, ModuleNotFoundError):
+        try:
+            from maix.peripheral import wdt as _wdt_mod
+            maix_wdt = _wdt_mod
+        except (ImportError, ModuleNotFoundError):
+            maix_wdt = None
+
+    try:
+        if maix_wdt is None:
+            raise ImportError("neither maix.wdt nor maix.peripheral.wdt available")
         watchdog = maix_wdt.WDT(0, _WDT_WINDOW_MS)
         import time
         # 多处 feed 入口(main/coord/viz)共享同一节流时钟, 全局最多 1 次/周期,
@@ -292,7 +309,8 @@ def _make_wdt_feed():
                     log_print(f"[WDT] feed FAIL x{_state['fails']}: {e}")
         return _feed
     except Exception as e:
-        log_print(f"[WDT] init FAIL: {e}")
+        # 看门狗失效属于"带病上台架"级别，措辞上与普通降级区分开
+        log_print(f"[WDT] init FAIL（硬件看门狗未生效，线程死锁将无自动复位）: {e}")
         return lambda: None
 
 
