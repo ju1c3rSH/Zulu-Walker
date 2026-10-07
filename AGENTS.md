@@ -6,6 +6,29 @@
 
 > 旧 EOD2026 v3.0 协议（0x01 QR_TASK…0x06 HOME_DEV）分支已不再使用，代码保留在 `EOD2026-Spacial` 分支。
 
+## 双平台分支（重要）
+
+| 分支 | 设备 | 说明 |
+|---|---|---|
+| `EOD2026-NearCam` | MaixCAM2 (AX630C) | 主力分支，`.axmodel` + `nn.YOLO11`，`/dev/ttyS4` |
+| `feat/maixcam1-port` | **MaixCAM-Pro** (CVI cv181x，有触屏) | 从 `0f4db9b` 切出的回移植分支，`.cvimodel` + `nn.YOLOv5`，`/dev/ttyS1` |
+
+**协议 v2.1 两平台逐字节一致，Brain 侧无需改动。** 协议层/任务处理器/协调器与平台无关，
+换平台只需动 HAL + 配置。**协议层用例在两分支上都必须全绿** —— 这是"只改了平台、
+没碰语义"的最快信号（PC 端 `python -m pytest tests/`，maixcam1 分支 127 例）。
+
+CAM1 平台的三处硬差异（详见 `docs/competition/gks_bench_checklist_maixcam1.md`）：
+
+- **模型格式互不通用**：CAM2 `.axmodel`(mud 键`model_npu`) ↔ CAM1 `.cvimodel`(mud 键 `model`)，
+  不可跨机复用；CAM1 现有 `model_239147.cvimodel`(YOLOv5, 三类) 来自 `F:\2026工科赛\maixcam\工科赛上端`。
+- **串口换口**：CAM1 用 `from maix import uart` + `/dev/ttyS1`(A19/A18)；
+  **UART0(A16/A17) 是系统终端+maix protocol 日志口，勿占用**。⚠ 做 3.3V↔5V 转换时 TX
+  默认不可拉低（CAM1 芯片特性，拉低 = 无法开机）。
+- **帧率上限约 30fps**：MaixPy 文档明确 CAM1 即使 `buff_num=1` 也至少双缓存、取图延时
+  30+ms ⇒ "推流率≈相机帧率" 在 CAM1 上不成立，勿按 60fps 验收。
+  ⚠ `read(block=False)` 若被固件拒绝会降级为阻塞读（停帧保护失效），
+  启动日志出现 `camera.read(block=...) unsupported` 即须升级固件。
+
 ## 核心架构
 
 ```
@@ -16,8 +39,9 @@ utils/          工具库 — 日志, TUI调试台, CPU亲和性
 F:\MaixPy-main\    上游 Sipeed MaixPy 固件源码 (只读 API 参考; 不确定的 maix API 优先查这里)
 ```
 
-- `platform: maixcam2` — 通过 HAL 抽象层注入，实现见 `framework/hal/platforms/maixcam2/`
-- 通信: UART **`/dev/ttyS4`** @ **115200**（官方警告其他波特率不可靠，勿改），UART4 引脚 A21(TX)/A22(RX) → Brain USART1
+- `platform: maixcam1`（当前工作分支）— 实现见 `framework/hal/platforms/maixcam1/`
+  - CAM2 分支上为 `platform: maixcam2` — 实现见 `framework/hal/platforms/maixcam2/`
+- 通信（CAM1 分支）: UART **`/dev/ttyS1`** @ **115200**（官方警告其他波特率不可靠，勿改），UART1 引脚 A19(TX)/A18(RX) → Brain USART1
 - 协议 v2.1（帧格式与 serial_protocol C 库逐字节一致）:
   - 帧型 0x20 REQUEST / 0x21 ACK / 0x22 NACK / 0x23 STOP / 0x24 DATA_STREAM；
     CRC16-CCITT 高字节在前；payload 恒 10B = seq + data_id + 8B 子载荷

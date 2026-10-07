@@ -73,7 +73,7 @@ gks:
         red:   [0, 80, 40, 80, 10, 80]
         green: [25, 85, -80, -25, 30, 85]   # 2026-09-26 收紧: 挡淡绿/哑光黄(见上)
         blue:  [0, 60, -8, 45, -75, -25]   # 2026-09-26 收紧: 只要深蓝(见上)
-    rescue:               # 0x03 人质: YOLO11n(axmodel) 三形状坑位
+    rescue:               # 0x03 人质: 三形状坑位（CAM2=YOLO11n/axmodel, CAM1=YOLOv5/cvimodel）
       conf_th: 0.7        # main.py 原值
       iou_th: 0.45        # main.py 原值
       x_crop_px: 0        # 旧版 obj.x>240(cam1 320宽) 过滤; 0=关闭; 台架复现旧行为可设像素值

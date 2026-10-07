@@ -33,21 +33,25 @@ class Machine:
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
         path = Path(config_path)
+        # 缺省平台取project_config.yaml 的首选值（当前分支 maixcam1）；
+        # 波特率缺省一律 115200 —— 官方警告其他波特率误码率高，
+        # 且与 Brain 侧串口配置强绑定，绝不能落到 921600。
+        default_platform = "maixcam1"
         if not path.exists():
-            logger.warning("%s not found, using platform=maixcam2 defaults", config_path)
-            platform = "maixcam2"
+            logger.warning("%s not found, using platform=%s defaults", config_path, default_platform)
+            platform = default_platform
             cameras_config = []
-            uart_config = {"port": "/dev/ttyS1", "baudrate": 921600}
+            uart_config = {"port": "/dev/ttyS1", "baudrate": 115200}
             ai_config = None
         else:
             with open(path) as f:
                 cfg = yaml.safe_load(f)
-            platform = cfg.get("platform", "maixcam2")
+            platform = cfg.get("platform", default_platform)
             cameras_config = cfg.get("cameras", [])
             uart_defaults = cfg.get("uart_defaults", {})
             uart_config = {
                 "port": uart_defaults.get("port", "/dev/ttyS1"),
-                "baudrate": uart_defaults.get("baudrate", 921600),
+                "baudrate": uart_defaults.get("baudrate", 115200),
             }
             ai_config = cfg.get("ai")
             cpu_affinity_cfg = cfg.get("cpu_affinity")

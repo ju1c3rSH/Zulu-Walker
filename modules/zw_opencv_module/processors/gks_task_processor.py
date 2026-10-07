@@ -7,11 +7,13 @@ task1_explosive / task2_target / task3_rescue（锁存/去抖/映射语义不变
 仅做平台适配：
 
 - 图像来源: 框架单路 640 宽帧（旧版 cam 640x480 + cam1 320x240 双实例消亡）;
-  YOLO 输入由 nn.YOLO11 按模型输入尺寸自适应缩放。
+  YOLO 输入由 nn 类按模型输入尺寸自适应缩放（CAM2=nn.YOLO11，**CAM1=nn.YOLOv5**）。
 - 检测引擎: 设备走 maix_accel C++ find_blobs 快路径（阈值 OpenMV LAB 语义
   1:1 透传），PC/失败自动回退 cv2 inRange（OpenMV→OpenCV LAB 编码转换）。
-- 人质: nn.YOLOv5+cvimodel → MaixCam2AI (nn.YOLO11) + axmodel；模型缺失时
-  回零值结果（心跳不断流），不崩溃。
+- 人质: 模型缺失时回零值结果（心跳不断流），不崩溃。
+  - CAM2 分支: nn.YOLO11 + .axmodel（Axera），走 MaixCam2AI
+  - CAM1 分支: nn.YOLOv5 + .cvimodel（CVITEK），走 MaixCam1AI
+  两者 mud 键名不同（`model_npu` vs `model`），模型文件互不通用。
 - 像素常量全部入 eod_config.yaml `gks:` 段；`/my-threshold/my_64threshold.txt`
   （脱机调阈值工具产出）作运行时覆盖，mtime 变化自动重载、不清锁存。
 - 排爆扫描可降采样: `explosive.scan_scale`（0.5 = 320x240 扫描）—— 全帧三色串行

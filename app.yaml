@@ -1,19 +1,20 @@
 id: gks_nearcam
 name: gks_nearcam
 name[zh]: 工科赛近端视觉
-version: 2.6.0
+version: 2.7.0
 icon: app.png
 author: GongKeSai 2026
 desc: >-
-  GKS2026 near-end vision on MaixCAM2 - explosive/target/rescue subscription
+  GKS2026 near-end vision on MaixCAM-Pro - explosive/target/rescue subscription
   streams (panzer_links_protocol v2.1) for panzer_Brain
-desc[zh]: 2026 工科赛近端视觉（MaixCAM2）——爆炸物/靶标/人质订阅流，协议 v2.1，对接 panzer_Brain USART1
+desc[zh]: 2026 工科赛近端视觉（MaixCAM-Pro）——爆炸物/靶标/人质订阅流，协议 v2.1，对接 panzer_Brain USART1
 exclude:
   - .git
   - .gitignore
   - __pycache__
   - .vscode
   - .claude
+  - .workbuddy
   - stories
   - archive
   - docs
@@ -27,8 +28,8 @@ files:
   - app\page_router.py
   - app\page_sm.py
   - app\subscription_sm.py
-  - assets\models\hostage_yolo11n\eod_hostage_320.axmodel
-  - assets\models\hostage_yolo11n\eod_hostage_320.mud
+  - assets\models\hostage_yolov5_cam1\model_239147.cvimodel
+  - assets\models\hostage_yolov5_cam1\model_239147.mud
   - assets\restart.png
   - framework\hal\interface\__init__.py
   - framework\hal\interface\ai.py
@@ -41,6 +42,11 @@ files:
   - framework\hal\platforms\linux\camera.py
   - framework\hal\platforms\linux\display.py
   - framework\hal\platforms\linux\uart.py
+  - framework\hal\platforms\maixcam1\__init__.py
+  - framework\hal\platforms\maixcam1\ai.py
+  - framework\hal\platforms\maixcam1\camera.py
+  - framework\hal\platforms\maixcam1\display.py
+  - framework\hal\platforms\maixcam1\uart.py
   - framework\hal\platforms\maixcam2\__init__.py
   - framework\hal\platforms\maixcam2\ai.py
   - framework\hal\platforms\maixcam2\camera.py

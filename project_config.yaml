@@ -1,4 +1,4 @@
-platform: maixcam2
+platform: maixcam1   # MaixCAM-Pro(cv181x) · 回移植分支 feat/maixcam1-port
 
 debug_console_enabled: true
 display_enabled: true
@@ -8,21 +8,25 @@ cameras:
     source: null
     width: 640
     height: 480   # 与旧上端 main.py 标定几何一致（坑位 ROI/误差中心按 640 宽标定）
-    fps: 60
-    camera_stream_queue_size: 3
+    fps: 60       # ⚠ CAM1 实测上限约 30fps：内部框架限制，即使 buff_num=1 也至少
+                  #   双缓存、取图延时 30+ms。此处仅作期望值，勿按 60 验收推流率。
+    camera_stream_queue_size: 2   # CAM1 无需堆缓冲（延时下限由固件决定）
 
 uart_defaults:
-  port: "/dev/ttyS4"   # MaixCAM2 UART4 pins A21(TX)/A22(RX) -> Brain USART1
+  port: "/dev/ttyS1"   # MaixCAM UART1 pins A19(TX)/A18(RX) -> Brain USART1
+                       # ⚠ UART0(A16/A17) 是系统终端+maix protocol 日志口，勿占用
   baudrate: 115200     # keep 115200: official docs warn other baud rates are unreliable
 
 ai:
   models:
-    # 人质形状 YOLO11n (yao_gu/yuan_zhu/yuan_tai @320, pulsar2 AX620E)
-    # 仓库副本: assets/models/hostage_yolo11n/ -> 部署时拷到 /root/models/
-    # （台架: cp /maixapp/apps/gks_nearcam/assets/models/hostage_yolo11n/* /root/models/）
+    # 人质形状 YOLOv5 (yao_gu/yuan_zhu/yuan_tai) —— CVITEK .cvimodel，MaixCAM 专用格式
+    # 仓库副本: assets/models/hostage_yolov5_cam1/{model_239147.mud, model_239147.cvimodel}
+    # 部署到设备: cp assets/models/hostage_yolov5_cam1/* /root/models/
+    # （mud 用 `model =` 键指向同目录 cvimodel，两者必须同目录同名配套）
+    # 注: CAM2 的 .axmodel / nn.YOLO11 在 CAM1 上不可用，两者互不通用。
     - nick_name: "eod_hostage"
-      model: "/root/models/eod_hostage_320.mud"
-      model_type: "auto"
+      model: "/root/models/model_239147.mud"
+      model_type: "yolov5"   # CAM1 无 YOLO11 类，显式指定避免落到 "auto"歧义
   active: "eod_hostage"
 
 streaming:

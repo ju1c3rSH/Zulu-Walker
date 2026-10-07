@@ -245,6 +245,138 @@ def test_maixcam2_read_raw_converts_new_frame(monkeypatch):
     assert tuple(frame[0, 0]) == (0, 0, 10)   # 通道翻转到 BGR
 
 
+# ---------- maixcam1 回移植: 停帧契约与固件降级（2026-10-07） ----------
+
+_MAIXCAM1_CAMERA_PY = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "framework", "hal", "platforms", "maixcam1", "camera.py")
+
+
+class _FakeCam1:
+    """CAM1 固件桩。`block_ok=False` 模拟老固件不认 read(block=) kwarg。"""
+
+    def __init__(self, frame, block_ok=True):
+        self._frame = frame
+        self._block_ok = block_ok
+
+    def read(self, block=True):        # noqa: A002 - 对齐固件签名
+        if not block and not self._block_ok:
+            raise TypeError("read() got an unexpected keyword argument 'block'")
+        return self._frame
+
+
+def _load_maixcam1_camera(monkeypatch, image2cv):
+    """按文件路径加载 maixcam1 相机模块（理由同 _load_maixcam2_camera）。"""
+    import importlib.util
+    import sys
+    import types
+
+    image_mod = types.ModuleType("maix.image")
+    image_mod.image2cv = image2cv
+    fmt = types.SimpleNamespace(FMT_RGB888=0)
+    image_mod.Format = fmt
+    camera_mod = types.ModuleType("maix.camera")
+    camera_mod.Camera = object
+    maix_mod = types.ModuleType("maix")
+    maix_mod.image = image_mod
+    maix_mod.camera = camera_mod
+    monkeypatch.setitem(sys.modules, "maix", maix_mod)
+    monkeypatch.setitem(sys.modules, "maix.camera", camera_mod)
+    monkeypatch.setitem(sys.modules, "maix.image", image_mod)
+
+    spec = importlib.util.spec_from_file_location("_maixcam1_camera_ut",
+                                                  _MAIXCAM1_CAMERA_PY)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _make_cam1(mod, fake_cam):
+    """绕过 __init__ 造一个只设关键字段的 CAM1 相机实例。"""
+    cam = object.__new__(mod.MaixCam1Camera)
+    cam._last_frame = None
+    cam._last_raw = None
+    cam._cam = fake_cam
+    cam._block_kwarg_ok = None
+    return cam
+
+
+def test_maixcam1_read_raw_returns_none_on_stall(monkeypatch):
+    """CAM1 停帧同样必须返回 None, 不得回退 _last_frame。
+
+    与 maixcam2 同款契约（interface/camera.py::read_raw）。CAM1 上这一条
+    尤其要守: 取图延时本就30+ms，若误回退旧帧，视觉线程会把同一帧反复当
+    新帧算-> 1s 陈旧归零永不触发 -> 相机挂死时冻结误差持续喂主站。
+    """
+    mod = _load_maixcam1_camera(
+        monkeypatch, lambda raw, **kw: np.zeros((4, 4, 3), np.uint8))
+    cam = _make_cam1(mod, _FakeCam1(None))
+    cam._last_frame = np.full((4, 4, 3), 7, np.uint8)
+
+    assert cam.read_raw() is None
+    assert cam.last_raw is None                    # 无新帧不更新
+    assert int(cam._last_frame[0, 0, 0]) == 7      # 缓存未被旧帧"刷新"
+
+
+def test_maixcam1_read_raw_converts_new_frame(monkeypatch):
+    """CAM1 有新帧时同样做 RGB->BGR 翻转并同步 last_raw。"""
+    raw = object()
+    seen = []
+
+    def image2cv(img, **kw):
+        seen.append((img, kw))
+        arr = np.zeros((2, 2, 3), np.uint8)
+        arr[:, :, 0] = 10
+        return arr
+
+    mod = _load_maixcam1_camera(monkeypatch, image2cv)
+    cam = _make_cam1(mod, _FakeCam1(raw))
+
+    frame = cam.read_raw()
+    assert [s[0] for s in seen] == [raw]
+    assert cam.last_raw is raw
+    assert frame is cam._last_frame
+    assert tuple(frame[0, 0]) == (0, 0, 10)      # 通道翻转到 BGR
+
+
+def test_maixcam1_falls_back_when_firmware_lacks_block_kwarg(monkeypatch):
+    """老固件不认 read(block=) 时降级为阻塞读，并置位降级标记。
+
+    降级后停帧检测能力下降（相���挂死会卡在 read()），故必须打标记，
+    供启动日志/台架验收确认走的是哪条分支 —— 不能静默劣化。
+    """
+    mod = _load_maixcam1_camera(
+        monkeypatch, lambda raw, **kw: np.zeros((2, 2, 3), np.uint8))
+    # 桩相机: 非阻塞调用抛 TypeError，阻塞调用返回帧
+    cam = _make_cam1(mod, _FakeCam1(object(), block_ok=False))
+
+    frame = cam.read_raw()                          # 触发降级探测
+    assert cam._block_kwarg_ok is False# 标记已置位
+    assert frame is not None                        # 阻塞分支仍取到帧
+    assert cam._last_frame is not None
+
+
+def test_maixcam1_open_degrades_to_minimal_signature(monkeypatch):
+    """固件只认最小签名 Camera(w, h) 时，_open 逐级降级仍能建成相机。
+
+    CAM1 各固件对 device=/buff_num=/open= 支持程度不一，构造不得假设版本。
+    """
+    mod = _load_maixcam1_camera(
+        monkeypatch, lambda raw, **kw: np.zeros((2, 2, 3), np.uint8))
+
+    calls = []
+
+    class _OnlyMinimalCamera:
+        def __init__(self, w, h):
+            calls.append((w, h))
+
+    mod.maix.camera.Camera = _OnlyMinimalCamera
+    cam = mod.MaixCam1Camera(source=None, width=640, height=480,
+                            camera_id="main", buff_num=2)
+    assert cam.is_opened is False or cam._cam is not None
+    assert (640, 480) in calls
+
+
 # ---------- 改动4: AI 为 None 时 NACK ----------
 
 def test_rescue_without_ai_nacks_not_ready():
