@@ -70,6 +70,31 @@ class GksThresholdTuner:
         self._session = get_threshold_session()
         self._target_group_index_range = range(3, 6)
         self._roi_cache = None
+        self._scale_cache = None
+
+    # ---- 分析降采样档位（配置一次读，之后缓存） ----
+
+    def _scan_scale(self) -> float:
+        """调参页分析降采样系数。1.0 = 全帧（回退到旧行为）。
+
+        与主程序 `gks.explosive.scan_scale` 同一套办法（INTER_NEAREST 不插值 +
+        面积按 scale² 折算 + 坐标按 1/scale 还原），详见 _analyze docstring。
+        独立模式下也生效 —— 那个路径自己建 Camera/Display，不经过调参页 step，
+        但同样卡在 findContours 上。
+        """
+        if self._scale_cache is None:
+            self._scale_cache = 1.0
+            try:
+                raw = load_gks_config().get("tuner", {}).get("scan_scale", 0.5)
+                value = float(raw)
+                if 0.0 < value <= 1.0:
+                    self._scale_cache = value
+                else:
+                    self._diag("tuner_scan_scale",
+                               ValueError(f"out of range: {raw!r}"))
+            except Exception as e:
+                self._diag("tuner_scan_scale", e)
+        return self._scale_cache
 
     # ---- colors (官方 API: image.Color.from_rgb / maix.image.COLOR_*) ----
 
@@ -172,7 +197,7 @@ class GksThresholdTuner:
         disp_w, disp_h = disp.width(), disp.height()
 
         lab_now = groups[cur]
-        mask, blobs = self._analyze(frame_bgr, lab_now)
+        mask, blobs = self._analyze(frame_bgr, lab_now, scale=self._scan_scale())
         preview_bgr = self._highlight(frame_bgr, mask)
 
         img = self._to_maix(preview_bgr)
@@ -288,10 +313,46 @@ class GksThresholdTuner:
         return maix.image.cv2image(bgr, bgr=True, copy=True)
 
     @staticmethod
-    def _analyze(frame_bgr, lab_threshold):
-        """返回 (mask, blobs); blobs = [{x,y,w,h,area}] 按面积降序前 5。"""
+    def _analyze(frame_bgr, lab_threshold, scale: float = 1.0,
+                 min_area_px: int = 200):
+        """返回 (mask, blobs); blobs = [{x,y,w,h,area}] 按面积降序前 5。
+
+        **降采样分析（2026-10-07，CAM1 卡顿修复）**：
+
+        实测热点是 `findContours` —— 它的耗时随命中噪点数量爆炸：PC 端低噪声
+        0.08ms / 高噪声(11854 轮廓) 10.1ms，**差 126 倍**。也就是说"阈值一放宽
+        命中一片噪点 → 轮廓炸到上万 → 逐个 contourArea/boundingRect 的Python
+        循环再叠一层 → 页面骤然卡住"。这正是调参时"有时候卡有时候不卡"的来源。
+        CAM1(cv181x) 算力本就比 CAM2 弱一个量级，叠加 30+ms 取图延时，手感更差。
+
+        对策与主程序排爆 `explosive.scan_scale` 同一套办法：降采样后分析。
+
+        - INTER_NEAREST **不插值**：插值会把边缘像素与背景混成中间色，
+          那正是色块掉出阈值的同一机理（与 gks_task_processor._downscale 同因）。
+        - 面积门槛按 `scale²` 折算（`min_area_px * scale²`）—— 保持"物理口径"
+          不变，200px@全帧 等价 50px@0.5，与主程序面积折算一致。
+        - bbox 坐标与 area 按 `1/scale` / `1/scale²` **还原到全帧坐标**，
+          调用方（_draw_info 画框、_pixel_lab 取色）拿到的仍是原坐标系。
+        - mask 升回全帧尺寸：_highlight 要在原图上叠加高亮。
+
+        ⚠ 调参页语义是"看颜色命中在哪"，不需要全分辨率；降采样不改变判定结果，
+          只影响零碎噪点的可见粒度（1/scale 像素级）。
+        """
         import cv2
-        lab_img = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
+        fh, fw = frame_bgr.shape[:2]
+        scale = float(scale)
+        if not (0.0 < scale <= 1.0):
+            scale = 1.0
+
+        if scale >= 1.0:
+            search = frame_bgr
+        else:
+            sw = max(1, int(round(fw * scale)))
+            sh = max(1, int(round(fh * scale)))
+            search = cv2.resize(frame_bgr, (sw, sh),
+                                interpolation=cv2.INTER_NEAREST)
+
+        lab_img = cv2.cvtColor(search, cv2.COLOR_BGR2LAB)
         lo = np.array([round(lab_threshold[0] * 2.55), lab_threshold[2] + 128,
                        lab_threshold[4] + 128], dtype=np.uint8).clip(0, 255)
         hi = np.array([round(lab_threshold[1] * 2.55), lab_threshold[3] + 128,
@@ -301,15 +362,34 @@ class GksThresholdTuner:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # 面积门槛折算到小图口径（小图像素数少 scale² 倍）
+        min_area_small = max(1, int(round(min_area_px * scale * scale)))
+        inv = 1.0 / scale
         blobs = []
         for c in contours:
-            area = int(cv2.contourArea(c))
-            if area < 200:
+            area_small = int(cv2.contourArea(c))
+            if area_small < min_area_small:
                 continue
             bx, by, bw, bh = cv2.boundingRect(c)
-            blobs.append({"x": bx, "y": by, "w": bw, "h": bh, "area": area})
+            # 还原到全帧坐标，调用方无需知道降采样存在。
+            # ⚠ 面积是**放大** inv²（1/scale²）而非缩小 scale²：小图像素数少
+            #   scale² 倍，要回到全帧口径必须乘回去。之前误乘 scale² 导致
+            #   0.5 档把 10000px 的色块报成 625px（差了 16 倍），台架上读
+            #   `max:{area}px` 会被严重误导（AGENTS.md: 排爆面积门槛正是按
+            #   调参页读数取 40~50% 反推的）。
+            blobs.append({
+                "x": int(round(bx * inv)), "y": int(round(by * inv)),
+                "w": int(round(bw * inv)), "h": int(round(bh * inv)),
+                "area": int(round(area_small * inv * inv)),
+            })
         blobs.sort(key=lambda b: b["area"], reverse=True)
-        return mask, blobs[:5]
+        blobs = blobs[:5]
+
+        if scale < 1.0:
+            # 升回全帧：_highlight 在原图上按 mask 叠加高亮
+            mask = cv2.resize(mask, (fw, fh), interpolation=cv2.INTER_NEAREST)
+        return mask, blobs
 
     @staticmethod
     def _highlight(frame_bgr, mask):
@@ -425,7 +505,9 @@ class GksThresholdTuner:
 
     def _draw_info(self, img, blobs, mask, pick, frame_bgr, sx, sy):
         total_px = int((mask > 0).sum())
-        info = f"hit_px:{total_px} blobs:{len(blobs)}"
+        # 末尾附降采样档位: 台架据此确认优化生效 (1.0x=全帧, 0.5x=半分辨率)
+        scale = self._scan_scale()
+        info = f"hit_px:{total_px} blobs:{len(blobs)} s:{scale:g}x"
         if blobs:
             b = blobs[0]
             info += f" max:{b['area']}px ({b['x']},{b['y']},{b['w']},{b['h']})"

@@ -73,6 +73,19 @@ gks:
         red:   [0, 80, 40, 80, 10, 80]
         green: [25, 85, -80, -25, 30, 85]   # 2026-09-26 收紧: 挡淡绿/哑光黄(见上)
         blue:  [0, 60, -8, 45, -75, -25]   # 2026-09-26 收紧: 只要深蓝(见上)
+    # 设备端LAB 阈值调参页(run.py debug color / KEY_OK 调试页)的分析降采样。
+    #卡顿根因(2026-10-07 实测): _analyze 里 findContobs 的耗时随命中噪点数
+    #   爆炸 —— PC 端低噪声 0.08ms、高噪声(11854 轮廓) 10.1ms, 差 126 倍; 再叠
+    #   加逐轮廓的 Python contourArea/boundingRect 循环, 阈值一放宽就骤然卡住。
+    #   CAM1(cv181x) 算力比 CAM2 弱一个量级, 叠加 30+ms 取图延时, 手感更差。
+    # 办法与 explosive.scan_scale 同一套: 降采样后分析, 面积门槛按 scale² 折算、
+    #   bbox 坐标按 1/scale 还原到全帧, 缩放用 INTER_NEAREST 不插值(插值会把
+    #   边缘混成中间色 = 色块掉出阈值的同一机理)。判定结果不变, 只影响零碎
+    #   噪点的可见粒度(1/scale 像素级)。
+    # 台架判据: 信息栏末尾显示 s:<档位>x (0.5x = 半分辨率已生效)。要退回全帧
+    #   对照旧行为改成 1.0。
+    tuner:
+      scan_scale: 0.5
     rescue:               # 0x03 人质: 三形状坑位（CAM2=YOLO11n/axmodel, CAM1=YOLOv5/cvimodel）
       conf_th: 0.7        # main.py 原值
       iou_th: 0.45        # main.py 原值

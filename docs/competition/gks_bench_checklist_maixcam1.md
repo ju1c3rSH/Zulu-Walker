@@ -38,7 +38,10 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
    - ⚠ 若做 3.3V↔5V 电平转换，**务必确保 TX 默认不拉低**（CAM1 芯片特性，TX 拉低 = 无法开机）。
 3. 阈值文件 `/my-threshold/my_64threshold.txt`:组序 = 爆红/爆绿/爆蓝/靶红/靶绿/靶蓝。
    **CAM1 传感器与 CAM2 不同，LAB 阈值必须现场重标，不可直接拷 CAM2 的值。**
-   现场用 `python run.py debug color` 触屏调参后 SAVE 生成。
+   现场用 KEY_OK 切调参页（爆/靶页）或 `python run.py debug color` 触屏调参后 SAVE 生成。
+   - ⚠ **调参页已默认降采样分析**（`gks.tuner.scan_scale: 0.5`）以解决 CAM1 卡顿，
+     信息栏末尾显示 `s:0.5x`。`max:{area}px` 已是**全帧口径**（已还原，可照常按
+     40~50% 反推 `explosive.area_threshold`）。要退回全帧对照改成 `1.0`。
 4. `project_config.yaml` 已切为 `platform: maixcam1`; 打包清单 `app.yaml` 已含 maixcam1 五个文件与 cvimodel。
 
 ## 2. 上电自检（无 Brain，USB-TTL 环回/抓包）

@@ -567,3 +567,78 @@ def test_maixcam1_missing_model_class_fails_loudly(monkeypatch):
     ai.add("m", "/root/models/x.mud", model_type="yolo11")
     assert ai.switch("m") is False        # 显式失败，而非悄悄用 YOLOv5 解
     assert ai.loaded is False
+
+
+# ---------- 调参页降采样分析（2026-10-07 CAM1 卡顿修复） ----------
+
+def _make_tuner_frame():
+    """构造低噪声画面 + 两个可分离色块（阈值过宽会把背景也命中，测不出坐标还原）。"""
+    import cv2
+    f = np.full((480, 640, 3), 60, np.uint8)
+    cv2.rectangle(f, (100, 150), (220, 270), (30, 30, 200), -1)    # 蓝
+    cv2.rectangle(f, (300, 160), (400, 260), (40, 180, 40), -1)   # 绿
+    return cv2.GaussianBlur(f, (3, 3), 0)
+
+
+def _green_threshold():
+    """按画面里绿色块的真实 LAB 推出 OpenMV 口径阈值（只命中绿块）。"""
+    import cv2
+    from modules.zw_opencv_module.debug.threshold_tuner import GksThresholdTuner as T
+    lab = cv2.cvtColor(_make_tuner_frame(), cv2.COLOR_BGR2LAB)
+    L, a, b = lab[200, 350]
+    return [max(0, int(L / 2.55) - 25), min(100, int(L / 2.55) + 25),
+            int(a) - 128 - 25, int(a) - 128 + 25,
+            int(b) - 128 - 25, int(b) - 128 + 25]
+
+
+def test_tuner_analyze_downscaled_matches_fullframe():
+    """降采样分析必须与全帧**语义等价**：mask 同尺寸、bbox/area 还原到全帧坐标。
+
+    卡顿修复见 threshold_tuner._analyze docstring：findContours 耗时随命中噪点
+    数量爆炸（PC 端低噪声 0.08ms / 高噪声 11860 轮廓 10.4ms）。
+    """
+    from modules.zw_opencv_module.debug.threshold_tuner import GksThresholdTuner as T
+    frame = _make_tuner_frame()
+    thr = _green_threshold()
+
+    mask_full, blobs_full = T._analyze(frame, thr, scale=1.0, min_area_px=200)
+    assert blobs_full, "全帧基线应至少命中绿块"
+
+    for scale in (0.75, 0.5, 0.35):
+        mask, blobs = T._analyze(frame, thr, scale=scale, min_area_px=200)
+        # _highlight 依赖 mask 是全帧尺寸
+        assert mask.shape == frame.shape[:2], f"scale={scale} mask 尺寸应还原到全帧"
+        # 命中数一致（降采样不改变判定结果）
+        assert len(blobs) == len(blobs_full), f"scale={scale} 命中数应一致"
+        for bf, bs in zip(blobs_full, blobs):
+            tol = 1.0 / scale + 1
+            for k in ("x", "y", "w", "h"):
+                assert abs(bs[k] - bf[k]) <= tol, \
+                    f"scale={scale} {k} 偏差 {abs(bs[k]-bf[k])}px 超容差 {tol}"
+            # 面积是**放大** inv² 回到全帧口径 —— 防止误乘 scale²（0.5 档曾
+            # 把10000px 报成 625px，台架按此读数反推主程序面积门槛会被带偏16倍）
+            assert abs(bs["area"] - bf["area"]) <= max(4, bf["area"] * 0.05), \
+                f"scale={scale} 面积未还原到全帧口径: {bs['area']} vs {bf['area']}"
+
+
+def test_tuner_analyze_area_uses_inv_squared():
+    """面积还原方向专项：scale=0.5 时面积应≈全帧值，而非缩小 scale²。"""
+    from modules.zw_opencv_module.debug.threshold_tuner import GksThresholdTuner as T
+    frame = _make_tuner_frame()
+    thr = _green_threshold()
+    _, bf = T._analyze(frame, thr, scale=1.0, min_area_px=200)
+    _, bs = T._analyze(frame, thr, scale=0.5, min_area_px=200)
+    # 100x100 色块 ≈ 10000px；误乘 scale² 会得到 2500，这里明确锁住≈10000
+    assert bf[0]["area"] > 5000
+    assert bs[0]["area"] > 0.8 * bf[0]["area"]
+
+
+def test_tuner_analyze_scale_1_is_noop_and_invalid_clamped():
+    """scale>=1.0 走全帧；非法值（<=0 或 >1）回退 1.0 而不是崩。"""
+    from modules.zw_opencv_module.debug.threshold_tuner import GksThresholdTuner as T
+    frame = _make_tuner_frame()
+    thr = _green_threshold()
+    m1, b1 = T._analyze(frame, thr, scale=1.0, min_area_px=200)
+    for bad in (0.0, -1.0, 2.5, 1.5):
+        mb, bb = T._analyze(frame, thr, scale=bad, min_area_px=200)
+        assert bb[0]["area"] == b1[0]["area"], f"非法 scale={bad} 应回退全帧"
