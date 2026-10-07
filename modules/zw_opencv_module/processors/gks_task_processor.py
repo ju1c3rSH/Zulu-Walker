@@ -56,6 +56,12 @@ _ALL_MODES = (MODE_EXPLOSIVE, MODE_TARGET, MODE_RESCUE)
 # 色号 -> (名称, 配置键)
 COLOR_KEYS = {1: ("red", "red"), 2: ("green", "green"), 3: ("blue", "blue")}
 
+# maix.image 是否可用的惰性探测结果（None=未探测 / False=不可用 / True=可用）。
+# 只缓存"可用性", 不缓存模块对象 —— 见 GksTaskProcessor._downscale 的注释
+# （缓存对象会与测试的 sys.modules monkeypatch 冲突）。PC 端首帧探测一次即 False,
+# 之后不再逐帧重抛 ImportError。
+_maix_image_ok = None
+
 _DEFAULT_CONFIG = {
     "pit_left_is_1": True,      # True=画面左(小x)=坑1; 摄像头背装镜像时改 False
     "pit_latch_frames": 2,      # 连续 N 帧左右序一致才锁存（main.py 硬编码 2）
@@ -113,8 +119,27 @@ _DEFAULT_CONFIG = {
         "pixels_threshold": 1000,
         "area_threshold": 1000,
         "merge": True,
+        # merge_margin: find_blobs 的 margin（形态学膨胀半径, 加重连通域重标记）。
+        #   ⚠ 0/None = **不传该 kwarg**（2026-10-07 台架修正）。本项此前硬编码
+        #   margin=1, 但去年基准 main.py:390 是裸 `merge=True` 不传 margin。
+        #   CAM1 算力弱一个量级, 带 margin 时订阅后实测只有 5.3fps(189ms/帧),
+        #   是"比去年明显滞后"的主要嫌疑。默认回到与去年逐字节一致的调用形态。
+        #   需要 margin 时填整数(如 1), 会走有 margin 的分支, 固件不认仍降级到无 margin。
+        "merge_margin": 0,
         # ROI 帧比例 (x0, y0, x1, y1); 默认值 = main.py [0,169,640,197] @640x480
         "roi": [0.0, 169 / 480, 1.0, 366 / 480],
+        # 靶标扫描降采样（2026-10-07）: 1.0 = 640x480 全帧扫, 0.5 = 320x240 扫。
+        #   降采样是**两段式**（见 _process_target 注释）: 小图只定位"有没有/在哪"
+        #   （门槛 ×scale²、ROI 面积降到 1/scale², 省时间的大头），再在贴着粗框的
+        #   全分辨率窄窗上按原门槛复扫一次, 由该次结果算 cx 与 err_fixed。
+        #   ⚠ 不能只降采样了就算误差: cx 是像素级量, 小图 ±1 像素还原到全帧
+        #   就是 ±1/scale 像素, scale=0.5 时偏差可达 30+ LSB(实测 7031 vs 7062)。
+        #   打靶是云台闭环、误差即控制量, 这点精度不能省 —— 故精修那一步不可删。
+        "scan_scale": 1.0,
+        # 精修窗口相对粗框的外扩像素（全分辨率口径, 640 宽下 24 ≈ 3.75% 画面宽）。
+        #   取小了追不上目标一帧内的位移 -> 窄窗扫不到、回落粗结果（精度打折）;
+        #   取大了就吃掉降采样的收益。默认按 640x480 标定, 换分辨率按比例调。
+        "refine_pad_px": 24,
         # 与 explosive 段同值（"什么是红/绿/蓝"不随任务变）; 现场可按 ROI 内实际光比
         # 分头标定 —— 物理条件不同（爆: 全帧三坑 + 10000 面积门槛; 靶: 窄 ROI + 1000）,
         # 同一组值只是起点而非最优; 要分开标定先改这里。
@@ -422,18 +447,23 @@ class GksTaskProcessor(Processor):
         return [rx, ry, rw, rh]
 
     def _scan_blobs(self, frame_bgr: np.ndarray, maix_img, lab: list, roi_px,
-                    pixels_threshold: int, area_threshold: int, merge: bool) -> list:
+                    pixels_threshold: int, area_threshold: int, merge: bool,
+                    margin=None) -> list:
         """find_blobs 一次单色扫描, 返回 [{x,y,w,h,cx,cy,pixels}]（像素面积降序不保证）。
 
         设备优先 maix C++ find_blobs; 引擎**变化时**打一次日志（台架据此确认到底是
         快路径还是 cv2 回退 —— 两者的帧率差好几倍, 别靠猜）。
+
+        `margin` 默认 None = 不传给 maix find_blobs, 与去年基准 main.py task1/task2
+        的裸 `merge=True` 调用一致（见 maix_accel.find_blobs_maix 的注释）。
         """
         if maix_img is not None:
             blobs = find_blobs_maix(
                 maix_img, lab, roi=roi_px,
                 area_threshold=area_threshold,
                 pixels_threshold=pixels_threshold,
-                merge=merge)
+                merge=merge,
+                margin=margin)
             if blobs is not None:
                 self._note_scan_path("maix(C++ find_blobs)")
                 return blobs
@@ -441,6 +471,21 @@ class GksTaskProcessor(Processor):
         self._note_scan_path("cv2 回退(maix 不可用或 find_blobs 失败, 帧率明显偏低)")
         return self._scan_blobs_cv(frame_bgr, lab, roi_px,
                                    pixels_threshold, area_threshold)
+
+    @staticmethod
+    def _merge_margin(cfg) -> Optional[int]:
+        """`merge_margin` -> find_blobs 的 margin kwarg 值。
+
+        0 / None / 缺省 / 非法 -> **None = 不传该 kwarg**（与去年基准一致）。
+        去年 main.py 的 task1/task2 都是裸 `merge=True`, 没有 margin ——
+        margin 在 OpenMV 系 find_blobs 里会触发形态学膨胀 + 连通域重标记,
+        比 merge 本身重得多, CAM1 上尤其明显（见 _DEFAULT_CONFIG["target"] 注释）。
+        """
+        try:
+            value = int(cfg.get("merge_margin", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
 
     def _note_scan_path(self, path: str) -> None:
         if path != self._scan_path:
@@ -581,7 +626,10 @@ class GksTaskProcessor(Processor):
 
     @staticmethod
     def _scan_scale(cfg) -> float:
-        """排爆扫描降采样系数 `explosive.scan_scale`: 0.5 = 320x240 扫描。"""
+        """色块扫描降采样系数 `scan_scale`: 0.5 = 320x240 扫, 1.0 = 全帧。
+
+        排爆(explosive)与打靶(target)各有一份, 由调用方传各自的 cfg 段。
+        """
         try:
             value = float(cfg.get("scan_scale", 1.0))
         except (TypeError, ValueError):
@@ -598,9 +646,12 @@ class GksTaskProcessor(Processor):
         find_blobs 的小图必须是 **RGB 字节序 + FMT_RGB888 标记**。MaixCDK 的
         convert_to_imlib_image()（components/vision/src/maix_image_ops.cpp）把
         FMT_BGR888 直接 fall-through 成 PIXFORMAT_RGB888、**不做通道交换**，
-        于是 BGR 数据被当 RGB 算 LAB → 红蓝互换: 蓝色目标命中"红色"阈值盒,
+        于是 BGR 数据被当 RGB 算 LAB → 红蓝互换: 蓝色目标命中"红色"阈值盒，
         HUD 框写 C1、坑位定序连带全错。故这里 resize 出 BGR 后转 RGB 再以
         bgr=False 包图（cv2 回退路径继续用 BGR 小图, 与 COLOR_BGR2LAB 匹配）。
+
+        排爆(explosive)与打靶(target)共用本降采样器 —— 两者误差/坑位语义
+        都与分辨率无关（面积门槛 ×scale²、坐标 ÷scale 还原）, 故共用不引入分叉。
         """
         if scale >= 1.0:
             return frame, maix_img
@@ -609,14 +660,36 @@ class GksTaskProcessor(Processor):
         small = cv2.resize(frame, (sw, sh), interpolation=cv2.INTER_NEAREST)
         # 小图重新包成 maix Image: 走 C++ find_blobs 快路径且像素与上面 NEAREST 结果
         # 逐字节一致（不用 img.resize(): 固件默认插值会把边缘混成中间色）。
+        #
+        # import 探测结果模块级缓存（2026-10-07）: 这里的 `import maix.image` 是
+        # **函数内**import, PC 端(无 maix) 每次调用都要走一遍 sys.modules 查找 +
+        # 抛 ImportError, 实测单帧 0.92ms —— 而 _downscale 的有效工作只有 0.07ms,
+        # 即 93% 的时间花在重复失败的 import 上（设备端 import 命中缓存, 开销小,
+        # 但缓存对两端都只有好处）。
+        #
+        # ⚠ 只缓存"是否可用"(_maix_image_ok), **每次仍重新 import 取模块对象**:
+        #   sys.modules 命中是纳秒级的字典查找, 而缓存模块对象会与测试的
+        #   monkeypatch.setitem(sys.modules, "maix.image", fake) 冲突 ——
+        #   先前缓存成 False 的实例会让后续注入的假 maix 永远拿不到。
+        global _maix_image_ok
+        image_mod = None
+        if _maix_image_ok is not False:
+            try:
+                import maix.image as image_mod
+                _maix_image_ok = True
+            except Exception as e:
+                if _maix_image_ok is None:
+                    log_print(f"[GKS] maix.image 不可用({type(e).__name__}), "
+                              f"降采样小图走 cv2 回退路径")
+                _maix_image_ok = False
         small_maix = None
-        try:
-            import maix.image
-            small_rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-            small_maix = maix.image.cv2image(small_rgb, bgr=False, copy=True)
-        except Exception as e:
-            log_print(f"[GKS] maix 小图构造失败({w}x{h}->{sw}x{sh}): "
-                      f"{type(e).__name__}: {e} (回退 cv2 路径)")
+        if image_mod is not None:
+            try:
+                small_rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+                small_maix = image_mod.cv2image(small_rgb, bgr=False, copy=True)
+            except Exception as e:
+                log_print(f"[GKS] maix 小图构造失败({w}x{h}->{sw}x{sh}): "
+                          f"{type(e).__name__}: {e} (回退 cv2 路径)")
         return small, small_maix
 
     def _process_explosive(self, frame, maix_img, hits):
@@ -692,9 +765,42 @@ class GksTaskProcessor(Processor):
         cfg = self._cfg["target"]
         h, w = frame.shape[:2]
         roi_px = self._roi_px(cfg["roi"], w, h)
-        blobs = self._scan_blobs(frame, maix_img, lab, roi_px,
-                                 cfg["pixels_threshold"], cfg["area_threshold"],
-                                 merge=bool(cfg["merge"]))
+        scale = self._scan_scale(cfg)
+
+        # ---- 降采样两段式（2026-10-07）----
+        #
+        # 只降采样会把 cx 的精度也降下来：cx 是**像素级**量, 小图上 ±1 小图像素
+        # 还原到全帧就是 ±1/scale 个像素 —— scale=0.5 时误差能偏 30+ 个 LSB
+        # (实测 7031 vs 7062)。打靶是云台闭环, 误差就是控制量, 这点偏差不能省。
+        #
+        # 故拆成两段: ①**小图只负责"有没有、在哪"**（面积门槛按 scale² 折算）,
+        # ROI 面积直接降到 1/scale², 这是省时间的大头; ②拿小图给出的粗位置,
+        # 在**全分辨率**上开一个贴着它的窄窗再扫一次, 门槛用原值, 由这一次
+        # 的结果算 cx 与 err_fixed —— 与全分辨率逐位一致, 精度不打折。
+        # ②的窗口很小(靶标 bbox 外扩 pad), 扫的像素量远小于①, 净收益仍为正。
+        if scale < 1.0:
+            pad = int(cfg.get("refine_pad_px", 24))
+            coarse = self._target_coarse_scan(frame, maix_img, lab, roi_px, cfg, scale)
+            if coarse is None:
+                return {"err_fixed": 0, "found": False}, hits, True
+            fine_roi = self._target_fine_roi(coarse, roi_px, pad, scale, w, h)
+            blobs = self._scan_blobs(frame, maix_img, lab, fine_roi or roi_px,
+                                     cfg["pixels_threshold"], cfg["area_threshold"],
+                                     merge=bool(cfg["merge"]),
+                                     margin=self._merge_margin(cfg))
+            if not blobs:
+                # 窄窗里没复现（目标移出/阈值边缘抖动）: 用粗结果兜底, 保持不断流
+                blobs = [{
+                    "x": int(coarse["x"] / scale), "y": int(coarse["y"] / scale),
+                    "w": int(coarse["w"] / scale), "h": int(coarse["h"] / scale),
+                    "cx": coarse["cx"] / scale, "cy": coarse["cy"] / scale,
+                    "pixels": coarse["pixels"],
+                }]
+        else:
+            blobs = self._scan_blobs(frame, maix_img, lab, roi_px,
+                                     cfg["pixels_threshold"], cfg["area_threshold"],
+                                     merge=bool(cfg["merge"]),
+                                     margin=self._merge_margin(cfg))
         if blobs:
             largest = max(blobs, key=lambda b: b["pixels"])
             cx = largest["cx"]
@@ -709,6 +815,53 @@ class GksTaskProcessor(Processor):
             err_fixed = int(normalized * 10000)   # int(): 与 main.py 同为截断取整
             return {"err_fixed": err_fixed, "found": True}, hits, True
         return {"err_fixed": 0, "found": False}, hits, True
+
+    def _target_coarse_scan(self, frame, maix_img, lab, roi_px, cfg, scale):
+        """降采样定位: 返回小图上的最大色块 dict, 无命中返回 None。"""
+        frame_s, maix_s = self._downscale(frame, maix_img, scale)
+        roi_s = roi_px
+        if roi_px is not None:
+            roi_s = [int(roi_px[0] * scale), int(roi_px[1] * scale),
+                     max(1, int(roi_px[2] * scale)), max(1, int(roi_px[3] * scale))]
+        pixels_th = max(1, int(cfg["pixels_threshold"] * scale * scale))
+        area_th = max(1, int(cfg["area_threshold"] * scale * scale))
+        blobs = self._scan_blobs(frame_s, maix_s, lab, roi_s,
+                                 pixels_th, area_th, merge=bool(cfg["merge"]),
+                                 margin=self._merge_margin(cfg))
+        if not blobs:
+            return None
+        return max(blobs, key=lambda b: b["pixels"])
+
+    @staticmethod
+    def _target_fine_roi(coarse, roi_px, pad, scale, w, h):
+        """由小图粗框换算全分辨率精修窗口: 粗框还原到全帧 + pad 外扩, 再夹回 ROI/画面。
+
+        pad 取小了会在目标快速移动时精修窗追不上; 取大了就失去降采样的意义。
+        24px @640 宽 ≈ 画面 3.75%, 覆盖 target 段一帧内的最大位移 (云台闭环
+        的残差速率下远小于此)。外扩后仍与原 ROI 求交 —— 精修**不得**越出 ROI,
+        否则 ROI 的排除语义（test_target_roi_excludes_outside）在降采样档失效。
+
+        另加 1px 余量: 粗框是 cxf()/2 取整还原的, 边界可能差 1, 不留会切掉目标边缘。
+        """
+        bx = coarse["x"] / scale
+        by = coarse["y"] / scale
+        bw = coarse["w"] / scale
+        bh = coarse["h"] / scale
+        x0 = int(bx) - pad
+        y0 = int(by) - pad
+        x1 = int(bx + bw) + pad
+        y1 = int(by + bh) + pad
+        # 夹回画面
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(w, x1), min(h, y1)
+        # 夹回原 ROI（两者都是 [x, y, w, h]）
+        if roi_px is not None:
+            rx, ry, rw, rh = roi_px
+            x0, y0 = max(x0, rx), max(y0, ry)
+            x1, y1 = min(x1, rx + rw), min(y1, ry + rh)
+        if x1 - x0 <= 1 or y1 - y0 <= 1:
+            return None       # 窗口退化 -> 调用方回退到原 ROI
+        return [x0, y0, x1 - x0, y1 - y0]
 
     # ---- task3 人质 ----
 

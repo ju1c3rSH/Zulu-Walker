@@ -341,6 +341,24 @@ def _apply_stream_policy(coordinator, config: dict) -> None:
     )
 
 
+def _apply_render_policy(vision_manager, config: dict) -> None:
+    """把 `competition_mode:` 注入 VisionManager（缺省即渲染全开 = 台架行为）。
+
+    比赛模式关掉的是**显示侧**每帧开销: HUD 约 20 次 maix draw_string/draw_rect
+    （CAM1 纯软件渲染, TARGET 模式额外 6 个误差刻度标签）+ wifi JPEG 编码, 都在
+    视觉线程取帧→处理→推流的同一拍里串行跑。去年 main.py task2 只画 1 个框 +
+    1 行字, 当前实现多出的这些直接表现为打靶误差滞后。
+
+    **日志与协议推流完全不受影响**: log_print 走独立写盘线程, coordinator 的
+    UART DATA_STREAM 走主循环, 两者都不经过渲染路径。台架验收看
+    `[FPS] pipeline` / `[UART TX] DATA_STREAM` 的 Hz 是否上抬, 日志照旧可查。
+    """
+    if vision_manager is None:
+        return
+    mode = bool((config.get("competition_mode")) or {})
+    vision_manager.set_render_enabled(not mode)
+
+
 def _init_streamer(vision_manager) -> None:
     from modules.zw_wifi_stream import get_streamer
     streamer = get_streamer()
@@ -400,6 +418,7 @@ def main():
 
     coordinator.set_ai(machine.ai)
     _apply_stream_policy(coordinator, config)
+    _apply_render_policy(vision_manager, config)
     _init_streamer(vision_manager)
 
     exit_icon = _load_exit_icon()

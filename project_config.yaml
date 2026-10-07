@@ -3,6 +3,18 @@ platform: maixcam1   # MaixCAM-Pro(cv181x) · 回移植分支 feat/maixcam1-port
 debug_console_enabled: true
 display_enabled: true
 
+# 比赛模式开关（默认 false = 台架行为, HUD 与 wifi 推流全开）。
+#   true  = 关掉每帧的显示侧开销: HUD 约 20 次 maix draw_string/draw_rect
+#           （CAM1 纯软件渲染, TARGET 模式还多 6 个误差刻度标签）+ wifi JPEG 编码。
+#           去年 main.py task2 单线程 read→find_blobs→send, 只画 1 个框 + 1 行字;
+#           当前实现拆成视觉线程 + deque + 主循环 + 显示四段, 这些绘制串在
+#           取帧→推流的同一拍里, 直接表现为打靶误差滞后。
+#   ⚠ 只影响显示: log_print 走独立写盘线程, UART DATA_STREAM 走主循环,
+#     **日志与协议推流完全不受影响**, 台架验收照旧看 [FPS] pipeline 与
+#     [UART TX] DATA_STREAM 的 Hz。
+#   保留: 画面照常上屏（显示线程拿 _display_frame）、退出图标照画（触摸急停）。
+competition_mode: true
+
 cameras:
   - camera_id: "main"
     source: null

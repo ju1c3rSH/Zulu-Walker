@@ -59,6 +59,10 @@ class VisionManager:
         # 调参页等独占相机的场景: 暂停采集处理, 让出相机成为唯一读取者
         self._paused = False
 
+        # 比赛模式: 跳过每帧的 HUD 叠加与 wifi JPEG 推流, 只保留"把最新原始帧
+        # 交给显示线程"。见 _update_display_frame。
+        self._render_enabled = True
+
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
 
@@ -192,19 +196,39 @@ class VisionManager:
     def get_display_frame(self):
         return self._display_frame
 
+    def set_render_enabled(self, enabled: bool) -> None:
+        """比赛模式开关: False = 跳过 HUD 叠加与 wifi JPEG 推流。
+
+        **只影响显示, 不影响日志与协议推流。** 视觉线程里被跳过的只有
+        `DisplayHUD.draw()`（约 20 次 maix draw_string/draw_rect, CAM1 纯软件
+        渲染, TARGET 模式还多 6 个误差刻度标签）与 JPEG 编码 —— 两者都在
+        取帧→处理→推流的同一拍里串行执行, 直接吃掉一帧的推流时间。
+        `log_print` 走独立写盘线程, coordinator 的 UART 推流走主循环,
+        两者都不经这里, 照常工作。
+
+        保留项: ① `_display_frame` 仍每帧更新（显示线程要拿它上屏, 且触摸
+        退出判定读它的宽高）; ② 退出图标仍画（2 次 draw, 比赛时误触退出
+        的代价远大于这两次绘制）。可现场对照: 关掉后看 `[FPS] pipeline`
+        与 `[UART TX] DATA_STREAM` 的 Hz 是否上抬。
+        """
+        self._render_enabled = bool(enabled)
+        log_print(f"[RENDER] hud+stream {'ON' if enabled else 'OFF (competition)'}")
+
     def _update_display_frame(self) -> None:
         # 显示不依赖 AI 模型加载（色块任务无模型也须可显示）
         for pid, pipe in list(self._pipelines.items()):
             raw_img = getattr(pipe.camera, "last_raw", None)
             if raw_img is None:
                 continue
-            fps = self.get_pipeline_fps(pid)
-            if self._hud is not None:
-                self._hud.draw(raw_img, fps, pipe.last_results)
-            self._draw_exit_icon(raw_img)
+            if self._render_enabled:
+                fps = self.get_pipeline_fps(pid)
+                if self._hud is not None:
+                    self._hud.draw(raw_img, fps, pipe.last_results)
+                self._draw_exit_icon(raw_img)
             self._display_frame = raw_img
-            self._capture_seq += 1
-            if self._capture_sink is not None and self._capture_seq % self._CAPTURE_EVERY_N == 0:
+            if self._render_enabled and self._capture_sink is not None \
+                    and self._capture_seq % self._CAPTURE_EVERY_N == 0:
+                self._capture_seq += 1
                 self._capture_sink(raw_img)
             return
 

@@ -97,7 +97,8 @@ def _as_rgb888(img):
 def find_blobs_maix(img, thresholds: list, roi=None,
                     area_threshold: int = 400,
                     pixels_threshold: int = 100,
-                    merge: bool = False) -> Optional[list]:
+                    merge: bool = False,
+                    margin: Optional[int] = None) -> Optional[list]:
     """C++ find_blobs on a raw maix Image.
 
     Returns plain dicts {x, y, w, h, cx, cy, pixels} (device-safe across
@@ -107,6 +108,15 @@ def find_blobs_maix(img, thresholds: list, roi=None,
     `merge` (merge overlapping blobs, OpenMV convention) is attempted first
     and dropped gracefully when the firmware build does not accept the kwarg
     (official docs only pin thresholds/invert/roi/area_threshold/pixels_threshold).
+
+    ⚠ `margin` 默认 **None = 不传该 kwarg**（2026-10-07 台架修正）。
+    此前本函数硬编码 `margin=1`，但去年基准 `工科赛上端/main.py` 的 task1/task2
+    都是**裸 `merge=True`、不传 margin**（main.py:390）。margin 在 OpenMV 系
+    find_blobs 里会触发形态学膨胀 + 连通域重标记，比 merge 本身重得多。
+    CAM1(cv181x) 算力比 CAM2 弱一个量级，2026-10-07 台架实测带 margin=1 时
+    订阅后帧率只有 5.3fps（189ms/帧），是"比去年明显滞后"的主要嫌疑之一。
+    不传 margin 即回到与去年逐字节一致的调用形态。
+    需要 margin 时显式传 int（走有 margin 的分支，失败仍降级到无 margin）。
     """
     if not _HAVE_MAIX or img is None:
         return None
@@ -122,11 +132,19 @@ def find_blobs_maix(img, thresholds: list, roi=None,
         if roi:
             kwargs["roi"] = list(roi)
         if merge:
+            merge_kwargs = dict(merge=True)
+            if margin is not None:
+                merge_kwargs["margin"] = int(margin)
             try:
                 blobs = img.find_blobs(thresholds=[list(thresholds)],
-                                       merge=True, margin=1, **kwargs)
+                                       **merge_kwargs, **kwargs)
             except TypeError:
-                blobs = img.find_blobs(thresholds=[list(thresholds)], **kwargs)
+                # 固件不认 margin: 降级到**只去掉 margin**、保住 merge=True。
+                # ⚠ 不能退到 `**kwargs` 那条 —— 那条连 merge 都没有, 会把调用方的
+                # 合并语义静默丢掉, 表现为"能跑但结果不对"（去年基准是裸 merge=True,
+                # 这里的降级也必须回到同一形态）。
+                blobs = img.find_blobs(thresholds=[list(thresholds)],
+                                       merge=True, **kwargs)
         else:
             blobs = img.find_blobs(thresholds=[list(thresholds)], **kwargs)
     except Exception as e:

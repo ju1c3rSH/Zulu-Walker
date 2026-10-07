@@ -147,6 +147,11 @@ class _FakeMaixImage:
 def _install_fake_maix(monkeypatch):
     import sys
     import types
+    import modules.zw_opencv_module.processors.gks_task_processor as gtp
+    # gtp 缓存了"maix.image 不可用"的探测结论（PC 端首个 _downscale 调用就会
+    # 缓存 False, 免得每帧重抛 ImportError）。本用例要注入假 maix, 必须先把
+    # 缓存复位成"未探测"——真机上不存在这个场景, 故提供显式复位而非改实现。
+    monkeypatch.setattr(gtp, "_maix_image_ok", None, raising=False)
     fake = _FakeMaixImage()
     maix_mod = types.ModuleType("maix")
     image_mod = types.ModuleType("maix.image")
@@ -184,6 +189,8 @@ def test_downscale_maix_failure_falls_back_to_cv2(cfg, monkeypatch):
     """maix 构造失败时返回 None, 调用方走 cv2（BGR 小图 + COLOR_BGR2LAB）。"""
     import sys
     import types
+    import modules.zw_opencv_module.processors.gks_task_processor as gtp
+    monkeypatch.setattr(gtp, "_maix_image_ok", None, raising=False)
     cfg["explosive"]["scan_scale"] = 0.5
     proc = GksTaskProcessor(config=cfg)
     image_mod = types.ModuleType("maix.image")
@@ -379,6 +386,132 @@ def test_target_missing_threshold_zero_heartbeat(cfg):
     proc.set_task(MODE_TARGET, (0, 2, 0))
     r = proc.process(np.zeros((480, 640, 3), dtype=np.uint8))
     assert not r.result_data["found"] and not r.result_data["thresholds_ok"]
+
+
+# ---------- task2 降采样（target.scan_scale, 2026-10-07） ----------
+
+@pytest.mark.parametrize("cx", [200, 320, 415, 480, 545])
+def test_target_downscale_error_identical_to_full_res(cfg, cx):
+    """降采样后 err_fixed 必须与全分辨率**逐位一致**（协议语义不可变）。
+
+    面积门槛按 scale² 折算、cx 按 1/scale 还原到全帧坐标，两条折算路径各自
+    都能引入偏差：门槛折错 → 漏检 found=0；坐标折错 → 误差值偏。
+    这个用例把两者一起钉住：对多个 cx（含画面中心与两侧）比对全量程结果。
+    """
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    frame[220:260, cx - 60:cx + 60] = RED
+    # 面积门槛折算：0.5 -> 250。测试块面积 40x120=4800, 降采样后仍有 1200, 足够。
+    results = {}
+    for scale in (1.0, 0.5):
+        cfg["target"]["scan_scale"] = scale
+        proc = GksTaskProcessor(config=cfg)
+        proc.set_task(MODE_TARGET, (0, 1, 0))
+        r = proc.process(frame)
+        assert r.result_data["found"], f"scale={scale} 漏检"
+        results[scale] = r.result_data["err_fixed"]
+    assert results[0.5] == results[1.0]
+
+
+def test_target_downscale_hits_restored_to_full_frame(cfg, target_frame):
+    """命中框坐标须还原到全帧, 否则 HUD 框与实际目标错位。"""
+    cfg["target"]["scan_scale"] = 0.5
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    r = proc.process(target_frame)
+    hits = r.result_data["hits"]
+    assert len(hits) == 1
+    h = hits[0]
+    # 目标块实为 x 420..540 / y 220..260, 允许 cv2 轮廓拟合的少量偏差
+    assert abs(h["x"] - 420) <= 4 and abs(h["y"] - 220) <= 4
+    assert abs(h["w"] - 120) <= 8 and abs(h["h"] - 40) <= 8
+
+
+def test_target_downscale_roi_excludes_outside(cfg):
+    """降采样后 ROI 边界必须跟着缩, 否则 ROI 外的目标会漏进扫描区。"""
+    cfg["target"]["scan_scale"] = 0.5
+    cfg["target"]["roi"] = [0.0, 0.352, 1.0, 0.763]   # y 169..366
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    frame[40:80, 420:540] = RED                       # ROI 之上, 距上边界 89px
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    r = proc.process(frame)
+    assert not r.result_data["found"]
+
+
+def test_target_downscale_area_threshold_shrinks(cfg):
+    """门槛按 scale² 折算: 同一块目标在 0.5 档更容易过门槛（全分辨率下应漏检）。
+
+    面积 40x40=1600 的小块: 全分辨率门槛 1000 -> 过; 0.5 档像素数 400,
+    折算门槛 250 -> 也过。改用面积 1000 的边界块验证折算方向。
+    """
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    frame[230:260, 300:340] = RED        # 40x30 = 1200 px
+    cfg["target"]["scan_scale"] = 1.0
+    proc_full = GksTaskProcessor(config=cfg)
+    proc_full.set_task(MODE_TARGET, (0, 1, 0))
+    full = proc_full.process(frame)
+
+    cfg["target"]["scan_scale"] = 0.5
+    proc_half = GksTaskProcessor(config=cfg)
+    proc_half.set_task(MODE_TARGET, (0, 1, 0))
+    half = proc_half.process(frame)
+
+    # 两者都应检出且误差一致（块中心 cx=320 -> err=0）
+    assert full.result_data["found"] and half.result_data["found"]
+    assert half.result_data["err_fixed"] == full.result_data["err_fixed"] == 0
+
+
+def test_target_scan_scale_invalid_falls_back_to_full(cfg):
+    """非法值（<=0 / >1 / 非数字）必须退回 1.0, 不得静默变成 0 除法或异常比例。"""
+    proc = GksTaskProcessor(config=cfg)
+    for bad in (0.0, -0.5, 1.8, "abc", None):
+        cfg["target"]["scan_scale"] = bad
+        assert proc._scan_scale(cfg["target"]) == 1.0
+
+
+def test_downscale_probes_maix_import_only_once(cfg, monkeypatch):
+    """maix.image 探测结论必须被缓存, 不得每帧重抛 ImportError。
+
+    这不是洁癖: PC 端(无 maix) 逐帧重抛一次 ImportError 实测 0.92ms/帧,
+    而 _downscale 的有效工作只有 0.07ms —— 93% 的时间在重复失败上。
+    设备端 import 命中 sys.modules 便宜得多, 但同样不该逐帧走一遍。
+    """
+    import sys
+    import types
+    import modules.zw_opencv_module.processors.gks_task_processor as gtp
+    # 确保 sys.modules 里没有 maix, 并复位缓存到"未探测"
+    monkeypatch.setitem(sys.modules, "maix", None)
+    monkeypatch.setattr(gtp, "_maix_image_ok", None, raising=False)
+
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    proc = GksTaskProcessor(config=cfg)
+
+    calls = {"n": 0}
+
+    def _counting_import(name, *a, **kw):
+        if name == "maix.image":
+            calls["n"] += 1
+        raise ImportError("no maix (test)")
+
+    # 屏蔽真实的 maix import, 统计被触发的次数
+    import builtins
+    real_import = builtins.__import__
+
+    def _fake_import(name, *a, **kw):
+        if name.startswith("maix"):
+            _counting_import(name)
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    proc._downscale(frame, None, 0.5)
+    assert gtp._maix_image_ok is False, "探测不到时必须记住不可用"
+    first = calls["n"]
+    assert first == 1
+
+    for _ in range(5):
+        proc._downscale(frame, None, 0.5)
+    assert calls["n"] == first, f"缓存失效: 5 帧内又触发了 {calls['n'] - first} 次 import"
 
 
 # ---------- task3 人质 ----------
