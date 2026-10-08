@@ -15,6 +15,7 @@ import yaml
 
 from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference
+from utils.boot_timing import thread_cpu as _thread_cpu
 from utils.log_util import log_print
 
 from .pipeline_camera import PipelineCamera
@@ -62,6 +63,18 @@ class VisionManager:
         # 比赛模式: 跳过每帧的 HUD 叠加与 wifi JPEG 推流, 只保留"把最新原始帧
         # 交给显示线程"。见 _update_display_frame。
         self._render_enabled = True
+
+        # 分项计时汇总（每秒一条 [PERF]）。用途见 _note_perf:
+        # 真机帧周期如果明显大于 read+tasks+disp 之和, 差额就是被其它线程的
+        # GIL 占用吞掉的时间 —— 2026-10-08 台架实测 CAM1: 识别链路单独跑能到
+        # 59.7Hz(取帧0ms+find_blobs 8.9ms), 而带显示线程的真机只有 20.3Hz,
+        # 差额 ~35ms/帧 必须能被归因, 否则只能靠猜。
+        self._perf_log = True
+        self._perf = {"t0": 0.0, "n": 0,
+                      "read": 0.0, "read_cpu": 0.0, "convert": 0.0,
+                      "tasks": 0.0, "tasks_cpu": 0.0,
+                      "disp": 0.0, "disp_cpu": 0.0,
+                      "body": 0.0, "cpu": 0.0, "none": 0}
 
     def set_event_bus(self, bus) -> None:
         self._event_bus = bus
@@ -143,13 +156,21 @@ class VisionManager:
                     time.sleep(0.01)
                     continue
 
+                _wall0, _cpu0 = time.perf_counter(), _thread_cpu()
                 profiler.start("total")
                 _, all_results, any_fresh = self.process_all()
 
-                self._update_display_frame()
-
+                # ⚠ 结果入队必须在 _update_display_frame() **之前**。
+                # 台架模式(render 开)下 HUD 要画二十几次 maix draw_string/draw_rect,
+                # 这段绘制原本插在"find_blobs 已出结果"和"主循环能看到结果"之间,
+                # 纯粹白吃时延。顺序调换零风险, 结果内容与语义都不变。
                 if self._event_bus:
                     self._pending_results.append(all_results)
+
+                _disp_t0, _disp_c0 = time.perf_counter(), _thread_cpu()
+                self._update_display_frame()
+                _disp_ms = (time.perf_counter() - _disp_t0) * 1000.0
+                _disp_cpu = (_thread_cpu() - _disp_c0) * 1000.0
 
                 for cb in self._result_callbacks:
                     try:
@@ -158,6 +179,9 @@ class VisionManager:
                         pass
 
                 profiler.stop("total")
+                self._note_perf(_disp_ms, _disp_cpu, any_fresh,
+                                (time.perf_counter() - _wall0) * 1000.0,
+                                (_thread_cpu() - _cpu0) * 1000.0)
                 time.sleep(0)
                 if any_fresh:
                     profiler.end_frame()
@@ -166,6 +190,76 @@ class VisionManager:
             except Exception:
                 traceback.print_exc()
                 time.sleep(1.0)
+
+    def set_perf_log(self, enabled: bool) -> None:
+        """开关每帧分项计时的 [PERF] 汇总行（默认开, 一秒一条, 开销可忽略）。"""
+        self._perf_log = bool(enabled)
+
+    def _note_perf(self, disp_ms: float, disp_cpu: float, any_fresh: bool,
+                   body_ms: float = 0.0, cpu_ms: float = 0.0) -> None:
+        """累计本帧分项耗时, 每秒汇总打一条 [PERF]。
+
+        怎么读这行（四段式, 缺一段就会读错）:
+          ① loop = 帧周期（墙上）。loop - body = 视觉线程 sleep 等帧的余量。
+          ② read / conv / task / disp = 分项（墙上）。
+          ③ 每个分项后面的 `cpu` = 该项真正消耗的 CPU（thread_time）。
+             **墙上大而 cpu 小 = 在等（硬件/GIL）; 两者都大 = 真在算。**
+             这是回答"到底谁最耗性能"的唯一依据 —— 只看墙上是分不出
+             "驱动调用在等硬件"和"框架在烧 CPU"的。
+          ④ `自身cpu` = body_cpu - (read_cpu + tasks_cpu + disp_cpu)
+             = 视觉线程这一轮里、除取帧/识别/显示之外的 CPU 开销,
+             即**框架自身的编排开销**（process 包壳、结果入队、profiler、
+              本打点函数自身、sleep(0) 的调度）。
+             它接近 0 -> 瓶颈不在框架, 在驱动调用与 GIL, 别去重构框架;
+             它很大  -> 才轮到怀疑框架本身。
+        """
+        if not self._perf_log:
+            return
+        p = self._perf
+        if p["t0"] == 0.0:
+            p["t0"] = time.perf_counter()
+        p["n"] += 1
+        p["disp"] += disp_ms
+        p["disp_cpu"] += disp_cpu
+        p["body"] += body_ms
+        p["cpu"] += cpu_ms
+        if not any_fresh:
+            p["none"] += 1
+        for pipe in self._pipelines.values():
+            st = getattr(pipe, "stage_ms", None)
+            if st:
+                p["read"] += float(st.get("read", 0.0))
+                p["read_cpu"] += float(st.get("read_cpu", 0.0))
+                p["convert"] += float(st.get("convert", 0.0))
+                p["tasks"] += float(st.get("tasks", 0.0))
+                p["tasks_cpu"] += float(st.get("tasks_cpu", 0.0))
+
+        now = time.perf_counter()
+        elapsed = now - p["t0"]
+        if elapsed < 1.0:
+            return
+        n = max(1, p["n"])
+        loop_ms = elapsed / n * 1000.0
+        body_ms = p["body"] / n
+        cpu_ms = p["cpu"] / n
+        gil_ms = body_ms - cpu_ms
+        parts = (p["read"] + p["convert"] + p["tasks"] + p["disp"]) / n
+        # 框架自身 CPU = 本轮 CPU 减去三个已计量分项的 CPU。
+        # conv 的 CPU 天然包含在 read_cpu 里（转换发生在 read_raw 内部），不重复扣。
+        own_cpu = cpu_ms - (p["read_cpu"] + p["tasks_cpu"] + p["disp_cpu"]) / n
+        log_print(
+            f"[PERF] vision {n / elapsed:.1f}Hz loop={loop_ms:.1f}ms "
+            f"body={body_ms:.1f}ms cpu={cpu_ms:.1f}ms gil_wait={gil_ms:.1f}ms | "
+            f"read={p['read'] / n:.1f}(cpu{p['read_cpu'] / n:.2f}) "
+            f"conv={p['convert'] / n:.1f} "
+            f"task={p['tasks'] / n:.1f}(cpu{p['tasks_cpu'] / n:.2f}) "
+            f"disp={p['disp'] / n:.1f}(cpu{p['disp_cpu'] / n:.2f}) "
+            f"none={p['none']} | idle={loop_ms - body_ms:.1f}ms "
+            f"自身cpu={own_cpu:.2f}ms "
+            f"未归因={loop_ms - parts - (loop_ms - body_ms):.1f}ms")
+        p.update(t0=now, n=0, read=0.0, read_cpu=0.0, convert=0.0, tasks=0.0,
+                 tasks_cpu=0.0, disp=0.0, disp_cpu=0.0,
+                 body=0.0, cpu=0.0, none=0)
 
     def process_all(
         self,

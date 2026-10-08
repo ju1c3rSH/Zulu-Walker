@@ -143,6 +143,16 @@ _DEFAULT_CONFIG = {
         #   取小了追不上目标一帧内的位移 -> 窄窗扫不到、回落粗结果（精度打折）;
         #   取大了就吃掉降采样的收益。默认按 640x480 标定, 换分辨率按比例调。
         "refine_pad_px": 24,
+        # 跨帧跟踪窄窗（2026-10-09, 默认 0 = 关闭）。
+        #   >0 时: 若上一帧有结果, 本帧优先只在 "上一帧 cx ± track_roi_px" 的窄窗里扫;
+        #   窄窗未命中则**同一帧内回退全 ROI 复扫** —— 所以检出率与精度与"全程全 ROI"
+        #   完全一致, 只在命中时省时间。find_blobs 成本≈正比于搜索面积（实测
+        #   640x197=8.96ms / 640x40=1.53ms）, 而真机带目标时 task 达 21ms。
+        #   打靶是云台闭环 -> 帧间位移小, 这个假设成立。
+        #   ⚠ pad 取小了会频繁未命中, 净收益变负（白花一次窄窗 + 一次全 ROI）;
+        #     按 [GKS] target 跟踪窄窗未命中 日志的频率调。建议起点 48~64。
+        #   ⚠ 不用于排爆/人质: 那两个必须全帧（三色定序 / YOLO）。
+        "track_roi_px": 0,
         # 与 explosive 段同值（"什么是红/绿/蓝"不随任务变）; 现场可按 ROI 内实际光比
         # 分头标定 —— 物理条件不同（爆: 全帧三坑 + 10000 面积门槛; 靶: 窄 ROI + 1000）,
         # 同一组值只是起点而非最优; 要分开标定先改这里。
@@ -263,6 +273,7 @@ class GksTaskProcessor(Processor):
         # 阈值文件运行时覆盖（mtime 变化自动重载）
         self._thresholds_file = str(self._cfg.get("thresholds_file") or "")
         self._thresholds_mtime: Optional[float] = None
+        self._thresholds_poll_ts: float = 0.0
         self._explosive_lab: dict = {}
         self._target_lab: dict = {}
         self._reload_thresholds(force=True)
@@ -387,6 +398,10 @@ class GksTaskProcessor(Processor):
         self._target_drop_count: int = 0                # 连续未确认帧数(日志用)
         self._target_drop_logged: int = 0
         self._target_reject_count: int = 0
+        # 跨帧跟踪窄窗（target.track_roi_px）的计数: 用于现场判断 pad 是否偏小。
+        # hits 命中=省下全 ROI 扫描; miss=窄窗没命中、当帧回退全 ROI（多花一次窄窗）。
+        self._target_track_hits: int = 0
+        self._target_track_miss: int = 0
 
     # ---- thresholds ----
 
@@ -410,9 +425,28 @@ class GksTaskProcessor(Processor):
         self._explosive_lab = exp_lab
         self._target_lab = tgt_lab
 
+    # 阈值文件 mtime 轮询周期（秒）。见 _maybe_reload_thresholds。
+    _THRESHOLD_POLL_INTERVAL_S = 0.5
+
     def _maybe_reload_thresholds(self) -> None:
+        """每帧检查阈值文件 mtime —— 但**限频到 2Hz**。
+
+        台架真机实测（2026-10-08, 未订阅/画面无目标）: `[PERF] vision ... task=1.1ms`。
+        那个状态下 `process()` 只跑 `_maybe_reload_thresholds()` + 拼结果 dict，
+        识别分支一个都没进（`_mode` 为 None）—— 也就是说 **1.1ms 基本全是这次
+        `os.stat()`**，一次每帧都发生的文件系统调用。
+
+        阈值文件是人手在调参页上写出来的，2Hz 轮询远远够用（人手不可能更快），
+        换来每帧省 ~1ms：在 40fps 上约 4% 的整帧预算，而在 20ms 的短帧预算里就是 5%+。
+        ⚠ 不要为了"省一次 stat"改成只在订阅时检查一次：调参页是**订阅中**用的，
+        改语义会让热重载失效。
+        """
         if not self._thresholds_file:
             return
+        now = self._now()
+        if now - self._thresholds_poll_ts < self._THRESHOLD_POLL_INTERVAL_S:
+            return
+        self._thresholds_poll_ts = now
         try:
             mtime = os.stat(self._thresholds_file).st_mtime
         except OSError:
@@ -792,7 +826,18 @@ class GksTaskProcessor(Processor):
         # 在**全分辨率**上开一个贴着它的窄窗再扫一次, 门槛用原值, 由这一次
         # 的结果算 cx 与 err_fixed —— 与全分辨率逐位一致, 精度不打折。
         # ②的窗口很小(靶标 bbox 外扩 pad), 扫的像素量远小于①, 净收益仍为正。
-        if scale < 1.0:
+        # ---- 跨帧跟踪窄窗（2026-10-09, 默认关闭）----
+        #
+        # 打靶是**云台闭环**: 目标在帧间只移动少量像素。于是可以用上一帧的 cx 开一个
+        # 窄窗, 命中就直接用; 未命中**当帧回退全 ROI 复扫**。这个"当帧回退"是关键:
+        # 它保证精度与检出率与"全程全 ROI"**完全一致**（同一套阈值／几何／选块代码）,
+        # 跟踪只在命中时省时间。而 find_blobs 的成本≈正比于搜索面积, 真机带目标时
+        # `[PERF] task` 达 21ms, 是全帧预算里最大的一块。
+        # 实测依据（scripts/bench_frame_budget.py @640x480, ROI 高度扫描）:
+        #   640x197 = 8.96ms -> 640x120 = 5.10ms -> 640x40 = 1.53ms（近似线性）。
+        blobs = self._target_tracked_scan(frame, maix_img, lab, roi_px, cfg, scale)
+
+        if blobs is None and scale < 1.0:
             pad = int(cfg.get("refine_pad_px", 24))
             coarse = self._target_coarse_scan(frame, maix_img, lab, roi_px, cfg, scale)
             if coarse is None:
@@ -810,7 +855,7 @@ class GksTaskProcessor(Processor):
                     "cx": coarse["cx"] / scale, "cy": coarse["cy"] / scale,
                     "pixels": coarse["pixels"],
                 }]
-        else:
+        elif blobs is None:
             blobs = self._scan_blobs(frame, maix_img, lab, roi_px,
                                      cfg["pixels_threshold"], cfg["area_threshold"],
                                      merge=bool(cfg["merge"]),
@@ -837,6 +882,68 @@ class GksTaskProcessor(Processor):
         return {"err_fixed": 0, "found": False}, hits, True
 
     # ---- task2 候选选择与时序（防误检, 2026-10-08）----
+    def _target_tracked_scan(self, frame, maix_img, lab, roi_px, cfg, scale):
+        """跨帧跟踪窄窗扫描。返回 blob 列表 = 命中; **None = 调用方应走全 ROI 路径**。
+
+        返回 None 的两种情况（调用方无需区分, 都会落到全 ROI 那条路）:
+          · 不适用: 开关关闭 / scale<1（不与两段式混用）/ 无上一帧历史 / 窗口退化;
+          · 窄窗未命中: 此时**同一帧内**回退全 ROI 复扫 —— 所以不会漏检,
+            代价只是这一帧多花一次窄窗的钱。miss 计数与日志用于现场判断 pad 是否偏小。
+
+        ⚠ 只服务 TARGET。排爆要全帧三色定序（首次检出先后）, 人质走 YOLO 全帧 ——
+        两者都**不能**缩小搜索域, 缩了是改语义而不是省时间。
+
+        ⚠ 窗口以"上一帧 cx"为中心, 因此天然带连续性先验: 画面别处的红色区域不在窗内
+        就不会被选中。而 target.roi 是全宽的、prefer_continuity 默认关闭 —— 对
+        "背景大片红赢过真球"那个已知风险, 跟踪窗口反而是加固（不是削弱）。
+        """
+        try:
+            pad = int(cfg.get("track_roi_px") or 0)
+        except (TypeError, ValueError):
+            pad = 0
+        if pad <= 0 or scale < 1.0 or roi_px is None:
+            return None
+        if self._target_last_cx is None:
+            return None
+        win = self._target_track_window(self._target_last_cx, roi_px, pad)
+        if win is None:
+            return None
+        blobs = self._scan_blobs(frame, maix_img, lab, win,
+                                 cfg["pixels_threshold"], cfg["area_threshold"],
+                                 merge=bool(cfg["merge"]),
+                                 margin=self._merge_margin(cfg))
+        if blobs:
+            self._target_track_hits += 1
+            if self._target_track_hits % 200 == 1:
+                log_print(f"[GKS] target 跟踪窄窗命中 x{self._target_track_hits} "
+                          f"(win={win[2]}x{win[3]}px, 命中时省下全 ROI 扫描)")
+            return blobs
+        self._note_target_track_miss()
+        return None
+
+    @staticmethod
+    def _target_track_window(last_cx, roi_px, pad):
+        """上一帧 cx ± pad 的窄窗, 高度撑满 ROI, 并夹回 ROI。退化返回 None。
+
+        外扩 pad 覆盖"目标一帧内的最大位移"。取小了会频繁未命中（净收益变负:
+        每次都白花一次窄窗 + 一次全 ROI）; 取大了省不下时间。现场按
+        「窄窗未命中」日志的出现频率调。
+        """
+        rx, ry, rw, rh = roi_px
+        x0 = max(rx, int(last_cx) - pad)
+        x1 = min(rx + rw, int(last_cx) + pad)
+        if x1 - x0 <= 2:
+            return None
+        return [x0, ry, x1 - x0, rh]
+
+    def _note_target_track_miss(self) -> None:
+        """窄窗未命中的按批汇总日志（不逐帧刷屏）。"""
+        self._target_track_miss += 1
+        if self._target_track_miss % 20 == 1:
+            log_print(f"[GKS] target 跟踪窄窗未命中 x{self._target_track_miss} "
+                      f"-> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次窄窗）;"
+                      f" 频繁出现请调大 target.track_roi_px")
+
     def _pick_target_blob(self, blobs: list, cfg: dict):
         """从候选里挑一个靶标 blob。
 

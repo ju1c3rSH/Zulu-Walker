@@ -13,7 +13,8 @@ import sys
 import threading
 import time
 
-from utils.log_util import log_print, start_log_writer
+from utils.log_util import log_print, start_log_writer, debug_console_active
+from utils.boot_timing import thread_cpu as _thread_cpu
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.makedirs("logs", exist_ok=True)
@@ -67,6 +68,17 @@ def _check_cmm_pressure() -> bool:
 
 
 def _push_coordinator_status(coordinator) -> None:
+    """把协调器状态推给调试台（调试台没在跑就整段跳过）。
+
+    ⚠ 这里原本**无条件** `from utils.debug_console import DebugConsole`, 两个问题:
+      ① 每次调用一次模块导入（sys.modules 查找, 便宜但不是零）;
+      ② 更糟的是: 若调试台从未被启动（启动器按 `debug_console_enabled: false`
+         禁用了它）, 这句导入会把 **rich 整个模块拉进内存**, 只为往一个不存在的
+         TUI 里塞几个键值 —— 而 CAM1 只有 128MB 用户内存（实测已占 80%）。
+    先用 `debug_console_active()`（纯 sys.modules 判定）挡一道。
+    """
+    if not debug_console_active():
+        return
     from utils.debug_console import DebugConsole
     dc = DebugConsole()
     info = coordinator.get_info()
@@ -130,6 +142,31 @@ class DebugPageFactory:
     def page_active(self) -> bool:
         return self._active is not None
 
+    def reset(self) -> None:
+        """回到 MAIN 页时清掉"当前激活的调试页"标记（install 见 MainUiShell.tick）。
+
+        语义: 页面**实例**留在 _instances 里（共享会话数据不丢, 见类 docstring）,
+        只清激活标记, 于是下次切入同一页时 ensure_entered 会重新走一遍 begin()
+        （重置滑条等交互态, 不重建页面）。
+
+        ⚠⚠ 这个方法此前**根本不存在**, 而 MainUiShell.tick() 在 MAIN 页每一拍都在
+        调它 —— 于是每一拍都抛 AttributeError, 被 ModuleManager.run_main_loop 的
+        `except Exception: logger.exception("tick_callback() failed")` 吞掉。
+        两个后果都不报错, 只能靠打点发现:
+
+          ① 每拍格式化一次**完整 traceback** 再写盘。台架实测 `[PERF] mainloop`
+             里 tick=27.7ms, 而 coord=0.17 / touch=0.17 / wdt=0.04ms —— 主循环
+             99% 的耗时都堆在这个回调上, 主因就是它（traceback 格式化是纯 Python
+             字符串工作, 正好对上"CPU 不高但墙上很高"）。
+          ② 紧随其后的 `_push_coordinator_status()` **永远执行不到** ——
+             DebugConsole 状态栏一直是 "-", 台架在控制台上看不到任何状态。
+             也就是说: 这个 bug 让"给台架看状态"的功能整个失效, 同时还在拖慢主循环。
+
+        修法取最小语义(清激活标记), 与 step_active 里页面自请求退出时的
+        `self._active = None` 一致; 重复清是幂等的。
+        """
+        self._active = None
+
     def _ensure_touchscreen(self):
         if self._touchscreen is None:
             try:
@@ -171,6 +208,15 @@ class MainUiShell:
     非 MAIN 页所有路径短路, 与调试页触摸/显示互不干扰。
     """
 
+    # 向 DebugConsole 灌状态的周期（秒）。
+    # ⚠ 必须限频: 台架真机实测 `[PERF] mainloop ... tick=27.7ms`（对比
+    #   coord=0.17ms / touch=0.17ms / wdt=0.04ms）—— 主循环 99% 的阻塞都发生在
+    #   这个 tick 回调里, 而整个主循环的 CPU 只有 205ms/s, 说明它不是在算, 是在**等**
+    #   （被 show() 与 rich 重绘持着 GIL）。功能上它只是喂一个 10Hz 的文字控制台,
+    #   按主循环 2ms 的节奏喂=每秒喂几百次, 没有任何收益。
+    #   0.5s => 2Hz, 肉眼对控制台读数无感, 争用点少一个数量级。
+    _STATUS_PUSH_INTERVAL_S = 0.5
+
     def __init__(self, machine, pages, factory: DebugPageFactory, vision_manager):
         self._machine = machine
         self._pages = pages
@@ -182,6 +228,41 @@ class MainUiShell:
         self._touch_y = 0
         self._last_seen_frame = None
         self._display_counter = 0
+        self._last_status_push = 0.0
+
+        # ---- 显示输出策略（只影响 LCD, 不影响日志与协议推流）----
+        # `project_config.yaml: display_enabled` 此前是个**死配置**: 全仓库只有
+        # 定义那一行, 没有任何代码读它 —— 于是"关了显示"只是心理安慰, 显示线程
+        # 照旧每 2 帧 show 一次。2026-10-08 台架实测 CAM1 `display.show()` 单次
+        # **23.4ms**（C++ 编码期间全程持 GIL）, 每 2 帧一次 ≈ 每秒 117ms 的 GIL
+        # 独占, 与视觉线程直接串行 —— 这是"识别链路单独跑 59.7Hz, 带显示的真机
+        # 只有 20.3Hz"的首位嫌疑。
+        self._display_enabled = True
+        self._show_interval_s = 0.0        # 0 = 沿用 _DISPLAY_SHOW_SKIP 帧跳
+        self._last_show_time = 0.0
+        self._cmm_check_time = 0.0
+        self._cmm_pressure = False
+        self._show_ms_sum = 0.0
+        self._show_cpu_sum = 0.0
+        self._show_n = 0
+        self._show_t0 = 0.0
+
+    def set_display_policy(self, enabled=None, show_interval_ms=None) -> None:
+        """注入显示策略（main() 从 project_config.yaml 读取）。
+
+        *show_interval_ms*: 两次 show 的最小间隔。0 = 保留原来的"每
+        _DISPLAY_SHOW_SKIP 帧一次"帧跳语义（等价改前行为）。帧跳按**帧数**跳,
+        帧率一变节流比例就变; 按时间限流则与帧率无关, 台架更好预测。
+        """
+        if enabled is not None:
+            self._display_enabled = bool(enabled)
+        if show_interval_ms is not None:
+            self._show_interval_s = max(0.0, float(show_interval_ms) / 1000.0)
+        if self._show_interval_s > 0.0:
+            throttle = f"{self._show_interval_s * 1000:.0f}ms 限流"
+        else:
+            throttle = f"每 {_DISPLAY_SHOW_SKIP} 帧一次(帧跳)"
+        log_print(f"[DISPLAY] lcd={'ON' if self._display_enabled else 'OFF'}, {throttle}")
 
     def _open_touch(self):
         try:
@@ -194,7 +275,11 @@ class MainUiShell:
         page_name = self._pages.name
         if page_name == STATE_MAIN:
             self._factory.reset()
-            _push_coordinator_status(coordinator)
+            # 限频: 见 _STATUS_PUSH_INTERVAL_S 的说明（这是主循环最大的阻塞源）
+            now = time.monotonic()
+            if now - self._last_status_push >= self._STATUS_PUSH_INTERVAL_S:
+                self._last_status_push = now
+                _push_coordinator_status(coordinator)
             return
         self._factory.ensure_entered(page_name)
         if self._factory.page_active():
@@ -219,13 +304,73 @@ class MainUiShell:
             if frame is not None and frame is not self._last_seen_frame:
                 self._last_seen_frame = frame
                 self._display_counter += 1
-                if self._display_counter % _DISPLAY_SHOW_SKIP == 0 \
-                        and not _check_cmm_pressure():
-                    try:
-                        self._machine.display.show(frame)
-                    except Exception:
-                        pass
-            time.sleep(0.001)
+                self._maybe_show(frame)
+            # 原为 1ms 自旋: 每秒 1000 次唤醒抢 GIL, 对视觉线程是纯干扰。
+            # 显示侧只需要"有新帧就上屏", 5ms 轮询(200Hz) 远快于任何帧率。
+            time.sleep(0.005)
+
+    def _maybe_show(self, frame) -> None:
+        """按显示策略决定是否真的上屏, 并统计 show() 的 GIL 开销。"""
+        if not self._display_enabled:
+            return
+        now = time.monotonic()
+        if self._show_interval_s > 0.0:
+            if now - self._last_show_time < self._show_interval_s:
+                return
+        elif self._display_counter % _DISPLAY_SHOW_SKIP != 0:
+            return
+        if self._cmm_pressure_throttled():
+            return
+        t0 = time.perf_counter()
+        cpu0 = _thread_cpu()
+        try:
+            self._machine.display.show(frame)
+        except Exception:
+            pass
+        self._last_show_time = now
+        self._note_show_perf((time.perf_counter() - t0) * 1000.0,
+                            (_thread_cpu() - cpu0) * 1000.0)
+
+    def _cmm_pressure_throttled(self) -> bool:
+        """CMM 压力查询降频到 1s 一次。
+
+        原实现每 2 帧调一次 maix_sys.memory_info()（一次系统调用 + 建 dict）,
+        在 60fps 下就是每秒 30 次无谓开销; 内存压力本来也不是秒级突变。
+        """
+        now = time.monotonic()
+        if now - self._cmm_check_time >= 1.0:
+            self._cmm_check_time = now
+            self._cmm_pressure = _check_cmm_pressure()
+        return self._cmm_pressure
+
+    def _note_show_perf(self, wall_ms: float, cpu_ms: float = 0.0) -> None:
+        """每秒汇总一条 show() 开销 —— 直接量化"显示吃掉多少 GIL / CPU"。
+
+        ⚠ 两个数都必须报, 且**单位别乘错**:
+        · 墙上 ms/s = 本秒内 show() 占用的墙上时间合计（含被 GIL 挡住的等待）
+        · CPU ms/s  = 本秒内 show() 真正消耗的 CPU（thread_time 差值）
+        首版实现把已经是"毫秒"的量又乘了 1000, 打出 `每秒占用 164818ms`,
+        比一秒还长 —— 读者会直接当成 bug 而忽略整行。真实值是 ~164ms/s。
+        """
+        self._show_ms_sum += wall_ms
+        self._show_cpu_sum += cpu_ms
+        self._show_n += 1
+        now = time.monotonic()
+        if self._show_t0 == 0.0:
+            self._show_t0 = now
+        elapsed = now - self._show_t0
+        if elapsed < 1.0:
+            return
+        n = max(1, self._show_n)
+        log_print(f"[PERF] lcd show {n / elapsed:.1f}Hz "
+                  f"avg={self._show_ms_sum / n:.1f}ms "
+                  f"(cpu {self._show_cpu_sum / n:.1f}ms) "
+                  f"-> 每秒占墙上 {self._show_ms_sum / elapsed:.0f}ms / "
+                  f"CPU {self._show_cpu_sum / elapsed:.0f}ms")
+        self._show_t0 = now
+        self._show_ms_sum = 0.0
+        self._show_cpu_sum = 0.0
+        self._show_n = 0
 
     def _consume_main_touch(self) -> None:
         if self._touch is None:
@@ -379,10 +524,30 @@ def _project_config() -> dict:
 def main():
     log_print("0xfb709394")
 
-    from utils.debug_console import DebugConsole
     config = _project_config()
-    DebugConsole.set_global_enabled(config.get("debug_console_enabled", True))
     start_log_writer()
+
+    # ---- 调试台（rich TUI）----
+    # 决策权在 **run.py::_init_debug_console()**: 它在导入 app.main 之前读
+    # `debug_console_enabled`, 禁用时**连 rich 都不导入**（该模块顶层 import rich,
+    # 而 rich 是纯 Python 大包；CAM1 只有 128MB 用户内存, 实测已占 80%）。
+    # 这里**不再无条件 `from utils.debug_console import DebugConsole`** ——
+    # 那会把 rich 拉回来, 让"禁用"只剩一半效果。
+    # 用 log_util.debug_console_active() 廉价判定；只有"配置说关、但它确实已经被
+    # 导入并启动过"这种不一致情况才需要在这里补一次真正生效的关闭。
+    if config.get("debug_console_enabled", True):
+        dc_mod = sys.modules.get("utils.debug_console")
+        if dc_mod is not None:
+            dc_mod.DebugConsole.set_global_enabled(True)
+    else:
+        dc_mod = sys.modules.get("utils.debug_console")
+        if dc_mod is not None:
+            try:
+                dc_mod.DebugConsole.set_global_enabled(False)
+                dc_mod.DebugConsole().stop()
+                log_print("[DCONSOLE] 按配置关闭（已导入过, 这里补一次真正生效的停止）")
+            except Exception as e:
+                log_print(f"[DCONSOLE] 关闭失败: {type(e).__name__}: {e}")
 
     wdt_feed = _make_wdt_feed()
 
@@ -439,6 +604,11 @@ def main():
 
     factory = DebugPageFactory(machine, vision_manager, pages)
     ui = MainUiShell(machine, pages, factory, vision_manager)
+    # 显示策略与分项计时的配置入口（缺键即保持改前行为, 可一键回退）
+    ui.set_display_policy(config.get("display_enabled"),
+                          config.get("display_show_interval_ms"))
+    if vision_manager is not None:
+        vision_manager.set_perf_log(config.get("perf_log", True))
 
     coordinator.start()
     ui.start_display_thread()

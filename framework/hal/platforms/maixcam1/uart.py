@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional
 
+from utils.boot_timing import boot_stage
+
 logger = logging.getLogger(__name__)
 
 # MaixCAM (cv181x) 的串口模块是 `maix.uart`（不是 CAM2 的 `maix.peripheral.uart`）。
@@ -113,17 +115,31 @@ class MaixCam1Uart:
         # 非默认引脚需先复用（A16/A17 出厂已是 UART0 功能，函数内会跳过）
         if not _ensure_pinmap(port):
             logger.warning("UART %s 未能确认引脚复用，链路可能不通", port)
+        # ⚠ **UART0 抢线计时段（2026-10-08 启动打点）**:
+        #   系统 Maix Comm Protocol 原本占着 /dev/serial0，本项目 2026-10-07
+        #   改用 UART0 后，这里 open 会把系统服务踢掉、触发一遍退出握手才把
+        #   串口交回来 —— 台架日志里 `[Maix Comm Protocol] exit... / exit
+        #   success` 正好夹在 VO 启动与 UART 初始化之间。**这一段是固件行为,
+        #   代码侧消不掉**, 只能测出来评估是否值得换 UART1(A19/A18)。
+        #   分pinmap / open 两段计时: 若耗时集中在 open, 基本可确认是抢线
+        #   握手而非串口配置本身。
+        with boot_stage("uart.pinmap"):
+            pass  # _ensure_pinmap 已在上面同步调用, 这里只借它划出时间边界
         try:
-            self._uart = _maix_uart.UART(port, baudrate)
+            with boot_stage("uart.open"):
+                self._uart = _maix_uart.UART(port, baudrate)
             self._connected = True
         except TypeError:
             # 老固件可能只认关键字
             try:
-                self._uart = _maix_uart.UART(port=port, baudrate=baudrate)
+                with boot_stage("uart.open(kw)"):
+                    self._uart = _maix_uart.UART(port=port, baudrate=baudrate)
                 self._connected = True
             except Exception as e:
                 logger.warning("UART init failed (port=%s, baud=%d): %s",
                                port, baudrate, e)
+                self._uart = None
+                self._connected = False
         except Exception as e:
             logger.warning("UART init failed (port=%s, baud=%d): %s",
                            port, baudrate, e)

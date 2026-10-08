@@ -97,14 +97,26 @@ class DebugConsole:
         self._thread.start()
         self._key_thread = threading.Thread(target=self._key_listener, daemon=True)
         self._key_thread.start()
+        # 必须留痕: rich 的 10Hz 全屏重绘在设备上不是"免费的可视化"（持 GIL 构造
+        # Panel/Table, 且往终端写几 KB/s）。台架只有看到这一行, 才能判断
+        # `debug_console_enabled` 到底有没有把渲染关掉。
+        # ⚠ 顺带记一个坑: run.py 在进入 app.main() 之前就无条件调了
+        #   DebugConsole().start(), 那时配置还没读到 —— 所以 false 也无从阻止它启动,
+        #   必须由 app.main 在读到配置后补一次 stop()（见 app/main.py）。
+        from utils.log_util import log_print
+        log_print("[DCONSOLE] rich 渲染线程已启动 (10Hz 全屏重绘)")
 
     def stop(self) -> None:
+        was_running = self._running
         self._running = False
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         from utils.console_capture import ConsoleCapture
         ConsoleCapture.uninstall()
+        if was_running:
+            from utils.log_util import log_print
+            log_print("[DCONSOLE] rich 渲染线程已停止 (stdout 捕获已还原)")
 
     # ---- render loop ----
 
@@ -115,7 +127,7 @@ class DebugConsole:
         layout = self._build_layout()
         try:
             with Live(layout, console=self._console, screen=True,
-                       refresh_per_second=10, auto_refresh=False) as live:
+                      refresh_per_second=10, auto_refresh=False) as live:
                 # Restore capture — Live(screen=True) may have replaced sys.stdout
                 from utils.console_capture import ConsoleCapture
                 if ConsoleCapture._instance is not None:
@@ -128,8 +140,15 @@ class DebugConsole:
                     except Exception:
                         pass
                     self._stop_event.wait(timeout=_UPDATE_INTERVAL)
-        except Exception:
-            pass
+        except Exception as e:
+            # ⚠ 原来这里是裸 `except Exception: pass` —— 整个 TUI 起不来会**静默死掉**,
+            # 台架既看不到"停 了"也看不到"为什么停", 只能靠"日志里没有 ANSI 重绘"
+            # 这种间接证据去猜（2026-10-08 就是这么猜的）。这与 DebugPageFactory.reset()
+            # 缺失是同一类问题: 异常被吞 + 状态不可见。
+            # 不重抛（TUI 起不来不该拖垮应用）, 但必须留痕。
+            from utils.log_util import log_print
+            log_print(f"[DCONSOLE] ⚠ rich 渲染线程已退出（TUI 不再刷新）: "
+                      f"{type(e).__name__}: {e}")
 
     def _build_layout(self) -> Layout:
         layout = Layout()

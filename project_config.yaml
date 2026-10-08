@@ -1,7 +1,45 @@
 platform: maixcam1   # MaixCAM-Pro(cv181x) · 回移植分支 feat/maixcam1-port
 
-debug_console_enabled: true
+# ---- 显示输出（只影响 LCD；日志与协议推流完全不受影响）----
+# ⚠ 2026-10-08 台架实测 (MaixCAM-Pro)，`display.show()` 是本系统**单次最贵的调用**:
+#     墙上 avg=35.6ms, 而 CPU 只占 3.9ms  ->  差额 ~32ms 全是在**持着 GIL 等硬件**
+#     （VPU/显示通路）。也就是说它每被调用一次, 就把所有 Python 线程冻住约 32ms。
+#   证据链: 同一时刻 `[PERF] lcd show 4.6Hz -> 每秒占墙上 163ms / CPU 18ms`,
+#     而 `[PERF] mainloop` 的 tick 回调单次被阻塞 27.7ms（对比 coord=0.17 /
+#     touch=0.17 / wdt=0.04）—— 主循环几乎全部阻塞都发生在这段被冻结的窗口里。
+#   ⚠ 本键此前是**死配置**（全仓库无任何代码读它），已修正为真正生效。
+#   false = 完全不向 LCD 输出, 这是**彻底消除**那 32ms 冻结的唯一办法;
+#   触摸急停仍可用（退出图标命中框按帧宽高算, 与上屏无关）。
 display_enabled: true
+
+# 两次 show 的最小间隔(ms)。0 = 保留原来的"每 2 帧一次"帧跳语义。
+#   ⚠ 关键认识: show() 的代价是**每次调用的固定 32ms GIL 冻结**, 与显示频率无关 ——
+#   所以"降到 4.6Hz"只把每秒冻结从 234ms 降到 164ms, 收益有限;
+#   要真正见效必须**大幅降频**或彻底关掉。
+#   1000 = 1Hz: 每秒冻结 ~36ms（-78%），画面仍有（动作会一顿一顿, 用于监视足够）。
+#   提速优先/比赛时: 直接 display_enabled: false, 归零。
+display_show_interval_ms: 1000
+
+# 每帧分项计时 [PERF] 汇总行(一秒一条)。定位"时间花在哪"的唯一手段, 别关。
+#   vision: loop/body/cpu/gil_wait | read(相机取帧) conv(image2cv拷贝) task(识别) disp
+#   mainloop: body/cpu/gil_wait + wdt/coord/tick(喂DebugConsole)/touch 分项
+#   lcd show: 墙上 + CPU（两者之差=持 GIL 等硬件的时间）
+#   读法: body - cpu = 被 GIL/调度器挡住的时间; 只报墙上会把"纯等待"误读成"在吃 CPU"。
+perf_log: true
+
+# 调试台（rich 全屏 TUI）。**2026-10-09 起默认关闭**，原因三条，全部实测/读码确认：
+#   ① `utils/debug_console.py` 在**模块顶层** `import rich`。rich 是纯 Python 大包，
+#      CAM1 只有 128MB 用户内存（`[MEM] user=103/128MB` = 已占 80%），导入它要
+#      付内存 + 启动时间两笔账 —— 而它提供的只是一个人看的 TUI。
+#   ② 渲染线程以 10Hz 重建 rich 的 Table/Panel 并往终端写整屏 ANSI：
+#      构造过程**全程持 GIL**，是与视觉线程抢 GIL 的一部分（虽然不在同一线程上）。
+#   ③ 它启动时会把 `sys.stdout` 换成 `ConsoleCapture` —— 此后**每一行 Python 侧
+#      print 都变成一次 log_print + 一次日志文件 open/close**（`_writer_loop` 每行
+#      都 open/write/flush/close）。当前没有逐帧 print 的地方，属"埋着的雷"。
+# 关闭后**日志不受任何影响**：`log_print` 走的写盘线程与 `sys.__stdout__` 直写分支
+# 都还在，`[PERF]` / `[UART TX]` / `[FPS]` 照常出现在控制台与 logs/debug.log。
+# 台架需要 TUI 时改回 true（启动器会按本键决定是否导入 rich）。
+debug_console_enabled: false
 
 # 比赛模式开关（默认 false = 台架行为, HUD 与 wifi 推流全开）。
 #   true  = 关掉每帧的显示侧开销: HUD 约 20 次 maix draw_string/draw_rect
@@ -13,6 +51,10 @@ display_enabled: true
 #     **日志与协议推流完全不受影响**, 台架验收照旧看 [FPS] pipeline 与
 #     [UART TX] DATA_STREAM 的 Hz。
 #   保留: 画面照常上屏（显示线程拿 _display_frame）、退出图标照画（触摸急停）。
+#   ⚠ 2026-10-08: 本开关**不控制 LCD 上屏**。show() 的开销(实测 23.4ms/次, 持 GIL)
+#     由上面的 display_enabled / display_show_interval_ms 单独控制 —— 此前没人管它,
+#     比赛模式下显示线程照旧每 2 帧全屏刷一次, 是"识别链路 59.7Hz 而真机 20.3Hz"
+#     的首位嫌疑。要榨帧率就把这两个键一起动。
 competition_mode: true
 
 cameras:

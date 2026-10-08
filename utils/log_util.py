@@ -15,6 +15,24 @@ _WRITER_THREAD: Optional[threading.Thread] = None
 _SENTINEL: object = object()
 _DROP_COUNT: int = 0  # queue full 丢包累计计数，GIL 保护，无需额外 Lock
 
+_CONSOLE_MODULE = "utils.debug_console"
+
+
+def debug_console_active() -> bool:
+    """调试台是否**真的**在跑（模块已导入 且 _global_enabled 为真）。
+
+    ⚠ 存在的意义是"廉价判定, 且不把 rich 拖进来": `utils.debug_console` 在模块
+    顶层 `import rich`, 而 rich 是纯 Python 大包 —— CAM1 只有 128MB 用户内存,
+    为了问一句"它在不在"去 import 它是纯浪费。查 `sys.modules` 是字典查找。
+
+    调用方约定: 返回 False 时应**跳过一切 DebugConsole 调用**
+    （`dc.set()`/`dc.log()` 对一个没在跑的 TUI 毫无意义, 只是白占 GIL 时间）。
+    """
+    mod = sys.modules.get(_CONSOLE_MODULE)
+    if mod is None:
+        return False
+    return bool(getattr(getattr(mod, "DebugConsole", None), "_global_enabled", False))
+
 try:
     os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
 except Exception:
@@ -39,16 +57,23 @@ def _writer_loop() -> None:
             pass
 
         try:
-            from utils.debug_console import DebugConsole
-            dc = DebugConsole()
-            if not DebugConsole._global_enabled:
+            mod = sys.modules.get(_CONSOLE_MODULE)
+            if mod is None:
+                # 调试台从未被导入（启动器按配置禁用了它）—— 直接写 stdout。
+                # ⚠ 这里**不能** `from utils.debug_console import DebugConsole`:
+                # 那会把 rich 整个模块拉进内存, 只为判断"要不要写到 TUI"。
                 sys.__stdout__.write(line)
                 sys.__stdout__.flush()
             else:
-                dc.log(msg)
-                if not dc._running:
+                dc = mod.DebugConsole()
+                if not mod.DebugConsole._global_enabled:
                     sys.__stdout__.write(line)
                     sys.__stdout__.flush()
+                else:
+                    dc.log(msg)
+                    if not dc._running:
+                        sys.__stdout__.write(line)
+                        sys.__stdout__.flush()
         except Exception:
             pass
 
@@ -68,10 +93,11 @@ def _writer_loop() -> None:
             sys.__stdout__.write(warn)
             sys.__stdout__.flush()
             try:
-                from utils.debug_console import DebugConsole
-                dc = DebugConsole()
-                dc.log(warn.rstrip("\n"))
-                dc.set("log_drop", str(drops))
+                mod = sys.modules.get(_CONSOLE_MODULE)
+                if mod is not None:
+                    dc = mod.DebugConsole()
+                    dc.log(warn.rstrip("\n"))
+                    dc.set("log_drop", str(drops))
             except Exception:
                 pass
 

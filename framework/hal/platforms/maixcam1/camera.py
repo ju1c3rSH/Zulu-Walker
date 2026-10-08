@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 import numpy as np
 
 import maix.camera
 import maix.image
+
+from utils.boot_timing import boot_stage
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,22 @@ _CAP_PROP_FRAME_HEIGHT = 4
 _CAP_PROP_FPS = 5
 _CAP_PROP_GAIN = 14
 _CAP_PROP_EXPOSURE = 15
+
+
+def _log_attempts(n: int) -> None:
+    """报告本次 camera 构造实际试了几级（2026-10-08 启动打点）。
+
+    走 log_print 而非 logger: 台架看的是 stdout，而 basicConfig 把logger
+    全部导向 logs/app.log，控制台看不到。
+    正常路径恰好 1 次；>1 说明降级阶梯在白跑 —— 前面的失败若是"已经把
+    sensor/ISP 初始化做了一半"的通用 Exception，重试等于把那段昂贵初始化
+    重复做一遍（台架日志里 sensor_cfg.ini 出现两组，与此吻合）。
+    """
+    if n <= 1:
+        return
+    from utils.log_util import log_print
+    log_print(f"[CAM1] camera.attempts={n}  <-- 降级重试，前面的构造被丢弃"
+              f"（若 sensor_cfg.ini 打印了多组，说明初始化真做了多遍）")
 
 
 class MaixCam1Camera:
@@ -55,6 +74,16 @@ class MaixCam1Camera:
         self._cam: Optional[maix.camera.Camera] = None
         self._last_raw: Optional[maix.image.Image] = None
         self._last_frame: Optional[np.ndarray] = None
+        # 最近一帧的分项耗时(ms): read=相机取帧本身, convert=image2cv 转 BGR numpy。
+        # 为什么必须拆开: 2026-10-08 台架真机 `[PERF] vision read=13.6ms`, 而隔离
+        # 台架里 read≈0ms（帧总是就绪）+ image2cv 4.73ms —— 差 3 倍, 但**无法判断
+        # 那 13.6ms 是"在等一帧"还是"在拷 921KB"**:
+        #   · 等一帧   -> 相机没跟上 / 缓冲被打空, 要查 fps 与 buff_num;
+        #   · 拷贝慢   -> image2cv 在抢核/抢内存带宽, 而它在 TARGET 下是**纯白做**
+        #                 （TARGET 走 C++ find_blobs, 直接吃 last_raw, 这份 numpy
+        #                  只服务 cv2 回退路径与调参页）。
+        # 拆开后一眼定方向, 别再靠推测。
+        self.stage_ms: dict = {"read": 0.0, "convert": 0.0}
         # 非阻塞读帧是否可用：CAM1 老固件的 read() 可能不认 block kwarg。
         # 探测一次后缓存，read_raw 据此决定走非阻塞（保停帧检测）还是阻塞读。
         self._block_kwarg_ok: Optional[bool] = None
@@ -76,18 +105,27 @@ class MaixCam1Camera:
         docs/doc/zh/vision/camera.md:163，分辨率<=1280x720 时 MaixPy 会把帧率
         设成 **80fps**，于是 project_config 的 `fps: 60` 被静默忽略、实际跑 80fps。
         每级成功都打日志记录命中级别与被丢弃的参数，否则台架无法判断实际状态。
+
+        ⚠ **每次尝试都单独计时（2026-10-08）**: 相机是启动期最贵的一步，而
+        降级阶梯意味着**可能白构造多次** —— 若level-1 抛的是通用 Exception
+        而非 TypeError，会走 except Exception 只打warning 然后继续试 level-2,
+        等于把sensor/ISP 初始化做了两遍（台架日志里 sensor_cfg.ini 被完整解析
+        两组,与此吻合）。逐级打点 + 累计"尝试次数"日志, 让"开了几次"直接可见:
+        正常应恰好 1次; 若看到 camera.attempts=N(N>1), 说明降级在白跑,
+        此时应把命中的那一级固件签名固定下来、或给 level-1 补TypeError 之外
+        的精确判定。
         """
         device = str(source) if source is not None else None
+        attempts = 0
+        from utils.log_util import log_print
 
-        # 1) 全参数（新版固件）
         # 降级只做"**关键字逐步减少**"，不猜位置参数顺序。
         # 依据：docs/doc/zh/vision/camera.md 只验证到 3 位位置参数
         # (640,480) / (640,480,FORMAT)；device/fps/buff_num/open 一律以关键字
         # 出现。若这里写 6 位位置参数而真实签名是 (w,h,format,buff_num,fps,..)，
         # 会**静默把 buff_num 当 fps、fps 当 buff_num** —— 不报错、行为全错。
-        # 1) 全参数（新版固件）—— 命中即所有参数生效
-        try:
-            cam = maix.camera.Camera(
+        def _level1():
+            return maix.camera.Camera(
                 width=width,
                 height=height,
                 format=maix.image.Format.FMT_RGB888,
@@ -96,19 +134,9 @@ class MaixCam1Camera:
                 buff_num=buff_num,
                 open=True,
             )
-            # warning 而非 info: root logger 被basicConfig 钉在 WARNING，
-            # 台架要靠这行判断相机实际命中哪级构造（info 不会被打印）
-            logger.warning("[CAM1] camera open level=1 (full kwargs, fps=%s buff_num=%s)",
-                        fps, buff_num)
-            return cam
-        except TypeError:
-            pass
-        except Exception as e:
-            logger.warning("Camera open(level1 full kwargs) failed: %s", e)
 
-        # 2) 去掉 open=
-        try:
-            cam = maix.camera.Camera(
+        def _level2():
+            return maix.camera.Camera(
                 width=width,
                 height=height,
                 format=maix.image.Format.FMT_RGB888,
@@ -116,8 +144,57 @@ class MaixCam1Camera:
                 fps=fps,
                 buff_num=buff_num,
             )
+
+        # 1) 全参数（新版固件）—— 命中即所有参数生效
+        attempts += 1
+        try:
+            with boot_stage("cam.open:L1(full-kwargs)"):
+                cam = _level1()
+            # warning 而非 info: root logger 被basicConfig 钉在 WARNING，
+            # 台架要靠这行判断相机实际命中哪级构造（info 不会被打印）
+            logger.warning("[CAM1] camera open level=1 (full kwargs, fps=%s buff_num=%s)",
+                        fps, buff_num)
+            log_print(f"[CAM1] camera open level=1 fps={fps} buff_num={buff_num}")
+            _log_attempts(attempts)
+            return cam
+        except TypeError:
+            pass
+        except Exception as e:
+            # ⚠ **非 TypeError 的失败不等于"本固件不支持这套签名"**。
+            # 台架实测过一次 `RuntimeError: sensor timeout`（前一个进程/ISP 尚未
+            # 释放, 或 sensor 上电未就绪）—— 那是**瞬时故障**, 不是能力缺失。
+            # 此时直接往下降级会落到位置参数签名 L3, 后果是 fps / buff_num
+            # **静默丢失**（MaixPy 对 <=1280x720 默认给 80fps, buff_num 用默认值）,
+            # 取图延时与缓冲深度全部不可控 —— 而这正是我们在查的帧率问题。
+            # 故先原样重试一次 L1, 仍失败才降级。
+            logger.warning("Camera open(level1 full kwargs) failed: %s; 原样重试一次", e)
+            log_print(f"[CAM1] camera L1 构造失败({type(e).__name__}: {e}), "
+                      f"原样重试一次（避免降级丢掉 fps/buff_num）")
+            try:
+                time.sleep(0.3)
+                with boot_stage("cam.open:L1-retry(full-kwargs)"):
+                    cam = _level1()
+                logger.warning("[CAM1] camera open level=1 (retry ok, fps=%s buff_num=%s)",
+                               fps, buff_num)
+                log_print(f"[CAM1] camera open level=1（重试成功）"
+                          f"fps={fps} buff_num={buff_num}")
+                _log_attempts(attempts)
+                return cam
+            except TypeError:
+                pass
+            except Exception as e2:
+                logger.warning("Camera open(level1 retry) failed: %s", e2)
+                log_print(f"[CAM1] camera L1 重试仍失败({type(e2).__name__}: {e2}) -> 降级")
+
+        # 2) 去掉 open=
+        attempts += 1
+        try:
+            with boot_stage("cam.open:L2(no-open)"):
+                cam = _level2()
             logger.warning("[CAM1] camera open level=2 (no open=, fps=%s buff_num=%s)",
                         fps, buff_num)
+            log_print(f"[CAM1] camera open level=2 fps={fps} buff_num={buff_num}")
+            _log_attempts(attempts)
             return cam
         except TypeError:
             pass
@@ -125,11 +202,16 @@ class MaixCam1Camera:
             logger.warning("Camera open(level2 no-open) failed: %s", e)
 
         # 3) 官方示例已验证的位置参数签名 (w, h, format) —— **fps/buff_num 被丢弃**
+        attempts += 1
         try:
-            cam = maix.camera.Camera(width, height, maix.image.Format.FMT_RGB888)
+            with boot_stage("cam.open:L3(positional)"):
+                cam = maix.camera.Camera(width, height, maix.image.Format.FMT_RGB888)
             logger.warning("[CAM1] camera open DEGRADED level=3: fps=%s buff_num=%s "
                            "未生效（MaixPy 对 <=1280x720 默认 80fps），实际帧率以实测为准",
                            fps, buff_num)
+            log_print(f"[CAM1] ⚠ camera 降级到 level=3(位置参数): fps={fps} "
+                      f"buff_num={buff_num} **未生效**, 实际帧率以实测为准")
+            _log_attempts(attempts)
             return cam
         except TypeError:
             pass
@@ -137,14 +219,21 @@ class MaixCam1Camera:
             logger.warning("Camera open(level3 positional) failed: %s", e)
 
         # 4) 最小签名 (w, h) —— 同上，fps/buff_num 全丢
+        attempts += 1
         try:
-            cam = maix.camera.Camera(width, height)
+            with boot_stage("cam.open:L4(minimal)"):
+                cam = maix.camera.Camera(width, height)
             logger.warning("[CAM1] camera open DEGRADED level=4: fps=%s buff_num=%s "
                            "未生效（MaixPy 对 <=1280x720 默认 80fps），实际帧率以实测为准",
                            fps, buff_num)
+            log_print(f"[CAM1] ⚠ camera 降级到 level=4(最小签名): fps={fps} "
+                      f"buff_num={buff_num} **未生效**, 实际帧率以实测为准")
+            _log_attempts(attempts)
             return cam
         except Exception as e:
             logger.error("Camera open(level4 minimal) failed: %s", e)
+            log_print(f"[CAM1] camera 四级构造全部失败: {type(e).__name__}: {e}")
+            _log_attempts(attempts)
             return None
 
     # ------------------------------------------------------------------ #
@@ -220,6 +309,10 @@ class MaixCam1Camera:
             self._block_kwarg_ok = False
             logger.warning("camera.read(block=...) unsupported on this firmware; "
                            "falling back to blocking read (停帧检测降级, 见 read_raw)")
+            from utils.log_util import log_print
+            log_print("[CAM1] ⚠ camera.read(block=False) 不被本固件接受 -> 已降级为"
+                      "阻塞读: 停帧保护失效, 且每帧要等满一个取帧间隔（如需非阻塞,"
+                      " 升级 MaixPy）")
             return None, False
         except Exception as e:
             logger.warning("Camera read failed: %s", e)
@@ -252,9 +345,24 @@ class MaixCam1Camera:
         if raw is None:
             return None
         self._last_raw = raw
+        _t0 = time.perf_counter()
         np_rgb = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
         self._last_frame = np_rgb[:, :, ::-1]
+        self._mark_stage("convert", _t0)
         return self._last_frame
+
+    def _mark_stage(self, key: str, t0: float) -> None:
+        """记一笔分项耗时（毫秒）。
+
+        容器缺失时**懒建到实例字典**（`self.__dict__`）而不是挂在类属性上:
+        类级可变默认值会被所有实例共享, 一个实例写进去会污染另一个 —— 那种
+        串味 bug 在台架上极难查。这里用 `__dict__.get` 既避开共享, 又让
+        "绕过 __init__ 构造的实例"（测试桩）不会因为多一个计时字段就崩。
+        """
+        st = self.__dict__.get("stage_ms")
+        if st is None:
+            st = self.__dict__["stage_ms"] = {"read": 0.0, "convert": 0.0}
+        st[key] = (time.perf_counter() - t0) * 1000.0
 
     def read_raw(self) -> Optional[np.ndarray]:
         """主流水线取帧：非阻塞，空队列 = None（停帧）。
@@ -272,7 +380,9 @@ class MaixCam1Camera:
             return None
         if self._block_kwarg_ok is False:
             return self._read_blocking()
+        _t0 = time.perf_counter()
         raw, _ok = self._read_nonblocking()
+        self._mark_stage("read", _t0)
         if raw is None and self._block_kwarg_ok is False:
             # 本拍刚探测出固件不支持 block kwarg -> 立刻走阻塞读补回这一帧
             return self._read_blocking()

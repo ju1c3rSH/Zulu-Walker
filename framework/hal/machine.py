@@ -9,6 +9,7 @@ import yaml
 
 from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference, Display, Uart
+from utils.boot_timing import BootTimer
 try:
     from utils.cpu_affinity import configure as configure_cpu_affinity
 except ImportError:
@@ -32,6 +33,11 @@ class Machine:
 
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
+        # 启动打点: 2026-10-08 实测 MaixCAM-Pro 上这段串行构造耗时约 8 秒
+        # (04:05:54 -> 04:06:02), 而改造前**全程无打点**, 导致无法判断是
+        # 相机/显示/UART0 抢线/模型加载哪一段吃掉了时间。五步逐段打点后,
+        # 台架一次启动就能定位到段。零风险: 打点只读时钟, 失败即静默退化。
+        bt = BootTimer("machine")
         path = Path(config_path)
         # 缺省平台取project_config.yaml 的首选值（当前分支 maixcam1）；
         # 端口/波特率缺省与 project_config.yaml `uart_defaults` 保持一致
@@ -61,6 +67,7 @@ class Machine:
             configure_cpu_affinity(cpu_affinity_cfg)
 
         platform_mod = importlib.import_module(f"framework.hal.platforms.{platform}")
+        bt.mark("import_platform")
 
         hub = CameraHub.init_instance(platform)
 
@@ -77,6 +84,7 @@ class Machine:
                 if resolved != raw_source:
                     logger.info("Camera '%s': source %s -> %s", cid, raw_source, resolved)
                 source = resolved
+            bt.mark(f"camera.open({cid})")
             hub.open(
                 camera_id=cid,
                 source=source,
@@ -90,17 +98,20 @@ class Machine:
             )
 
         display = platform_mod.create_display()
+        bt.mark("display")
         try:
             uart = platform_mod.create_uart(**uart_config)
         except Exception as e:
             logger.warning("UART creation failed (non-fatal): %s", e)
             uart = None
+        bt.mark("uart")
 
         # --- AI initialization ---
         ai: Optional[AIInference] = None
         if ai_config is not None:
             try:
                 ai = platform_mod.create_ai()
+                bt.mark("ai.create")
                 models_cfg = ai_config.get("models", [])
                 for m in models_cfg:
                     ai.add(
@@ -108,6 +119,7 @@ class Machine:
                         model_path=m["model"],
                         model_type=m.get("model_type", "auto"),
                     )
+                bt.mark("ai.register")
                 active = ai_config.get("active")
                 if active:
                     if active in ai.models:
@@ -118,10 +130,16 @@ class Machine:
                             active,
                             ai.models,
                         )
+                # 单独一段: NPU 从 flash 加载 .cvimodel 是本函数里最可能
+                # 出现"几百毫秒级"的一段, 且**完全可延后** —— 人质任务在
+                # RESCUE 订阅才需要, 排爆/打靶阶段用不到。拆出来是为了让
+                # "启动慢"能区分出是模型加载慢还是别的慢。
+                bt.mark("ai.switch(load)")
             except Exception as e:
                 logger.error("Failed to initialize AI: %s", e)
                 ai = None
 
+        bt.summary("Machine.create")
         return cls(camera_hub=hub, display=display, uart=uart, ai=ai)
 
     def close(self) -> None:

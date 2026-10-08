@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from framework.hal.interface import AIInference, Camera
+from utils.boot_timing import thread_cpu as _thread_cpu
 
 from .task_manager import TaskManager, Task
 from .processors.base import VisionResult
@@ -35,6 +36,16 @@ class PipelineCamera:
         self._last_frame: Optional[np.ndarray] = None
         self._last_results: Dict[str, VisionResult] = {}
         self._ai: Optional[AIInference] = ai
+        # 上一帧的分项耗时(ms)。**墙上与 CPU 两个口径都要**, 因为两者的差值含义完全不同:
+        #   read  / convert        = 墙上（含等硬件、等 GIL）
+        #   read_cpu / tasks_cpu   = thread_time（真正的 CPU 消耗）
+        # ⚠ read 墙上 8.8ms 而 read_cpu 若只有零点几毫秒 -> 那 8ms 是**在驱动里等硬件**,
+        #   不是框架在算; 反之若 read_cpu 接近 read, 才是真的在拷/在算。
+        # 这是回答"到底谁最耗性能（驱动调用 vs 框架本身）"的关键一格。
+        self.stage_ms: Dict[str, float] = {
+            "read": 0.0, "read_cpu": 0.0, "convert": 0.0,
+            "tasks": 0.0, "tasks_cpu": 0.0,
+        }
 
         self._init_focal_calculator(
             focal_length_mm, sensor_width_mm, sensor_height_mm,
@@ -97,13 +108,30 @@ class PipelineCamera:
             )
         return None
 
+    def _camera_stage(self, fallback_ms: float) -> Tuple[float, float]:
+        """(read_ms, convert_ms) —— 优先用相机 HAL 自己拆好的分项。
+
+        HAL 没提供 `stage_ms`（linux/mock/旧实现）时退回"整段都算取帧、转换为 0"，
+        语义与拆分前一致，不改变任何判据。
+        """
+        st = getattr(self.camera, "stage_ms", None)
+        if isinstance(st, dict):
+            return float(st.get("read", 0.0)), float(st.get("convert", 0.0))
+        return fallback_ms, 0.0
+
     def process_frame(self, fps: float = 0.0) -> Tuple[Optional[np.ndarray], Dict[str, VisionResult]]:
+        _t0, _c0 = time.perf_counter(), _thread_cpu()
         raw_img = self.camera.read_raw()
+        _t1, _c1 = time.perf_counter(), _thread_cpu()
+        read_ms, conv_ms = self._camera_stage((_t1 - _t0) * 1000.0)
+        read_cpu = (_c1 - _c0) * 1000.0
 
         if raw_img is None:
             # 相机停帧: 不复用旧帧加工、不产出结果。
             # 显示侧仍用 camera.last_raw 画旧画面；coordinator 侧无新结果，
             # _latest_task_ts 不更新，1s 后归零心跳兜底（零值不断流）。
+            self.stage_ms = {"read": read_ms, "read_cpu": read_cpu, "convert": conv_ms,
+                             "tasks": 0.0, "tasks_cpu": 0.0}
             return None, {}
 
         frame = raw_img
@@ -117,6 +145,10 @@ class PipelineCamera:
         processed_frame, task_results = self.task_manager.run_tasks_serial(
             frame, context=env_context,
         )
+        _t2, _c2 = time.perf_counter(), _thread_cpu()
+        self.stage_ms = {"read": read_ms, "read_cpu": read_cpu, "convert": conv_ms,
+                         "tasks": (_t2 - _t1) * 1000.0,
+                         "tasks_cpu": (_c2 - _c1) * 1000.0}
         self._last_results = task_results
         return processed_frame, task_results
 

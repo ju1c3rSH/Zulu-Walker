@@ -917,5 +917,131 @@ def test_threshold_hot_reload_preserves_latch(cfg, tmp_path, pit_frame):
     assert proc._pos_flag == 1
     import os, time
     os.utime(str(f), None)                      # mtime 变化: 重载但不清锁存
+    # ⚠ _maybe_reload_thresholds 现在**限频到 2Hz**（每帧 stat 在真机上要 ~1ms,
+    #   见其 docstring）。这里把上次轮询时间戳归零, 强制本次真的去 stat,
+    #   否则"热重载"这条断言会因为节流而根本没走到重载分支。
+    proc._thresholds_poll_ts = 0.0
     r = proc.process(pit_frame)
     assert r.result_data["found"]
+
+
+def test_threshold_poll_is_rate_limited(cfg, tmp_path, pit_frame, monkeypatch):
+    """mtime 轮询必须限频: 连续多帧不得各做一次 os.stat。
+
+    动机是台架实测 —— 未订阅/画面无目标时 `[PERF] task=1.1ms`, 而那条路径上
+    唯一真正做事的只有这次 stat（`_mode` 为 None, 识别分支一个都没进）。
+    真机上一次文件系统调用约 1ms, 每帧一次就是整帧预算的 4%+。
+    阈值文件由人手在调参页写出, 2Hz 轮询绰绰有余。
+    """
+    import modules.zw_opencv_module.processors.gks_task_processor as gks_mod
+
+    f = tmp_path / "my_64threshold.txt"
+    f.write_text("x|0,1,2,3,4,5\n", encoding="utf-8")
+    cfg["thresholds_file"] = str(f)
+    proc = GksTaskProcessor(config=cfg)
+
+    class _CountingOs:
+        """包住真 os, 只对目标路径计数; 其余属性（os.path 等）原样透出。"""
+
+        def __init__(self, real):
+            self._real = real
+            self.calls = 0
+
+        def stat(self, path, *a, **kw):
+            if str(path) == str(f):
+                self.calls += 1
+            return self._real.stat(path, *a, **kw)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    fake = _CountingOs(gks_mod.os)
+    monkeypatch.setattr(gks_mod, "os", fake)
+
+    proc.process(pit_frame)          # 首帧: 时间戳初值 0.0 -> 允许轮询
+    assert fake.calls == 1, "首帧应轮询一次"
+    for _ in range(5):               # 紧接着的 5 帧: 全部被节流挡住
+        proc.process(pit_frame)
+    assert fake.calls == 1, f"节流期内不应再 stat（实际 {fake.calls} 次）"
+
+    proc._thresholds_poll_ts = 0.0   # 手动放开 -> 下一次 process 又该查一次
+    proc.process(pit_frame)
+    assert fake.calls == 2, "放开节流后应恢复轮询"
+
+
+# ---------- 打靶跨帧跟踪窄窗（target.track_roi_px, 2026-10-09）----------
+#
+# 设计上的硬不变量: 跟踪**只在命中时省时间**, 绝不改变结果 ——
+# 窄窗未命中时同一帧内回退全 ROI 复扫, 所以检出率与精度与"全程全 ROI"逐位一致。
+# 这几条测试就是钉住这个不变量; pad 取值是否合适属于台架调参, 不在这里断言。
+
+def test_target_track_window_matches_full_roi(cfg, pit_frame):
+    """命中时 err 必须与全 ROI 路径**逐位一致**（跟踪只省时间, 不改结果）。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (1, 1, 1))
+
+    r0 = proc.process(pit_frame).result_data           # 无历史 -> 走全 ROI
+    assert r0["found"] is True
+    assert r0["err_fixed"] == -6656                    # 红块 cx=107 @640 宽
+
+    cfg["target"]["track_roi_px"] = 120               # 窗口夹到 [0,227], 含整个红块
+    r1 = proc.process(pit_frame).result_data
+    assert (r1["found"], r1["err_fixed"]) == (r0["found"], r0["err_fixed"])
+    assert proc._target_track_hits == 1, "第二次应当走的是窄窗路径"
+    assert proc._target_track_miss == 0
+
+
+def test_target_track_miss_falls_back_in_same_frame(cfg, pit_frame):
+    """窄窗落空时**当帧回退全 ROI**: 仍要检出, 且 err 与全 ROI 一致。
+
+    这条是安全底线。若退化成"窄窗没命中就报 found=0", 主站会以为本帧无结果,
+    而实际目标就在画面里 —— 那比慢一点严重得多。
+    """
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (1, 1, 1))
+    cfg["target"]["track_roi_px"] = 8
+    proc.process(pit_frame)                            # 建立历史
+
+    proc._target_last_cx = 620.0                       # 挪到右侧空白区 -> 窄窗必落空
+    r = proc.process(pit_frame).result_data
+    assert r["found"] is True, "窄窗落空必须当帧回退全 ROI, 不能漏检"
+    assert r["err_fixed"] == -6656
+    assert proc._target_track_miss == 1
+    assert proc._target_track_hits == 0
+
+
+def test_target_track_off_by_default(cfg, pit_frame):
+    """默认 track_roi_px=0 -> 一次都不走窄窗（改动必须是 opt-in）。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (1, 1, 1))
+    assert cfg["target"]["track_roi_px"] == 0
+    for _ in range(3):
+        proc.process(pit_frame)
+    assert proc._target_track_hits == 0
+    assert proc._target_track_miss == 0
+
+
+def test_target_track_window_clamped_and_degenerate():
+    """窄窗必须夹回 ROI; 退化窗口返回 None（调用方回退全 ROI）。"""
+    roi = [0, 169, 640, 197]
+    assert GksTaskProcessor._target_track_window(0, roi, 100) == [0, 169, 100, 197]
+    assert GksTaskProcessor._target_track_window(639, roi, 100) == [539, 169, 101, 197]
+    assert GksTaskProcessor._target_track_window(320, roi, 50) == [270, 169, 100, 197]
+    # pad 太小 -> 窗口宽 <= 2px, 无意义, 返回 None
+    assert GksTaskProcessor._target_track_window(319, roi, 1) is None
+    assert GksTaskProcessor._target_track_window(640, roi, 0) is None
+
+
+def test_target_track_not_used_by_explosive_or_rescue(cfg, pit_frame):
+    """排爆/人质不得缩小搜索域: 三色定序与 YOLO 全帧都依赖完整画面。
+
+    这里只钉最直接的一条: 排爆模式下 `target.track_roi_px` 再大也不会被读到
+    （`_target_tracked_scan` 只在 `_process_target` 里被调用）。
+    """
+    cfg["target"]["track_roi_px"] = 200
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_EXPLOSIVE, (1, 2, 3))
+    for _ in range(3):
+        proc.process(pit_frame)
+    assert proc._target_track_hits == 0
+    assert proc._target_track_miss == 0
