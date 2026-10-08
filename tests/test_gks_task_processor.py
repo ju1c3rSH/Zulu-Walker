@@ -388,6 +388,148 @@ def test_target_missing_threshold_zero_heartbeat(cfg):
     assert not r.result_data["found"] and not r.result_data["thresholds_ok"]
 
 
+# ---------- task2 防误检（2026-10-08）----------
+#
+# 选候选原来只有 `max(blobs, key=pixels)` 一个判据, 而 err_fixed 是云台闭环的
+# 控制量 —— 任何单帧误检都以满幅值灌进 PID。这组用例钉住连续性选择 + 死区 +
+# 连续确认, 以及"默认关时行为与改动前逐字节一致"这条不变量。
+#
+# 注: 形状先验(roundness/density/solidity)已删除 —— 靶标是**圆环**, 实心球的
+# 阈值会把真环全部误杀(k=0.5 时圆环 roundness=0.333 < 方块 0.785)。见
+# eod_config.yaml target 段。
+
+
+def test_target_continuity_picks_nearest_not_largest(cfg):
+    """两个候选像素接近: 开continuity 后取"离上帧最近"而非"pixels 最大"。"""
+    cfg["target"]["prefer_continuity"] = True
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    proc._target_last_cx = 520.0                     # 上一帧在右边
+    picked = proc._pick_target_blob(
+        [{"cx": 200.0, "pixels": 10000},            # 左, 像素多
+         {"cx": 520.0, "pixels": 9000}], cfg["target"])
+    assert picked["cx"] == 520.0                    # 近者胜, 尽管像素少
+
+
+def test_target_continuity_single_candidate_unchanged(cfg):
+    """单候选时 continuity 不改变结果（它与自己的距离=0, 自然选中）。"""
+    cfg["target"]["prefer_continuity"] = True
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    proc._target_last_cx = 100.0
+    picked = proc._pick_target_blob([{"cx": 300.0, "pixels": 500}], cfg["target"])
+    assert picked["cx"] == 300.0
+
+
+def test_target_baseline_largest_pixels_when_continuity_off(cfg):
+    """默认(continuity 关)仍是 pixels 最大 —— 但 tiebreak 确定, 不依赖输出序。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    picked = proc._pick_target_blob(
+        [{"cx": 300.0, "pixels": 900}, {"cx": 100.0, "pixels": 900}],
+        cfg["target"])
+    assert picked["cx"] == 100.0                   # 同像素 -> 取更小 cx, 可复现
+
+
+def test_target_deadband_off_is_identity(cfg):
+    """默认 deadband=0 -> 恒等, 与改动前逐字节一致。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    proc._target_last_err = 5000
+    assert proc._apply_target_deadband(5200, cfg["target"]) == 5200
+
+
+def test_target_deadband_holds_last_value(cfg):
+    """死区内保持上次 err（不增加相位滞后, 与滑动平均的本质区别）。"""
+    cfg["target"]["err_deadband"] = 400
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    proc._target_last_err = 5000
+    assert proc._apply_target_deadband(5200, cfg["target"]) == 5000   # 桶内
+    assert proc._apply_target_deadband(5600, cfg["target"]) == 5600   # 出桶
+
+
+def test_target_deadband_actually_engages_via_confirm(cfg):
+    """死区在真实调用路径上真的生效（2026-10-08 回归）。
+
+    此前 `_target_last_err = err_fixed` 只写在 _target_confirm_ok 末尾, 而
+    confirm_frames=1(默认)时该函数第一行就 return True -> 基准永不更新,
+    死区恒等形同关闭。这条用例走 process() 全路径, 钉住"配了 deadband 就有效"。
+    """
+    cfg["target"]["err_deadband"] = 5000
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    #第 1 帧: 无历史 -> 直接通过, 并写入基准
+    assert proc._target_confirm_ok(1000, cfg["target"]) is True
+    assert proc._target_last_err == 1000
+    # 第 2 帧: 桶内差值, 死区应保持 1000
+    assert proc._apply_target_deadband(2000, cfg["target"]) == 1000
+
+
+def test_target_last_err_zero_is_valid_not_sentinel(cfg):
+    """err_fixed=0 是合法值（靶心正中), 不能被当成"尚无历史"。
+
+    哨兵用 0 时首帧之后死区会一直失效；故用 None。
+    """
+    cfg["target"]["err_deadband"] = 400
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    assert proc._target_last_err is None           # 初始: None 而非 0
+    proc._target_confirm_ok(0, cfg["target"])      # 正中 -> 基准 = 0
+    assert proc._target_last_err == 0
+    assert proc._apply_target_deadband(100, cfg["target"]) == 0   # 桶内保持 0
+
+
+def test_target_confirm_off_by_default(cfg):
+    """默认 confirm_frames=1 -> 恒 True, 不影响现有行为。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    assert proc._target_confirm_ok(1234, cfg["target"]) is True
+
+
+def test_target_confirm_needs_deadband_to_bucket(cfg):
+    """confirm_frames>1 且 deadband=0: 桶退化为 err 本身, 第 2 帧同值才认。"""
+    cfg["target"]["confirm_frames"] = 2
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    assert proc._target_confirm_ok(5000, cfg["target"]) is False   # 第 1 帧
+    assert proc._target_confirm_ok(5000, cfg["target"]) is True    # 第 2 帧同值
+
+
+def test_target_confirm_drops_when_err_moves(cfg):
+    """err 跨桶 -> 连续确认重新计数（换桶即视为未达N 帧）。"""
+    cfg["target"]["confirm_frames"] = 2
+    cfg["target"]["err_deadband"] = 1000
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    assert proc._target_confirm_ok(5000, cfg["target"]) is False
+    assert proc._target_confirm_ok(9000, cfg["target"]) is False   # 换桶, 重新计
+    assert proc._target_confirm_ok(9000, cfg["target"]) is True
+
+
+def test_target_reset_clears_temporal_state(cfg):
+    """换任务/STOP 后必须清 target 时序状态。
+
+    否则新任务首帧会继承上一段的 continuity 历史 -> 一订阅就报一个来自旧场景
+    的 err。这是加时序状态最容易埋的坑。
+    """
+    cfg["target"]["prefer_continuity"] = True
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (0, 1, 0))
+    proc._target_last_cx = 520.0
+    proc._target_last_err = 5000
+    proc._target_last_bucket = 12
+    proc._target_confirm_count = 2
+    proc._target_drop_count = 7
+    proc.reset()
+    assert proc._target_last_cx is None
+    assert proc._target_last_err is None
+    assert proc._target_last_bucket is None
+    assert proc._target_confirm_count == 0
+    assert proc._target_drop_count == 0
+
+
+
 # ---------- task2 降采样（target.scan_scale, 2026-10-07） ----------
 
 @pytest.mark.parametrize("cx", [200, 320, 415, 480, 545])

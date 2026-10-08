@@ -118,7 +118,10 @@ _DEFAULT_CONFIG = {
     "target": {
         "pixels_threshold": 1000,
         "area_threshold": 1000,
-        "merge": True,
+        "merge": False,
+        "prefer_continuity": False,
+        "err_deadband": 0,
+        "confirm_frames": 1,
         # merge_margin: find_blobs 的 margin（形态学膨胀半径, 加重连通域重标记）。
         #   ⚠ 0/None = **不传该 kwarg**（2026-10-07 台架修正）。本项此前硬编码
         #   margin=1, 但去年基准 main.py:390 是裸 `merge=True` 不传 margin。
@@ -373,6 +376,17 @@ class GksTaskProcessor(Processor):
         self._pending_count = 0
         self._pending_order2: list = []
         self._pending_count2 = 0
+        # task2 靶标的时序状态。必须在这里清: 换任务/换码/STOP 后重订阅, 首帧不该
+        # 继承上一段的 continuity 历史 —— 否则一订阅就报一个来自旧场景的 err。
+        # _target_last_err 用 None 表"尚无历史"而非 0: err_fixed=0 是合法值(靶心正
+        # 中), 拿0 当哨兵会让死区在首帧之后一直失效。
+        self._target_last_cx: Optional[float] = None   # 上一帧选中候选的 cx
+        self._target_last_err: Optional[int] = None    # 上一帧**实际上报**的 err_fixed
+        self._target_last_bucket: Optional[int] = None  # 死区桶号(连续确认用)
+        self._target_confirm_count: int = 0             # 同桶连续帧数
+        self._target_drop_count: int = 0                # 连续未确认帧数(日志用)
+        self._target_drop_logged: int = 0
+        self._target_reject_count: int = 0
 
     # ---- thresholds ----
 
@@ -802,7 +816,7 @@ class GksTaskProcessor(Processor):
                                      merge=bool(cfg["merge"]),
                                      margin=self._merge_margin(cfg))
         if blobs:
-            largest = max(blobs, key=lambda b: b["pixels"])
+            largest = self._pick_target_blob(blobs, cfg)
             cx = largest["cx"]
             hits.append({"x": int(largest["x"]), "y": int(largest["y"]),
                          "w": int(largest["w"]), "h": int(largest["h"]),
@@ -813,8 +827,100 @@ class GksTaskProcessor(Processor):
             normalized = (cx - half) / half
             normalized = max(-1.0, min(1.0, normalized))
             err_fixed = int(normalized * 10000)   # int(): 与 main.py 同为截断取整
+            # 顺序要紧: 先记last_cx/桶, 再判确认 —— _target_last_err 必须在**通过
+            # 确认之后**才写(见 _target_confirm_ok), 否则被丢弃的帧也会污染死区基准。
+            err_fixed = self._apply_target_deadband(err_fixed, cfg)
+            self._target_last_cx = cx
+            if not self._target_confirm_ok(err_fixed, cfg):
+                return {"err_fixed": 0, "found": False}, hits, True
             return {"err_fixed": err_fixed, "found": True}, hits, True
         return {"err_fixed": 0, "found": False}, hits, True
+
+    # ---- task2 候选选择与时序（防误检, 2026-10-08）----
+    def _pick_target_blob(self, blobs: list, cfg: dict):
+        """从候选里挑一个靶标 blob。
+
+        ⚠ **为什么不能是"谁 pixels 最大"**: ROI 是全宽的(roi x0=0.0,x1=1.0),
+        场景里任何成片红色区域(地面标记、标语、另一组的球)像素都可能赢过真球,
+        而 pixels 只衡量"有多少红像素", 完全不衡量"这是不是靶标"。
+
+        ⚠ **形状判据(roundness/density/solidity)已被删除**: 靶标是**圆环**,
+        实心球那套阈值会把真环全部误杀, 且 cv2 回退路径的 RETR_EXTERNAL 会把内孔
+        填成实心圆导致两端口径相反。详见 eod_config.yaml target 段的说明。
+
+        排序稳定性: max() 在 pixels 相同时依赖 find_blobs 的输出顺序(非稳定序),
+        这里统一用 **(-判据, cx)** 显式比较, 保证同一候选集的挑选结果可复现 ——
+        否则现场连"跳没跳"都无法归因。
+        """
+        last_cx = self._target_last_cx
+
+        if bool(cfg.get("prefer_continuity")) and last_cx is not None:
+            # 连续性优先: 离上一帧最近者胜。同一候选自己与 last_cx 距离 0,
+            # 所以"单候选时行为不变"这条性质自然成立, 不需要额外分支。
+            return min(blobs, key=lambda b: (abs(float(b["cx"]) - last_cx),
+                                            -float(b["pixels"]), float(b["cx"])))
+
+        # 基线路径(默认): 纯 pixels 最大, 但补一个确定性 tiebreak。
+        return max(blobs, key=lambda b: (float(b["pixels"]), -float(b["cx"])))
+
+    def _apply_target_deadband(self, err_fixed: int, cfg: dict) -> int:
+        """死区: |新err - 上次err| < deadband 时保持上次值。
+
+        为什么用死区而不是滑动平均: 打靶总时延已 ~45ms(取图30+ + find_blobs~25 +
+        主循环2 + 线1.4), 已经**大于** 28Hz 控制周期 35ms, 再串一个滑动平均会
+        继续加相位滞后, 直接恶化 PID 相位裕度。死区在桶内**保持值不动**,
+        不引入额外滞后 —— 代价是桶边界仍有一次跳变, 但那比持续抖动轻得多。
+
+        仅在 err_deadband > 0 时生效(默认 0 = 关闭, 与改动前逐字节一致)。
+        """
+        deadband = int(cfg.get("err_deadband") or 0)
+        if deadband <= 0 or self._target_last_err is None:
+            return err_fixed
+        if abs(err_fixed - self._target_last_err) < deadband:
+            return self._target_last_err
+        return err_fixed
+
+    def _target_confirm_ok(self, err_fixed: int, cfg: dict) -> bool:
+        """连续确认: err 连续 N 帧落在同一死区桶里才认, 否则 False(报 found=0)。
+
+        桶 = err // deadband(死区关闭时桶退化为 err 本身, 即要求逐帧完全相同 ——
+        那太苛刻, 所以 confirm_frames > 1 时**必须**同时给 err_deadband > 0)。
+
+        ⚠ **基准写入必须在两条 early-return 之外**(2026-10-08 修正): 此前
+        `_target_last_err = err_fixed` 只写在函数末尾, 于是 confirm_frames=1(默认)
+        时函数在第一行就return True —— 基准**永远不更新**, 死区恒等形同关闭,
+        配了 err_deadband 也毫无效果。现在两条 return 之前都写。
+        被丢弃的帧不写基准(否则污染死区), 故确认通过后才更新。
+
+        未确认时按秒汇总打一条, 不逐帧刷屏; 现场判读看: 连续丢弃计数涨 =
+        候选在两个远距簇之间摆(选择器问题), 还是单点偶发(= 单帧误检)。
+        """
+        n = max(1, int(cfg.get("confirm_frames") or 1))
+        if n <= 1:
+            self._target_last_err = err_fixed
+            return True
+        deadband = max(1, int(cfg.get("err_deadband") or 0))
+        bucket = err_fixed // deadband
+        if bucket == self._target_last_bucket:
+            self._target_confirm_count += 1
+        else:
+            self._target_last_bucket = bucket
+            self._target_confirm_count = 1
+        if self._target_confirm_count < n:
+            self._note_target_drop()
+            return False
+        self._target_drop_count = 0
+        self._target_drop_logged = 0
+        self._target_last_err = err_fixed
+        return True
+
+    def _note_target_drop(self) -> None:
+        """连续未确认的按秒汇总(需配 debug 级别, 默认不开)。"""
+        self._target_drop_count += 1
+        if self._target_drop_count - self._target_drop_logged >= 20:
+            self._target_drop_logged = self._target_drop_count
+            log_print(f"[GKS] target confirm 未满, 连续丢弃 "
+                      f"{self._target_drop_count} 帧(待confirm_frames 帧一致)")
 
     def _target_coarse_scan(self, frame, maix_img, lab, roi_px, cfg, scale):
         """降采样定位: 返回小图上的最大色块 dict, 无命中返回 None。"""

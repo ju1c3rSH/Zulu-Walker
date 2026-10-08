@@ -94,6 +94,22 @@ def _as_rgb888(img):
     return img
 
 
+def _shape_metric(getter) -> float:
+    """blob 形状判据的安全取值: 缺失/异常/越界一律 -1.0 = "该判据不参与"。
+
+    理论域都是 [0,1]; 越界值宁可当成"没测到"也不要拿去卡阈值(那会变成随机误杀)。
+    """
+    if getter is None:
+        return -1.0
+    try:
+        v = float(getter())
+    except Exception:
+        return -1.0
+    if v != v or v < -1e-6 or v > 1.0 + 1e-6:   # NaN 检查 + 域检查
+        return -1.0
+    return v
+
+
 def find_blobs_maix(img, thresholds: list, roi=None,
                     area_threshold: int = 400,
                     pixels_threshold: int = 100,
@@ -155,11 +171,21 @@ def find_blobs_maix(img, thresholds: list, roi=None,
         x, y, w, h = b.x(), b.y(), b.w(), b.h()
         # cxf(): 浮点中心(v4); 老固件回退 cx() 整数 —— 与 cv2 路径的 x+w/2 语义对齐
         cx = b.cxf() if hasattr(b, "cxf") else b.cx()
-        out.append({
+        blob = {
             "x": x, "y": y, "w": w, "h": h,
             "cx": cx, "cy": b.cy(),
             "pixels": b.pixels(),
-        })
+        }
+        # ---- 形状判据（2026-10-08）----
+        # 这些是 blob 的**预存字段**(OpenMV imlib 在 blob_analysis 里已算好),
+        # 读getter 不产生额外计算, 故无条件透出供 bench 脚本观察。
+        # 上层当前**不用**它们做判定 —— 靶标是圆环, 实心球那套阈值会误杀真环,
+        # 详见 eod_config.yaml target 段。
+        # 用 getattr 而非 hasattr: 老固件可能缺方法, 也可能返回 None。缺失一律给
+        # 中性值 -1.0, 绝不让缺字段的候选被阈值误杀(那会导致 found 恒 0)。
+        for key in ("roundness", "density", "solidity"):
+            blob[key] = _shape_metric(getattr(b, key, None))
+        out.append(blob)
     return out
 
 
