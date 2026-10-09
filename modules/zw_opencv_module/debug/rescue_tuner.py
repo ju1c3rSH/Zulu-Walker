@@ -2,16 +2,24 @@
 """人质(RESCUE)调试页 — YOLO 参数触屏调参。
 
 conf_th/iou_th/x_crop_px 三条滑条即时写 GksTaskProcessor 运行时参数
-（process() 立即生效, 不落盘; RESET 回代码默认值）。模型状态来自注入的
+（process() 立即生效）; 顶栏 **SAVE** 把当前值落盘到
+/my-threshold/my_rescue_params.txt（key=value 行）—— 主程序按 mtime 热重载
+（不清锁存, 语义同 my_64threshold.txt）, eod_config.yaml 保持只读不毁注释。
+RESET 回本次进页时的加载值（yaml + 覆盖文件合并结果）。模型状态来自注入的
 ai provider（framework Machine.ai）: 显示 active_model/labels 数量, 未加载红字。
 画面预览: 本页 tick 由 main.py 喂原始相机帧, 页内自行调用注入的 AI HAL
 跑一次 detect()（运行参数 conf/iou 与 x_crop 过滤口径同
 GksTaskProcessor._process_rescue）并把检测框叠加到预览上 —— 调试页独占
 相机期间主管线已暂停, 页内推理是 YOLO 参数唯一的实时验证途径, 不影响
 coordinator 的归零心跳兜底。
+检出日志（逐框 label:score 标签）之外, 主流程侧的"变化才打"汇总日志见
+GksTaskProcessor._log_rescue_dets。
 绘图颜色规范同 threshold_tuner.py 文件头说明。
 """
+import os
 import time
+
+from modules.zw_opencv_module.processors.gks_task_processor import RESCUE_PARAMS_FILE
 
 
 _UI_SLIDER_H = 50
@@ -175,10 +183,12 @@ class GksRescueTuner:
             self._stop = True
             disp.show(img)
             return
+        if clicked and self._in(x, y, (img.width() - 212, 2, 100, _UI_TOPBAR_H - 6)):
+            self._save_params()
         if clicked and self._defaults is not None and self._in(
                 x, y, (img.width() - 104, 2, 100, _UI_TOPBAR_H - 6)):
             self._reset_params()
-            self._toast = "RESET -> code defaults"
+            self._toast = "RESET -> loaded values"
             self._toast_until = time.time() + 1.0
         self._draw_sliders(img, x, y, pressed)
         if self._toast and time.time() < self._toast_until:
@@ -213,6 +223,43 @@ class GksRescueTuner:
             if s["key"] in self._defaults:
                 self._write_param(s["key"], self._defaults[s["key"]])
 
+    def _save_params(self) -> None:
+        """当前 rescue 参数落盘 RESCUE_PARAMS_FILE（主程序 mtime 热重载）。
+
+        目录不存在自动创建; 写失败只 toast 红字 + [RESCUE-TUNER] 诊断日志,
+        页面不崩（与 LAB 阈值页 SAVE 同级容错）。PC 端路径落在当前盘符根,
+        与 lab_session 的行为一致, 仅台架意义。
+        """
+        processor = self._get_processor()
+        if processor is None:
+            self._toast, self._toast_until = "SAVE FAILED: no processor", time.time() + 1.5
+            return
+        try:
+            rescue_cfg = processor.config.get("rescue", {})
+            lines = ["# GKS rescue tuner SAVE (key=value, mtime hot-reload)"]
+            for s in self._sliders:
+                key = s["key"]
+                if key not in rescue_cfg:
+                    continue
+                v = rescue_cfg[key]
+                lines.append(f"{key}={v:.2f}" if float(s["hi"]) - float(s["lo"]) < 1
+                             else f"{key}={int(v)}")
+            parent = os.path.dirname(RESCUE_PARAMS_FILE)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(RESCUE_PARAMS_FILE, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            try:
+                from utils.log_util import log_print
+                log_print(f"[RESCUE-TUNER] saved {RESCUE_PARAMS_FILE}: "
+                          + " ".join(lines[1:]))
+            except Exception:
+                pass
+            self._toast, self._toast_until = "SAVED -> /my-threshold", time.time() + 1.5
+        except Exception as e:
+            self._diag("save", e)
+            self._toast, self._toast_until = "SAVE FAILED (see log)", time.time() + 1.5
+
     def _draw_model_status(self, img) -> None:
         ai = self._get_ai() if callable(self._get_ai) else None
         model = getattr(ai, "active_model", None) if ai else None
@@ -225,7 +272,11 @@ class GksRescueTuner:
             color = self._C["red"]
         self._text(img, 100, 4, text, color, 1.2)
         self._text(img, 8, 6, "< Exit", self._C["white"], 1.2)
-        self._text(img, img.width() - 96, 6, "RESET", self._C["yellow"], 1.2)
+        # 顶栏右侧: SAVE(绿) | RESET(黄)。点击区见 step(), 宽 100px 各半分。
+        self._rect(img, img.width() - 208, 4, 92, _UI_TOPBAR_H - 10,
+                   self._C["green"], thickness=-1)
+        self._text(img, img.width() - 204, 6, "SAVE", self._C["black"], 1.2)
+        self._text(img, img.width() - 100, 6, "RESET", self._C["yellow"], 1.2)
 
     def _draw_sliders(self, img, tx, ty, pressed) -> None:
         col_w = img.width() // 2

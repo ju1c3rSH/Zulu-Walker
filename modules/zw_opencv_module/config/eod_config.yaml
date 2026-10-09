@@ -187,9 +187,12 @@ gks:
     tuner:
       scan_scale: 0.5
     rescue:               # 0x03 人质: 三形状坑位（CAM2=YOLO11n/axmodel, CAM1=YOLOv5/cvimodel）
-      conf_th: 0.7        # main.py 原值
+      conf_th: 0.55       # 2026-10-10 台架调低: 原 main.py 值 0.7 -> 0.55（提高召回, 注意误检）
       iou_th: 0.45        # main.py 原值
       x_crop_px: 0        # 旧版 obj.x>240(cam1 320宽) 过滤; 0=关闭; 台架复现旧行为可设像素值
+      # ⚠ 运行时覆盖: 人质调参页 SAVE 会写 /my-threshold/my_rescue_params.txt
+      #   (conf_th/iou_th/x_crop_px 逐行 key=value), 本文件保持只读 ——
+      #   文件存在时以文件为准, mtime 变化热重载、不清锁存（语义同 my_64threshold.txt）。
       # 坑位顺序来源:
       #   first_seen = 首次检出先后即坑位顺序（默认）。比赛流程固定, 相机按 pit1→pit3
       #                方向扫过, 所以"最先看见的那个就在 pit1"; 跨帧顺序是物理顺序,

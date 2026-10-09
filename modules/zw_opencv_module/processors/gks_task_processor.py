@@ -16,6 +16,10 @@ task1_explosive / task2_target / task3_rescue（锁存/去抖/映射语义不变
   两者 mud 键名不同（`model_npu` vs `model`），模型文件互不通用。
 - 像素常量全部入 eod_config.yaml `gks:` 段；`/my-threshold/my_64threshold.txt`
   （脱机调阈值工具产出）作运行时覆盖，mtime 变化自动重载、不清锁存。
+- 人质参数文件 `/my-threshold/my_rescue_params.txt`（调参页 SAVE 产出, conf_th/
+  iou_th/x_crop_px）同 mtime 热重载语义, 详见 `_reload_rescue_params`。
+- 人质检出日志"变化才打"（`_log_rescue_dets`）: 形状集合变化或分数跳变 >0.1
+  才打一行汇总, 防 log_print 逐行落盘被逐帧检出刷爆。
 - 排爆扫描可降采样: `explosive.scan_scale`（0.5 = 320x240 扫描）—— 全帧三色串行
   find_blobs 是排爆帧率瓶颈（台架实测 12~19fps, 低于 50ms 推流节奏）。降采样后
   面积门槛按 scale² 折算、cx/框按 1/scale 还原到全帧坐标; 缩放用 INTER_NEAREST
@@ -56,6 +60,41 @@ _ALL_MODES = (MODE_EXPLOSIVE, MODE_TARGET, MODE_RESCUE)
 # 色号 -> (名称, 配置键)
 COLOR_KEYS = {1: ("red", "red"), 2: ("green", "green"), 3: ("blue", "blue")}
 
+# 人质调参页 SAVE 落盘文件（逐行 key=value）。mtime 变化热重载, 语义同
+# thresholds_file（/my-threshold/my_64threshold.txt）; 文件缺失 = 保持 yaml 值。
+RESCUE_PARAMS_FILE = "/my-threshold/my_rescue_params.txt"
+# 可被该文件覆盖的键（与调参页滑条一一对应）及类型。
+_RESCUE_PARAM_KEYS = {"conf_th": float, "iou_th": float, "x_crop_px": int}
+
+
+def load_rescue_params_file(path: str) -> dict:
+    """解析人质调参覆盖文件（key=value 行, '#' 注释, 空行忽略）。
+
+    只认 _RESCUE_PARAM_KEYS 里的键并做类型收敛（int 键经 float 再取整）;
+    非法行/非法值整行忽略。文件缺失/不可读返回 {} —— 调用方据此保持
+    yaml 值不动（PC 端无 /my-threshold 也安全 no-op）。
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except OSError:
+        return {}
+    params = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        conv = _RESCUE_PARAM_KEYS.get(key.strip())
+        if conv is None:
+            continue
+        try:
+            val = float(value)
+        except ValueError:
+            continue
+        params[key.strip()] = int(val) if conv is int else val
+    return params
+
 # maix.image 是否可用的惰性探测结果（None=未探测 / False=不可用 / True=可用）。
 # 只缓存"可用性", 不缓存模块对象 —— 见 GksTaskProcessor._downscale 的注释
 # （缓存对象会与测试的 sys.modules monkeypatch 冲突）。PC 端首帧探测一次即 False,
@@ -66,6 +105,7 @@ _DEFAULT_CONFIG = {
     "pit_left_is_1": True,      # True=画面左(小x)=坑1; 摄像头背装镜像时改 False
     "pit_latch_frames": 2,      # 连续 N 帧左右序一致才锁存（main.py 硬编码 2）
     "thresholds_file": "/my-threshold/my_64threshold.txt",
+    "rescue_params_file": RESCUE_PARAMS_FILE,
     "explosive": {
         # 面积门槛 2026-09-26 下调: 10000 -> 4000（10000 px ≈ 100x100 ≈ 画面 3.3%,
         # 是 2025 main.py 原值, 对应他们那套机位; 我们机位目标更小, 且运动模糊会先啃掉
@@ -305,6 +345,11 @@ class GksTaskProcessor(Processor):
         self._explosive_lab: dict = {}
         self._target_lab: dict = {}
         self._reload_thresholds(force=True)
+        # 人质调参页 SAVE 的参数文件（conf_th/iou_th/x_crop_px）,
+        # mtime 热重载语义同阈值文件（轮询共用 _maybe_reload_thresholds 的 2Hz 闸门）。
+        self._rescue_params_file = str(self._cfg.get("rescue_params_file") or "")
+        self._rescue_params_mtime: Optional[float] = None
+        self._reload_rescue_params(force=True)
 
         self._reset_latch()
 
@@ -334,14 +379,14 @@ class GksTaskProcessor(Processor):
         """CMD_STOP / 主机静默: 清锁存, 保留模式（下次 set_task 决定）。"""
         self._reset_latch()
 
-    _IMMUTABLE_RUNTIME_KEYS = frozenset({"thresholds_file"})
+    _IMMUTABLE_RUNTIME_KEYS = frozenset({"thresholds_file", "rescue_params_file"})
 
     def set_runtime_param(self, section: str, key: str, value) -> None:
         """调试页运行时改参（立即生效于 process(), 不落盘不清锁存）。
 
         仅接受 _DEFAULT_CONFIG 已定义的参数: 段参数 (section, key) 或
-        顶层标量 (key == section 名), 否则 ValueError。thresholds_file
-        属硬性不可改键（重载器在 __init__ 已缓存路径）。
+        顶层标量 (key == section 名), 否则 ValueError。thresholds_file /
+        rescue_params_file 属硬性不可改键（重载器在 __init__ 已缓存路径）。
         """
         if key in self._IMMUTABLE_RUNTIME_KEYS:
             raise ValueError(f"{key} is immutable at runtime")
@@ -417,6 +462,9 @@ class GksTaskProcessor(Processor):
         self._position2 = [0, 0, 0]
         self._shape_seen = {}     # 形状号 -> 最近一次画面中心 x（跨帧刷新）
         self._latch_inferred = False   # 本次锁存是否用了"未见形状补位"（现场核对用）
+        # 人质检出日志的去重基准（label -> (score, cx, cy)），见 _log_rescue_dets。
+        # 换任务/STOP 后清一次: 重订阅后首个检出帧重新打一行, 便于对时间轴。
+        self._rescue_last_log: dict = {}
         # 两帧一致去抖（task1 / task3 各一套）
         self._pending_order: list = []
         self._pending_count = 0
@@ -475,19 +523,48 @@ class GksTaskProcessor(Processor):
         换来每帧省 ~1ms：在 40fps 上约 4% 的整帧预算，而在 20ms 的短帧预算里就是 5%+。
         ⚠ 不要为了"省一次 stat"改成只在订阅时检查一次：调参页是**订阅中**用的，
         改语义会让热重载失效。
+
+        2026-10-10: 人质参数文件（rescue_params_file）共用本闸门 —— SAVE 产物
+        同样是人手频率的落盘, 2Hz 足够; 但**两个文件各一次 stat**, 任一存在才进入。
         """
-        if not self._thresholds_file:
+        if not self._thresholds_file and not self._rescue_params_file:
             return
         now = self._now()
         if now - self._thresholds_poll_ts < self._THRESHOLD_POLL_INTERVAL_S:
             return
         self._thresholds_poll_ts = now
+        if self._thresholds_file:
+            try:
+                mtime = os.stat(self._thresholds_file).st_mtime
+            except OSError:
+                mtime = None
+            if mtime is not None and mtime != self._thresholds_mtime:
+                self._reload_thresholds()
+        self._reload_rescue_params()
+
+    def _reload_rescue_params(self, force: bool = False) -> None:
+        """人质参数文件（调参页 SAVE 产物）加载/热重载。
+
+        文件缺失/不可读 = 保持当前 cfg 不动（PC 端无 /my-threshold 安全 no-op）;
+        文件存在但解析后为空（如全是注释）同样不覆盖。mtime 只在 stat 成功时
+        缓存 —— 首次 SAVE 创建文件后必然触发一次重载。只 merge 文件里出现的
+        键, 未写的键保持 yaml 值; **不清锁存**（conf 改动只影响后续检出）。
+        """
+        if not self._rescue_params_file:
+            return
         try:
-            mtime = os.stat(self._thresholds_file).st_mtime
+            mtime = os.stat(self._rescue_params_file).st_mtime
         except OSError:
             return
-        if mtime != self._thresholds_mtime:
-            self._reload_thresholds()
+        if not force and mtime == self._rescue_params_mtime:
+            return
+        self._rescue_params_mtime = mtime
+        params = load_rescue_params_file(self._rescue_params_file)
+        if params:
+            self._cfg["rescue"].update(params)
+            log_print(f"[GKS] rescue params "
+                      f"{'loaded' if force else 'reloaded'} from "
+                      f"{self._rescue_params_file}: {params}")
 
     def _lab_for(self, mode: str, color_code: int) -> Optional[list]:
         key = COLOR_KEYS.get(color_code)
@@ -1125,6 +1202,39 @@ class GksTaskProcessor(Processor):
 
     # ---- task3 人质 ----
 
+    # ---- task3 人质: 检出日志 ----
+
+    # 同一标签分数波动 ≤ 此值不打新行（"变化才打", 防 30fps 逐帧落盘刷屏）。
+    _RESCUE_DET_LOG_DELTA = 0.1
+
+    def _log_rescue_dets(self, dets) -> None:
+        """人质检出日志: 形状集合变化或任一分数跳变 >0.1 才打一行汇总。
+
+        log_print 每行一次 open/write/flush 落盘, 不能逐帧打 —— 30fps 下每秒
+        30 次开文件且淹没 latch/推流日志。标签集合稳定且分数小幅波动时静默,
+        典型频率每秒 0~3 条。同标签多检出只取分最高者参与判定/打印。
+        格式: [GKS] rescue det: yuan_zhu=0.82(214,165) yao_gu=0.76(427,220)
+        坐标 = 画面中心 (cx, cy), 与 hits/shape_seen 同口径。
+        """
+        cur = {}
+        for label, score, cx, cy in dets:
+            prev = cur.get(label)
+            if prev is None or score > prev[0]:
+                cur[label] = (score, cx, cy)
+        last = self._rescue_last_log
+        changed = set(cur) != set(last)
+        if not changed:
+            for label, (score, _cx, _cy) in cur.items():
+                if abs(score - last[label][0]) > self._RESCUE_DET_LOG_DELTA:
+                    changed = True
+                    break
+        if not changed:
+            return
+        self._rescue_last_log = cur
+        body = " ".join(f"{lb}={sc:.2f}({cx},{cy})"
+                        for lb, (sc, cx, cy) in cur.items())
+        log_print(f"[GKS] rescue det: {body or '(none)'}")
+
     def _process_rescue(self, frame, hits, maix_img=None):
         ai = self._ai
         if ai is None or not getattr(ai, "loaded", False):
@@ -1152,6 +1262,7 @@ class GksTaskProcessor(Processor):
         labels = getattr(ai, "labels", None) or []
         label_map = self._cfg["rescue"]["labels"]
         x_crop = int(self._cfg["rescue"].get("x_crop_px") or 0)
+        det_log = []    # (label, score, cx, cy) —— "变化才打"检出日志的数据源
         for obj in objs:
             if x_crop > 0 and obj.x > x_crop:
                 continue
@@ -1161,9 +1272,12 @@ class GksTaskProcessor(Processor):
                          "w": int(obj.w), "h": int(obj.h),
                          "text": f"{label}:{obj.score:.2f}",
                          "color": (0, 160, 255)})
+            det_log.append((label or f"c{obj.class_id}", float(obj.score),
+                            int(obj.x + obj.w / 2.0), int(obj.y + obj.h / 2.0)))
             if shape_num == 0:
                 continue
             self._shape_seen[shape_num] = obj.x + obj.w / 2.0   # 形状中心 x, 跨帧刷新
+        self._log_rescue_dets(det_log)
         # ---- 顺序映射（定序规则与补位见上方"坑位定序"共用段）----
         if self._position2[0] == 0:
             if self._order_by_x("rescue"):
