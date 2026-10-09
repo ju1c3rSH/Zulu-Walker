@@ -34,3 +34,22 @@ def test_writer_survives_and_reports_drops(tmp_path, monkeypatch):
         assert log_util._WRITER_THREAD.is_alive()
     finally:
         log_util.stop_log_writer()
+
+
+def test_log_print_survives_full_queue(monkeypatch):
+    """队列满时 log_print 只能丢包计数, **绝不能抛**。
+
+    缺 `global _DROP_COUNT` 时这里抛 UnboundLocalError, 而调用点在
+    coordinator 主循环里（apply_gate_task / _on_cmd_request 的 ACK 日志）——
+    异常会穿出 coordinator.loop() 打到 module_manager 外层兜底, 整轮主循环
+    被 sleep(1.0) 拖停, 期间零 DATA_STREAM（2026-10-09 台架实际表现）。
+    """
+    q: queue.Queue = queue.Queue(maxsize=1)
+    q.put(("占位\n", "占位"))            # 塞满 -> 下一次 put_nowait 必抛 Full
+    monkeypatch.setattr(log_util, "_LOG_QUEUE", q)
+    monkeypatch.setattr(log_util, "_DROP_COUNT", 0)
+
+    for _ in range(3):
+        log_util.log_print("boom")       # 不得抛
+
+    assert log_util._DROP_COUNT == 3

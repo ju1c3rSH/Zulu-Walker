@@ -163,6 +163,17 @@ python -c "import py_compile; py_compile.compile('app/coordinator.py', doraise=T
   （阈值缺失/模型未加载/相机停摆/NACK 5s TTL）数据源 coordinator.get_info()。
 - 运行时参数: GksTaskProcessor.set_runtime_param(section, key, value) 设备端
   立即生效不落盘; LAB 阈值仍走 /my-threshold 热重载。
+- **高频性能日志闸门**（2026-10-09）: `project_config.yaml` `perf_log:` 段,
+  新写法 `{enabled: false, names: [...]}`（旧布尔 `true/false` 仍兼容）。闸门在
+  `utils/log_util.log_print` **拼好 msg 后、入队前**短路（连 queue 都不碰），
+  默认组 = `[PERF] vision/mainloop/lcd show` + `[UART TX] DATA_STREAM`/`CMD_ACK`
+  + `[WDT] ` + `[MEM] `。**只少打印、不改行为**（推流帧照发、计数器照累加、
+  log_print 仍非阻塞），副作用是被吞行不进 logs/debug.log。
+  ⚠ 事件类**刻意不在默认组**、保留可见: `[UART ACTION]` 门控/锁存、`[UART RX]`
+  收帧、`[UART TX] CMD_NACK`、`[FPS] pipeline` —— 关了就看不出"订没订上/该不该
+  NACK"。要全静音就往 names 追加 `[UART ACTION]`/`[UART RX]`；定位"时间花在哪"
+  时把 `enabled` 置 true。应用点: `app/main.py::_apply_perf_log_config`（启动早期）。
+  回归测试 `tests/test_perf_log_gate.py`。
 - 遗留代码已归档 `archive/legacy/`（line_follow_sm、cargo/circle/ring/line 检测链、
   eod_shape、visual_state_machine、legacy handlers 等），整体退出 app.yaml 打包
   （exclude: archive）；`run.py debug` 仅保留 color 调参路由。

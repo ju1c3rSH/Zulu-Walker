@@ -17,6 +17,67 @@ _DROP_COUNT: int = 0  # queue full 丢包累计计数，GIL 保护，无需额�
 
 _CONSOLE_MODULE = "utils.debug_console"
 
+# ---- 高频性能日志闸门（默认全开, 保持既有行为）--------------------------------
+# 为什么需要: 台架调试时 `[PERF] vision/mainloop/lcd`、`[UART TX] DATA_STREAM`、
+# `/CMD_ACK`、`[FPS] pipeline`、`[WDT] ... feed`、`[MEM]` 这些行**每秒各刷一条**,
+# 合起来把真正想看的信息淹掉。它们全是性能观测/心跳痕迹, 与协议语义无关。
+#
+# 关掉之后**只少打印, 不改变任何行为**:
+#   · 推流帧照发（`_send` 不受影响）;  `log_print` 依旧非阻塞（队列照投, 只是 no-op）;
+#   · 计数器照累加（`_result_seq` / `_tx_window_count` / `_wdt_count` …）。
+# 唯一的副作用: 被吞掉的行不会进 logs/debug.log —— 这是刻意的（debug.log 也是刷屏源）。
+#
+# 用模块级 name **列表而非字符串常量**: 配置里写 `[PERF] vision` 或 `PERF vision`
+# 都能命中; 且用普通 `in` 判断（不是 startswith），子串误伤面可控。
+#
+# 默认组 = 一次性能观测 + 链路心跳/内存痕迹。**刻意不含**协议状态变化类
+# （`[UART ACTION]` 门控、`[UART RX]` 收帧、`[UART TX] CMD_NACK`、`[FPS]`）——
+# 那些是低频事件, 关了就看不出"订没订上/该不该 NACK"。
+_DEFAULT_PERF_NAMES = (
+    "[PERF] vision",        # 视觉线程每帧分项（每秒一条）
+    "[PERF] mainloop",      # 主循环分项（每秒一条）
+    "[PERF] lcd show",      # 显示 show() 开销（每秒一条）
+    "[UART TX] DATA_STREAM",  # 推流率心跳（每秒一条, 但高频）
+    "[UART TX] CMD_ACK",    # Brain 重订阅洪泛时会被刷屏
+    "[WDT] ",               # 主/协调/视觉三处喂狗痕迹（每 600 次一条）
+    "[MEM] ",               # user/CMM 内存（每 900 次一条）
+)
+
+_PERF_LOG_NAMES: set = set()
+
+
+def set_perf_log(enabled: bool = True, names=None) -> None:
+    """开关高频性能日志行。
+
+    Args:
+        enabled: False = 吞掉 names 里的所有行; True = 全放行。
+        names:   要控的行标签（子串匹配）。None/空 = 只切 `_DEFAULT_PERF_NAMES`。
+
+    调用点: `app/main.py` 从 `project_config.yaml` 的 `perf_log:` 段读取。
+    默认（enabled=True）不设过滤集合, 保持"改前逐行照打"。
+    """
+    global _PERF_LOG_NAMES
+    if enabled:
+        _PERF_LOG_NAMES = set()
+        return
+    selected = names if names else _DEFAULT_PERF_NAMES
+    _PERF_LOG_NAMES = {str(n) for n in selected}
+
+
+def perf_log_enabled() -> bool:
+    """性能日志当前是否全开（供测试/自检）。"""
+    return not _PERF_LOG_NAMES
+
+
+def _is_perf_log(msg: str) -> bool:
+    """消息是否命中当前被吞的性能日志标签。空集合 -> 恒 False（零开销）。"""
+    if not _PERF_LOG_NAMES:
+        return False
+    for name in _PERF_LOG_NAMES:
+        if name in msg:
+            return True
+    return False
+
 
 def debug_console_active() -> bool:
     """调试台是否**真的**在跑（模块已导入 且 _global_enabled 为真）。
@@ -125,12 +186,22 @@ def stop_log_writer(timeout: float = 2.0) -> None:
 
 
 def log_print(msg: str = "", *args, **kwargs) -> None:
+    # ⚠ 必须有: 下面 except 分支要写 _DROP_COUNT。缺 global 时 Python 把它当**局部**
+    # 变量, 于是"队列满"这条本应只丢日志的路径会抛 UnboundLocalError —— 而调用点
+    # 遍布 coordinator 主循环（module_manager 对 coordinator.loop() **没有** try/except,
+    # 只有外层兜底), 结果是主循环整轮被拖停 1s、期间一个 DATA_STREAM 都推不出去。
+    # 只在 queue 满的瞬间才触发, 所以能潜伏很久（2026-10-09 台架实测）。
+    global _DROP_COUNT
     ts = datetime.now().strftime("[%H:%M:%S] ")
     if args:
         parts = [str(msg)] + [str(a) for a in args]
         msg = " ".join(parts)
     else:
         msg = str(msg)
+    # 高频性能日志闸门（默认空集合=False, 零开销）。必须在拼好 msg 之后、入队之前,
+    # 这样连 queue 都不碰 —— 被吞的行既不进 stdout 也不进 logs/debug.log。
+    if _is_perf_log(msg):
+        return
     line = f"{ts}{msg}\n"
     try:
         _LOG_QUEUE.put_nowait((line, msg))
