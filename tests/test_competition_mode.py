@@ -115,6 +115,55 @@ def test_render_toggle_is_reversible(vm_with_pipe):
         assert vm._hud.draw_calls == before + (1 if expected else 0)
 
 
+# ---------------- HUD 节流期间的"发布"策略（2026-10-09 闪烁回归）----------------
+
+def test_hud_throttle_must_not_publish_undrawn_frames(vm_with_pipe):
+    """HUD 节流跳过的帧**不得**更新 _display_frame —— 否则 show 到的大多是裸帧。
+
+    真机现象: display_show_interval_ms=100（HUD 10Hz 画）而视觉 46Hz 发布,
+    显示线程 show 到的 ~78% 没有 HUD -> "顶部调试信息时有时无"。
+    不变量: 渲染开启时, _display_frame 只落在画过 HUD 的帧上。
+    """
+    vm = vm_with_pipe
+    vm.set_hud_draw_interval(100)
+    cam = vm._pipelines["cam_main"].camera
+
+    cam.last_raw = "RAW_1"
+    vm._update_display_frame()
+    assert vm._hud.draw_calls == 1
+    assert vm.get_display_frame() == "RAW_1"       # 画了 HUD -> 发布
+
+    cam.last_raw = "RAW_2"                          # 下一帧, HUD 节流未到
+    vm._update_display_frame()
+    assert vm._hud.draw_calls == 1                  # 没画
+    assert vm.get_display_frame() == "RAW_1"        # 关键: 裸帧不发布, 保持带 HUD 的帧
+
+
+def test_hud_interval_zero_publishes_every_frame(vm_with_pipe):
+    """interval=0（每帧都画）时发布也回到每帧 —— 等价旧行为, 不得丢帧。"""
+    vm = vm_with_pipe
+    vm.set_hud_draw_interval(0)
+    cam = vm._pipelines["cam_main"].camera
+    cam.last_raw = "RAW_1"
+    vm._update_display_frame()
+    cam.last_raw = "RAW_2"
+    vm._update_display_frame()
+    assert vm._hud.draw_calls == 2
+    assert vm.get_display_frame() == "RAW_2"
+
+
+def test_competition_mode_still_publishes_every_frame(vm_with_pipe):
+    """比赛模式无 HUD 可画, 发布必须保持每帧（"最新原始帧"语义不变）。"""
+    vm = vm_with_pipe
+    vm.set_render_enabled(False)
+    cam = vm._pipelines["cam_main"].camera
+    cam.last_raw = "RAW_1"
+    vm._update_display_frame()
+    cam.last_raw = "RAW_2"
+    vm._update_display_frame()
+    assert vm.get_display_frame() == "RAW_2"
+
+
 def test_competition_mode_does_not_stop_processing(vm_with_pipe):
     """关键不变量: 关渲染只停显示, 取帧/处理/结果产出不受影响。
 

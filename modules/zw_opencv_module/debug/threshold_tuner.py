@@ -260,7 +260,25 @@ class GksThresholdTuner:
             self._text(img, 8, y, text, color, 1.0)
 
     def _draw_roi_lines(self, img, group_idx: int, sx, sy) -> None:
-        """靶标组时按 target.roi 画上/下两条横线（与主 HUD 同源处理器配置）。"""
+        """靶标组画 target.roi 横线; 排爆组画 explosive.roi 横线（与处理器配置同源）。"""
+        if group_idx in (0, 1, 2):
+            roi = None
+            processor = self._get_processor() if self._get_processor else None
+            if processor is not None:
+                try:
+                    roi = processor.explosive_roi()
+                except Exception as e:
+                    self._diag("explosive_roi", e)
+            if roi is None:
+                roi = self._roi_from_config_cache("explosive")
+            if roi is None:
+                return
+            h = img.height()
+            color = self._C["yellow"]
+            for fraction in (float(roi[1]), float(roi[3])):
+                line_y = max(0, min(h - 1, int(fraction * h)))
+                self._rect(img, 0, line_y, img.width(), 1, color=color, thickness=-1)
+            return
         if self._target_group_index_range is None:
             return
         if group_idx not in self._target_group_index_range:
@@ -279,10 +297,10 @@ class GksThresholdTuner:
             line_y = max(0, min(h - 1, int(fraction * h)))
             self._rect(img, 0, line_y, img.width(), 1, color=color, thickness=-1)
 
-    def _roi_from_config_cache(self):
+    def _roi_from_config_cache(self, section: str = "target"):
         if self._roi_cache is None:
             try:
-                roi = load_gks_config().get("target", {}).get("roi")
+                roi = load_gks_config().get(section, {}).get("roi")
                 if isinstance(roi, (list, tuple)) and len(roi) == 4:
                     self._roi_cache = tuple(float(v) for v in roi)
             except Exception as e:

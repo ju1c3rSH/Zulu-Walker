@@ -109,6 +109,12 @@ _DEFAULT_CONFIG = {
         #   收口: Bmax -10→-25、Lmax 80→60、A 由全开 [-110,100] 收到 [-8,45](挡紫/青,
         #   让 A 参与判别)、Bmin -66→-75(补住暗面 -69)。代价: 球内 401→341(-15%),
         #   换误命中 -69% 且淡蓝归零。蓝目标受光变亮导致切块时先放开 Lmax 到 80。
+        # 排爆扫描 ROI: 帧比例 (x0, y0, x1, y1); None/缺省 = 全帧(与改动前逐字节一致)。
+        # 纯提速视窗: 只缩小 find_blobs 搜索域, 不改定序语义。
+        # ⚠ 定序靠"首次检出先后 + 同帧内按画面左右" ⇒ **三坑必须同时落在 ROI 内**,
+        #   任一坑被 ROI 切出视野就会静默错序(漏检->补位塞尾部), 比锁不上更危险。
+        #   现场先把 ROI 放到覆盖三坑, 再看日志 cx/cy 收窄。
+        "roi": None,
         "lab": {
             "red":   [0, 80, 40, 80, 10, 80],
             "green": [25, 85, -80, -25, 30, 85],
@@ -253,6 +259,28 @@ def _lab_to_cv_range(lab: list):
     return lo, hi
 
 
+def _as_numpy(frame):
+    """把帧物化成真 BGR numpy（是 LazyFrame 就取其缓存的真数组, 否则原样返回）。
+
+    为什么需要（2026-10-09, 懒转换配套）: OpenCV 的 `src` 参数**不吃 `__array__`
+    协议** —— `cv2.cvtColor(lazy, ...)` / `cv2.resize(lazy, ...)` 会直接报
+    "src is not a numpy array"。而 LazyFrame 只在**真用像素**时才转, 于是凡是
+    "要把像素交给 cv2"的地方都必须显式物化。
+
+    代价可控: LazyFrame 内部缓存结果, 同一帧调多少次都只 image2cv 一次;
+    而真机走 C++ find_blobs 快路径时这些地方根本执行不到（一次都不转）。
+
+    判定用"有没有 numpy() 方法"的鸭子类型, 因此对真 numpy / None / 其它类型
+    一律保持原行为, 不引入任何新语义。
+    """
+    if isinstance(frame, np.ndarray):
+        return frame
+    getter = getattr(frame, "numpy", None)
+    if callable(getter):
+        return getter()
+    return frame
+
+
 @register_processor("GksTaskProcessor")
 class GksTaskProcessor(Processor):
     """订阅门控的近端三任务处理器（单模式激活）。"""
@@ -347,6 +375,13 @@ class GksTaskProcessor(Processor):
     def target_roi(self):
         """靶标 ROI 归一化界 (x0, y0, x1, y1) 或 None（未配置）。"""
         roi = self._cfg.get("target", {}).get("roi")
+        if isinstance(roi, (list, tuple)) and len(roi) == 4:
+            return tuple(float(v) for v in roi)
+        return None
+
+    def explosive_roi(self):
+        """排爆 ROI 归一化界 (x0, y0, x1, y1) 或 None（全帧/未配置）。"""
+        roi = self._cfg.get("explosive", {}).get("roi")
         if isinstance(roi, (list, tuple)) and len(roi) == 4:
             return tuple(float(v) for v in roi)
         return None
@@ -556,6 +591,11 @@ class GksTaskProcessor(Processor):
             search = frame_bgr[ry:ry + rh, rx:rx + rw]
             offset_x, offset_y = rx, ry
 
+        # 物化成真 numpy（懒转换配套，见模块级 _as_numpy 的注释）。
+        # 按 ROI 切出来的是真 numpy 视图，但 roi_px 为 None 时 search 就是
+        # frame_bgr 本身（可能是 LazyFrame 代理）—— cv2 的 src 不吃 __array__。
+        search = _as_numpy(search)
+
         lab_img = cv2.cvtColor(search, cv2.COLOR_BGR2LAB)
         lo, hi = _lab_to_cv_range(lab)
         mask = cv2.inRange(lab_img, lo, hi)
@@ -596,7 +636,7 @@ class GksTaskProcessor(Processor):
             result, hits, thresholds_ok = self._process_target(frame, maix_img, hits)
         elif self._mode == MODE_RESCUE:
             result, hits, latched_order, pending_count = \
-                self._process_rescue(frame, hits)
+                self._process_rescue(frame, hits, maix_img)
 
         data = {
             "mode": self._mode,
@@ -705,7 +745,8 @@ class GksTaskProcessor(Processor):
             return frame, maix_img
         h, w = frame.shape[:2]
         sw, sh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
-        small = cv2.resize(frame, (sw, sh), interpolation=cv2.INTER_NEAREST)
+        small = cv2.resize(_as_numpy(frame), (sw, sh),
+                           interpolation=cv2.INTER_NEAREST)
         # 小图重新包成 maix Image: 走 C++ find_blobs 快路径且像素与上面 NEAREST 结果
         # 逐字节一致（不用 img.resize(): 固件默认插值会把边缘混成中间色）。
         #
@@ -748,13 +789,19 @@ class GksTaskProcessor(Processor):
                     hits, list(self._position), self._pending_count, False)
         cfg = self._cfg["explosive"]
         scale = self._scan_scale(cfg)
+        h, w = frame.shape[:2]
+        roi_px = self._roi_px(cfg.get("roi"), w, h)
         frame_s, maix_s = self._downscale(frame, maix_img, scale)
+        roi_s = roi_px
+        if roi_px is not None and scale != 1.0:
+            roi_s = [int(roi_px[0] * scale), int(roi_px[1] * scale),
+                     max(1, int(roi_px[2] * scale)), max(1, int(roi_px[3] * scale))]
         # 面积门槛按 scale² 折算（同一物理目标在小图里的像素数是 scale² 倍）
         pixels_th = max(1, int(cfg["pixels_threshold"] * scale * scale))
         area_th = max(1, int(cfg["area_threshold"] * scale * scale))
         color_cx = {}   # 本帧各色最大色块 {色号1红/2绿/3蓝: cx}(已还原到全帧坐标)
         for i in range(3):
-            blobs = self._scan_blobs(frame_s, maix_s, labs[i], None,
+            blobs = self._scan_blobs(frame_s, maix_s, labs[i], roi_s,
                                      pixels_th, area_th, merge=False)
             if blobs:
                 largest = max(blobs, key=lambda b: b["pixels"])
@@ -1078,15 +1125,26 @@ class GksTaskProcessor(Processor):
 
     # ---- task3 人质 ----
 
-    def _process_rescue(self, frame, hits):
+    def _process_rescue(self, frame, hits, maix_img=None):
         ai = self._ai
         if ai is None or not getattr(ai, "loaded", False):
             # 模型缺失优雅降级: 零值心跳不断流, 不崩溃
             return ({"pos": 0, "found": False, "inferred": self._latch_inferred},
                     hits, list(self._position2), self._pending_count2)
 
-        objs = ai.detect(frame, conf_th=self._cfg["rescue"]["conf_th"],
-                         iou_th=self._cfg["rescue"]["iou_th"])
+        # ---- 零拷贝推理（2026-10-09）----
+        # maix Image 可用时走 `_raw=True`: NPU 直接吃原始图, **省掉两次拷贝**
+        # —— ① 相机的 image2cv(BGR numpy) ② detect() 内的 cv2image(numpy→maix)。
+        # 这是"干掉白做的 image2cv"在人质任务上的同款收益。
+        # ⚠ 两条平台的 `ai.detect` 都认 `_raw`
+        #   (maixcam1/ai.py:235、maixcam2/ai.py:179, 均 pop 掉该 kwarg)。
+        # maix_img 缺失(PC/无 maix)时退回 numpy 路径, 行为与改前逐位一致。
+        if maix_img is not None:
+            objs = ai.detect(maix_img, conf_th=self._cfg["rescue"]["conf_th"],
+                             iou_th=self._cfg["rescue"]["iou_th"], _raw=True)
+        else:
+            objs = ai.detect(frame, conf_th=self._cfg["rescue"]["conf_th"],
+                             iou_th=self._cfg["rescue"]["iou_th"])
         # 同一帧内可能同时检出多个形状: 此时"时间先后"无意义, 先按画面左右关系定序
         # (镜像时反向), 保证入表顺序**不受模型输出顺序影响**(YOLO 的输出序不是空间序)。
         # 跨帧仍保持"首次检出先后"—— 比赛流程固定, 相机按 pit1→pit3 扫过。

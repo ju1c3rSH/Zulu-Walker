@@ -368,10 +368,13 @@ class GksCoordinator:
         self._enqueue(GateSignal(state_name=mode, codes=codes_snapshot,
                                  has_codes=bool(event.has_codes)))
 
+        # ⚠ 先发帧再打日志: 协议 I/O 不能挂在"日志是否成功"上。日志层一旦抛异常
+        # （如 2026-10-09 的 queue 满 -> UnboundLocalError）, ACK 就会被静默吞掉,
+        # Brain 收不到应答只会更猛地重订阅 —— 正好是日志洪泛的放大器。
+        self._send(build_cmd_ack_frame(data_id))
         log_print(f"[UART TX] CMD_ACK type={dt_name} freq={ACK_MAX_FREQ_HZ}Hz "
                   f"size={ACK_PAYLOAD_SIZE}B interval={self._interval_ms}ms "
                   f"codes={list(self._codes)} ({codes_action})")
-        self._send(build_cmd_ack_frame(data_id))
 
     def _on_cmd_stop(self, event: CmdStopEvent) -> None:
         now = time.monotonic()
@@ -581,11 +584,19 @@ class GksCoordinator:
             "ai_model": active_model,
             "last_nack": self._last_nack,
             "target_roi": self._target_roi_snapshot(),
+            "explosive_roi": self._explosive_roi_snapshot(),
         }
 
     def _target_roi_snapshot(self):
         processor = self._get_gks_processor()
         try:
             return processor.target_roi() if processor is not None else None
+        except Exception:
+            return None
+
+    def _explosive_roi_snapshot(self):
+        processor = self._get_gks_processor()
+        try:
+            return processor.explosive_roi() if processor is not None else None
         except Exception:
             return None

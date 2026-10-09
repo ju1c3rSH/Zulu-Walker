@@ -344,8 +344,87 @@ def test_explosive_reset_clears_latch(cfg, pit_frame):
     assert not r.result_data["found"]           # 重新计数, 第一帧不锁存
 
 
-# ---------- task2 靶标 ----------
+# ---------- task1 排爆 ROI（纯提速视窗）----------
 
+def test_explosive_roi_default_none_is_full_frame(cfg, pit_frame):
+    """默认 roi=None: 行为与加 ROI 之前逐字节一致（全帧）。"""
+    assert cfg["explosive"].get("roi") is None
+    proc = GksTaskProcessor(config=cfg)
+    assert proc.explosive_roi() is None
+    proc.set_task(MODE_EXPLOSIVE, (2, 1, 3))
+    for _ in range(2):
+        r = proc.process(pit_frame)
+    assert r.result_data["found"] and r.result_data["pit"] == 2
+
+
+def test_explosive_roi_restricts_scan_but_keeps_order(cfg, pit_frame):
+    """ROI 只缩小搜索域: 三坑都在 ROI 内时, 定序结果与全帧完全一致。"""
+    cfg["explosive"]["roi"] = [0.0, 0.3, 1.0, 1.0]   # 覆盖 y 144..480, 三坑 180..300
+    proc = GksTaskProcessor(config=cfg)
+    assert proc.explosive_roi() == (0.0, 0.3, 1.0, 1.0)
+    proc.set_task(MODE_EXPLOSIVE, (2, 1, 3))
+    for _ in range(2):
+        r = proc.process(pit_frame)
+    assert r.result_data["found"] and r.result_data["pit"] == 2
+    assert r.result_data["latched_order"] == [1, 2, 3]
+    assert 300 < r.result_data["cx"] < 340
+
+
+def test_explosive_roi_excludes_outside(cfg, pit_frame):
+    """三坑完全落在 ROI 之外(上方)时: 三色全漏检 -> 不锁存(pit=0)。
+
+    这条钉住"ROI 会真实缩小视野"—— 定序前提(三坑都在视野内)不成立时表现为
+    **锁不上**, 而不是错序; 静默错序只在"部分色块被 ROI 切半"时才可能发生。
+    """
+    cfg["explosive"]["roi"] = [0.0, 0.7, 1.0, 1.0]   # y 336..480, 三坑 180..300 全在上方
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_EXPLOSIVE, (2, 1, 3))
+    for _ in range(3):
+        r = proc.process(pit_frame)
+    assert not r.result_data["found"] and r.result_data["pit"] == 0
+
+
+def test_explosive_roi_clipped_block_still_latches(cfg, pit_frame):
+    """色块被 ROI 切掉一半但剩余像素仍过门槛时照常锁存 —— 证明 ROI 只裁搜索域, 不改判定。
+
+    pit_frame 色块 120x120=14400px; ROI y0=0.5 -> 剩 60x120=7200px >= 4000 门槛。
+    """
+    cfg["explosive"]["roi"] = [0.0, 0.5, 1.0, 1.0]
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_EXPLOSIVE, (2, 1, 3))
+    for _ in range(2):
+        r = proc.process(pit_frame)
+    assert r.result_data["found"] and r.result_data["pit"] == 2
+    assert r.result_data["latched_order"] == [1, 2, 3]
+
+
+def test_explosive_roi_clipped_below_threshold_not_latched(cfg, pit_frame):
+    """⚠ 危险区: 色块被 ROI 切剩的像素 < 门槛时该色被判"未检出" -> 补位把它塞到尾部。
+
+    这就是"ROI 切断定序视野"的具体故障形态: 目标色(pit1)漏检 -> infer_missing=tail
+    补到 pit3 -> 静默锁错坑。台架含义: ROI 必须完整包住三坑, 不能贴着坑边切。
+    """
+    cfg["explosive"]["roi"] = [0.0, 0.58, 1.0, 1.0]   # y 278..480, 各色只剩 22x120=2640px
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_EXPLOSIVE, (2, 1, 3))
+    for _ in range(3):
+        r = proc.process(pit_frame)
+    assert not r.result_data["found"] and r.result_data["pit"] == 0
+
+
+def test_explosive_roi_area_threshold_not_scaled_by_roi(cfg):
+    """ROI 不折算面积门槛: 60x60=3600px 完全落在 ROI 内仍过不了 4000 门槛。"""
+    cfg["explosive"]["roi"] = [0.0, 0.4, 1.0, 1.0]
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    frame[260:320, 290:350] = RED           # 60x60=3600px, 完全在 ROI 内
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_EXPLOSIVE, (1, 0, 0))
+    for _ in range(3):
+        r = proc.process(frame)
+    assert not r.result_data["found"]
+
+
+# ---------- task2 靶标 ----------
 @pytest.fixture()
 def target_frame():
     """红色靶标块, 中心 cx=480 (e=+0.5), y 在默认 ROI 内。"""

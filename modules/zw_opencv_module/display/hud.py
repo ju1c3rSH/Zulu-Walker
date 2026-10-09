@@ -251,11 +251,13 @@ class DisplayHUD:
         if mode == "TARGET":
             self._draw_roi_band(img, status)
             self._draw_error_axis(img, status)
-        elif mode in ("EXPLOSIVE", "RESCUE"):
+        elif mode == "EXPLOSIVE":
+            self._draw_roi_band(img, status, key="explosive_roi", dim=True)
+        elif mode == "RESCUE":
             self._draw_roi_band(img, status, dim=True)
 
-    def _draw_roi_band(self, img, status, dim=False) -> None:
-        roi = status.get("target_roi")
+    def _draw_roi_band(self, img, status, dim=False, key="target_roi") -> None:
+        roi = status.get(key)
         if not roi:
             return
         h = img.height()
