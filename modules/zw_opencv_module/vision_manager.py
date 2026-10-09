@@ -64,6 +64,16 @@ class VisionManager:
         # 交给显示线程"。见 _update_display_frame。
         self._render_enabled = True
 
+        # HUD 叠加的**绘制**节流（秒）。0 = 每帧都画（旧行为）。
+        # 为什么需要: HUD 画在原始 maix Image 上, 而那张图正是 find_blobs / YOLO
+        # 直接吃的 same-frame 数据。每帧画 ~20 次 maix draw_string/draw_rect
+        # （CAM1 纯软件渲染, TARGET 还多 6 个刻度标签）都在视觉线程里、与识别
+        # 串行 —— 画了却只 show 其中一部分时纯属白做（显示 thread 按
+        # display_show_interval_ms 节流, 视觉按帧率跑, 两者不同步）。
+        # 与显示侧用同一个间隔后: 画一帧、show 一帧, 不做无用绘制。
+        self._hud_draw_interval_s = 0.0
+        self._last_hud_draw = 0.0
+
         # 分项计时汇总（每秒一条 [PERF]）。用途见 _note_perf:
         # 真机帧周期如果明显大于 read+tasks+disp 之和, 差额就是被其它线程的
         # GIL 占用吞掉的时间 —— 2026-10-08 台架实测 CAM1: 识别链路单独跑能到
@@ -308,6 +318,19 @@ class VisionManager:
         self._render_enabled = bool(enabled)
         log_print(f"[RENDER] hud+stream {'ON' if enabled else 'OFF (competition)'}")
 
+    def set_hud_draw_interval(self, interval_ms) -> None:
+        """HUD 绘制节流（毫秒）。0/None = 每帧都画（旧行为）。
+
+        main.py 用 `display_show_interval_ms` 同一个值调用, 保证"画的频率 ==
+        show 的频率"——否则视觉线程每帧画、显示线程每 N 帧才 show, 中间那些
+        绘制全是白做（CAM1 纯软件渲染, TARGET 模式还多 6 个刻度标签）。
+        """
+        try:
+            ms = float(interval_ms) if interval_ms is not None else 0.0
+        except (TypeError, ValueError):
+            ms = 0.0
+        self._hud_draw_interval_s = max(0.0, ms / 1000.0)
+
     def _update_display_frame(self) -> None:
         # 显示不依赖 AI 模型加载（色块任务无模型也须可显示）
         for pid, pipe in list(self._pipelines.items()):
@@ -315,11 +338,25 @@ class VisionManager:
             if raw_img is None:
                 continue
             if self._render_enabled:
-                fps = self.get_pipeline_fps(pid)
-                if self._hud is not None:
-                    self._hud.draw(raw_img, fps, pipe.last_results)
-                self._draw_exit_icon(raw_img)
-            self._display_frame = raw_img
+                # HUD 绘制按 _hud_draw_interval_s 节流（0 = 每帧）。
+                # ⚠⚠ 节流跳过绘制的帧**必须连 _display_frame 一起跳过**（只发布
+                # 画过 HUD 的帧）。此前注释声称"只跳过重画, 发布照旧, 叠加层以
+                # 10Hz 刷新" —— 那是错的: 46Hz 发布 vs 10Hz 画 HUD, 显示线程
+                # show 到的 ~78% 是**裸帧**, 真机表现就是"顶部信息时有时无"
+                # （2026-10-09 用户报告）。发布节流到与绘制同频后, show 到的
+                # 每一帧都带 HUD; 触摸退出判定只读宽高, 不受影响。
+                _now = time.monotonic()
+                if (self._hud_draw_interval_s <= 0.0
+                        or _now - self._last_hud_draw >= self._hud_draw_interval_s):
+                    self._last_hud_draw = _now
+                    fps = self.get_pipeline_fps(pid)
+                    if self._hud is not None:
+                        self._hud.draw(raw_img, fps, pipe.last_results)
+                    self._draw_exit_icon(raw_img)
+                    self._display_frame = raw_img
+            else:
+                # 比赛模式: 无 HUD 可画, 每帧照旧发布（保持"最新原始帧"语义）
+                self._display_frame = raw_img
             if self._render_enabled and self._capture_sink is not None \
                     and self._capture_seq % self._CAPTURE_EVERY_N == 0:
                 self._capture_seq += 1

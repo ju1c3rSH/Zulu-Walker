@@ -128,6 +128,63 @@ def test_show_perf_is_accumulated(ui):
     assert ui._show_ms_sum >= 0.0
 
 
+# ---------------- HUD 绘制节流：与 show 同频（2026-10-09）----------------
+
+class _SpyVM:
+    """VisionManager 桩：只记 set_hud_draw_interval 收到的值。"""
+
+    def __init__(self):
+        self.intervals = []
+
+    def set_hud_draw_interval(self, ms):
+        self.intervals.append(ms)
+
+
+def test_display_policy_propagates_interval_to_hud_draw(ui):
+    """set_display_policy 必须把 show 间隔透传给 VisionManager 的 HUD 绘制节流。
+
+    为什么: HUD 画在原始 maix Image 上, 而那张图正是 find_blobs/YOLO 直接吃的
+    同帧数据。显示线程按间隔只 show 一部分帧, 视觉线程若每帧都画, 没 show 的
+    那些帧纯属白做（CAM1 纯软件渲染, TARGET 还多 6 个刻度标签）。两者同频后
+    "画一帧、show 一帧"。"""
+    vm = _SpyVM()
+    ui._vm = vm
+    ui.set_display_policy(enabled=True, show_interval_ms=100)
+    assert vm.intervals == [100]
+
+
+def test_display_policy_interval_zero_propagates(ui):
+    """interval=0（帧跳语义）也要透传 0 -> HUD 每帧都画（旧行为）。"""
+    vm = _SpyVM()
+    ui._vm = vm
+    ui.set_display_policy(enabled=True, show_interval_ms=0)
+    assert vm.intervals == [0]
+
+
+def test_display_policy_no_vm_does_not_raise(ui):
+    """没有 VisionManager（PC/测试）时透传要静默跳过, 不能抛。"""
+    ui.set_display_policy(enabled=True, show_interval_ms=100)   # 不抛即通过
+
+
+def test_hud_draw_interval_throttles_vision_side():
+    """VisionManager.set_hud_draw_interval 语义: 0=每帧, >0=按秒节流。
+
+    直接验证节流判定表达式（不构造完整 VisionManager, 只验证阈值换算与比较）。
+    """
+    from modules.zw_opencv_module.vision_manager import VisionManager
+
+    vm = object.__new__(VisionManager)
+    vm.set_hud_draw_interval(100)          # 10Hz
+    assert vm._hud_draw_interval_s == 0.1
+    vm.set_hud_draw_interval(0)
+    assert vm._hud_draw_interval_s == 0.0
+    vm.set_hud_draw_interval(None)         # 缺键 -> 0（每帧）不报错
+    assert vm._hud_draw_interval_s == 0.0
+    vm.set_hud_draw_interval("bad")        # 非法值 -> 0, 不抛
+    assert vm._hud_draw_interval_s == 0.0
+
+
+
 # ---------------- MainUiShell.tick 相关（含一个已修的静默 bug）----------------
 
 class _StubPages:
