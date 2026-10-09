@@ -1,7 +1,7 @@
 id: gks_nearcam
 name: gks_nearcam
 name[zh]: 工科赛近端视觉
-version: 2.11.0
+version: 2.11.3
 icon: app.png
 author: GongKeSai 2026
 desc: >-
@@ -57,6 +57,7 @@ files:
   - framework\hal\platforms\mock\camera.py
   - framework\hal\platforms\mock\display.py
   - framework\hal\platforms\mock\uart.py
+  - framework\hal\platforms\lazy_frame.py
   - framework\hal\__init__.py
   - framework\hal\camera_hub.py
   - framework\hal\machine.py
@@ -84,8 +85,13 @@ files:
   - modules\zw_opencv_module\processors\gks_task_processor.py
   - modules\zw_opencv_module\processors\registry.py
   - modules\zw_opencv_module\__init__.py
+  - modules\zw_opencv_module\camera_hub.py
+  - modules\zw_opencv_module\camera_stream.py
+  - modules\zw_opencv_module\ffmpeg_pusher.py
+  - modules\zw_opencv_module\frame_composer.py
   - modules\zw_opencv_module\performance.py
   - modules\zw_opencv_module\pipeline_camera.py
+  - modules\zw_opencv_module\requirements.txt
   - modules\zw_opencv_module\task_manager.py
   - modules\zw_opencv_module\vision_manager.py
   - modules\zw_uart_module\__init__.py

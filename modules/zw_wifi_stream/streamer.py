@@ -10,6 +10,28 @@ _QUEUE_MAX = 1
 _EMPTY_SLEEP = 0.015
 
 
+def _local_ip() -> str:
+    """探测本机对外 IP（仅用于日志展示）。
+
+    UDP connect 不会发出任何数据包，只让内核选一次路由源地址；
+    没有任何网络（WiFi 未连）时抛异常，返回空串。
+    """
+    import socket
+    for probe in ("8.8.8.8", "192.168.1.1"):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect((probe, 80))
+                ip = s.getsockname()[0]
+                if ip and not ip.startswith("127."):
+                    return ip
+            finally:
+                s.close()
+        except Exception:
+            continue
+    return ""
+
+
 class JpegStreamer:
     def __init__(self) -> None:
         self._server: Optional[object] = None
@@ -43,7 +65,14 @@ class JpegStreamer:
             self._server = srv
             self._url = "http://{}:{}/".format(srv.host(), srv.port())
             self._is_running = True
-            print("[HTTP] %s" % self._url)
+            ip = _local_ip()
+            if ip:
+                print("[HTTP] %s  <- 浏览器访问用 http://%s:%s/" % (
+                    self._url, ip, srv.port()))
+            else:
+                # 0.0.0.0 监听成功但没有对外 IP = WiFi 没连，外部必访问不了
+                print("[HTTP] %s  <- 未探测到本机 IP（WiFi 未连?），"
+                      "外部访问不了; SSH 上设备跑 ifconfig 确认" % self._url)
             sys.stdout.flush()
         except Exception as e:
             print("[HTTP] start failed: %s" % e)
