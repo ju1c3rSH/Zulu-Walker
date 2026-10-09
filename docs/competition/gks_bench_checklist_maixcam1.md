@@ -61,7 +61,7 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
 | 3 | **无降级告警** | 启动日志**不得**出现 `camera.read(block=...) unsupported` —— 出现即表示固件老到不认非阻塞读，停帧保护已降级为阻塞读（见 §5） |
 | 4 | 相机构造级别 | 日志 `[CAM1] camera open level=1` 表示 fps/buff_num 生效；若出现 `DEGRADED level=3/4` 则 fps 被丢弃（MaixPy 对 ≤1280x720 默认 80fps），实际帧率以实测为准 |
 | 5 | 引脚复用 | 不得出现 `pinmap ... 失败` / `未能确认引脚复用`；出现则 UART1 不通，优先查接线与固件 |
-| 6 | 硬件看门狗 | 不得出现 `[WDT] init FAIL` —— 出现说明 WDT 未生效，线程死锁将无自动复位（CAM1 用 `maix.wdt`，CAM2 用 `maix.peripheral.wdt`，代码已做双路径） |
+| 6 | 硬件看门狗 | **`project_config.yaml: wdt_enabled: false`（默认）** —— 启动日志出现 `[WDT] 未武装`。原因：MaixCDK 的 `WDT::stop()` 是**空实现**（只打 `this operation is not supported` 却 `return 0`），而 `WDT(0, 10000)` 构造即启动、进程退出不会让它停 ⇒ 武装了就**关不掉**，退出后 ~10s 设备硬复位。台架判据：**重启发生在退出后约 10 秒、日志最后一行却是干净的 `program exited`** —— 这是看门狗到点的签名，别误判成供电/固件问题。要死锁兜底才置 true，并接受"退出后 →10s 重启"；判别本机能否真正关掉用 `python scripts/wdt_probe.py info`（看 nowayout）。回归测试 `tests/test_wdt_disarm.py` |
 | 7 | 人质模型 | 日志 `[CAM1] Switched to model 'eod_hostage' (/root/models/model_239147.mud) labels=['yao_gu', 'yuan_zhu', 'yuan_tai']`；缺失仅告警不崩溃，RESCUE 订阅会回 NACK NOT_READY |
 | 8 | 协议向量对拍（PC 侧已测） | 订阅 `AA 55 06 20 01 32 00 E7 49` → ACK `AA 55 06 21 01 3C 0A 13 B8` |
 

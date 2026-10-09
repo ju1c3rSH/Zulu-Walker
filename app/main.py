@@ -45,6 +45,54 @@ _CMM_TOTAL_FALLBACK = 256 * 1024 * 1024
 _WDT_WINDOW_MS = 10000
 _WDT_FEED_PERIOD_S = 1.0
 
+# ⚠⚠ **是否武装硬件看门狗**（2026-10-09 重大修正，默认 **False**）。
+#
+# 起因: 台架现象"运行期正常, 一退出设备就重启"。查 MaixCDK 源码
+#   `components/peripheral/port/linux_common/maix_wdt.cpp` 得到决定性事实:
+#
+#     WDT::WDT(id, feed_ms) → open("/dev/watchdog") + WDIOC_SETTIMEOUT(feed_ms/1000)
+#                             + close ⇒ **构造即启动**, 硬件倒计时立刻开始
+#     WDT::feed()           → open + WDIOC_KEEPALIVE + close（喂一次 = 重置倒计时）
+#     WDT::stop()           → 只打一行 "this operation is not supported", **return 0**
+#     WDT::restart()        → 同上, 也是空实现
+#
+# 也就是说: **MaixCAM(MaixPy) 上的 `wdt.stop()` 是个空壳** —— 它返回 0(=ERR_NONE) 却
+# 什么都没做, 调用方**无法从返回值分辨**"真关了"还是"没关"。而 Linux watchdog 的
+# 语义是: close 时不写魔法字符 'V' 就保持运行, 内核还会明确 print
+# `watchdog0: watchdog did not stop!` —— 所以进程退出**不会**让它停。
+#
+# 于是逻辑闭环了: 喂狗只来自三个 Python 线程（主循环/协调器/视觉），进程一退出
+# 三者全没 ⇒ 窗口(10s)到点 ⇒ SoC 硬复位。**这就是"退出即重启"的全部原因。**
+# （第一版修复只加了 `stop()` 调用 + 日志, 所以日志打了 "[WDT] stopped" 却照样重启 ——
+#  被那个空实现骗了。现在的 `_wdt_stop` 会用 sysfs 倒计时与 raw ioctl 双重验证。）
+#
+# 规避手段只有两条（见 _wdt_stop）:
+#   ① 退出前绕过 MaixPy, 直接对 /dev/watchdog 下 `WDIOS_DISABLECARD`；
+#      若驱动带 nowayout（内核禁止停止看门狗）则返回 EBUSY —— 此路不通；
+#   ② **压根别武装它**。这是 CAM1 上的默认选择: 代价是失去"线程死锁自动复位"兜底,
+#      收益是**退出不再莫名重启**（台架每次收工都省一次 10s 掉线, 且 MaixVision/
+#      SSH 不会莫名断线）。需要死锁兜底时把 `project_config.yaml` 的
+#      `wdt_enabled` 置 true —— 但必须接受"每次退出后 ~10s 设备重启"。
+_WDT_ENABLED_DEFAULT = False
+
+# Linux watchdog uapi（绕过 MaixPy 空实现时用）
+# ⚠ ioctl 码要按**有符号 32 位**传: 0x80045704 作为 C int 是负数(-2147199228)。
+#   2026-10-09 设备实测: 传正数时内核回 errno=14 EFAULT(Bad address) —— 请求码不认。
+# ⚠ 打开 /dev/watchdog 必须带 O_NONBLOCK: 看门狗已启动时, 不带 nonblock 的 open
+#   会在 watchdog_open() 里**阻塞等标志位**, 表现为进程挂死。
+_WATCHDOG_DEV = "/dev/watchdog"
+_WATCHDOG_SYSFS = "/sys/class/watchdog/watchdog0"
+# sysfs 属性名因内核而异（多为 `<name>_timeleft`, 不是 `timeleft`）——全试一遍
+_WATCHDOG_TIMELEFT_FILES = ("timeleft", "watchdog0_timeleft", "wd_timeleft")
+_WDIOC_SETOPTIONS = 0x80045704      # _IOR('W', 4, int)
+_WDIOS_DISABLECARD = 0x0001
+
+
+def _i32(value: int) -> int:
+    """ioctl 码转有符号 32 位（C int）——fcntl/ioctl 需要这个形式。"""
+    value &= 0xFFFFFFFF
+    return value - 0x100000000 if value >= 0x80000000 else value
+
 _EXPLOSIVE_GROUPS = (0, 1, 2)
 _TARGET_GROUPS = (3, 4, 5)
 
@@ -104,6 +152,7 @@ class DebugPageFactory:
         self._touchscreen = None
         self._instances = {}
         self._active = None
+        self._step_fail_logged = set()
 
     def ensure_entered(self, page_name: str) -> None:
         if self._active == page_name:
@@ -117,7 +166,16 @@ class DebugPageFactory:
                 return
             self._instances[page_name] = page
             log_print(f"[PAGE] built debug page: {page_name}")
-        page.begin()
+        # begin() 与 step() 同一条静默链路（tick 兜底只写 app.log）: 抛异常时
+        # 同样留痕 + 回 MAIN, 避免页面卡在"建好了但永远渲染不出来"的冻屏态。
+        try:
+            page.begin()
+        except Exception as e:
+            self._instances.pop(page_name, None)   # 下次切入允许重建
+            log_print(f"[PAGE] {page_name} begin FAIL: "
+                      f"{type(e).__name__}: {e} -> 回 MAIN（详见 logs/app.log）")
+            self._pages.select(STATE_MAIN)
+            return
         self._active = page_name
 
     def step_active(self, page_name: str) -> None:
@@ -133,7 +191,21 @@ class DebugPageFactory:
         frame_bgr = cam.read()
         if frame_bgr is None:
             return
-        page.step(self._machine.display, ts, frame_bgr)
+        # ⚠ 页面渲染抛异常绝不能静默: run_main_loop 的 tick_callback 兜底只把
+        # traceback 写进 logs/app.log（控制台看不见）, 而显示线程对非 MAIN 页
+        # 整体让位 —— 结果就是"切到调试页 LCD 直接冻住, 控制台毫无声息"
+        # （2026-10-09 真机现象, 根因是 LazyFrame 缺 .copy()）。这里改为:
+        # 控制台留痕一次 + 自动回 MAIN 页恢复显示, 别让用户对着一帧死画面猜。
+        try:
+            page.step(self._machine.display, ts, frame_bgr)
+        except Exception as e:
+            if page_name not in self._step_fail_logged:
+                self._step_fail_logged.add(page_name)
+                log_print(f"[PAGE] {page_name} step FAIL: "
+                          f"{type(e).__name__}: {e} -> 回 MAIN（详见 logs/app.log）")
+            self._pages.select(STATE_MAIN)
+            self._active = None
+            return
         if getattr(page, "exit_requested", lambda: False)():
             self._pages.select(STATE_MAIN)
             self._active = None
@@ -263,6 +335,10 @@ class MainUiShell:
         else:
             throttle = f"每 {_DISPLAY_SHOW_SKIP} 帧一次(帧跳)"
         log_print(f"[DISPLAY] lcd={'ON' if self._display_enabled else 'OFF'}, {throttle}")
+        # HUD 绘制与 show 用同一间隔 —— 否则视觉线程每帧画、只 show 其中一部分,
+        # 中间那些绘制是白做（CAM1 纯软件渲染, TARGET 还多 6 个误差刻度标签）。
+        if self._vm is not None and hasattr(self._vm, "set_hud_draw_interval"):
+            self._vm.set_hud_draw_interval(show_interval_ms)
 
     def _open_touch(self):
         try:
@@ -383,6 +459,9 @@ class MainUiShell:
             elif self._touch_down:
                 self._touch_down = False
                 if self._in_exit_button(self._touch_x, self._touch_y):
+                    # ⚠ `os._exit(0)` 跳过所有 finally/atexit —— 必须**先**手动解除
+                    # 硬件看门狗, 否则用户按"退出"看到的是一次设备重启
+                    _wdt_stop()
                     os._exit(0)
         except Exception:
             pass
@@ -412,12 +491,26 @@ class MainUiShell:
                 and by - _ICON_HIT_PAD <= y <= by + _ICON_SIZE + _ICON_HIT_PAD)
 
 
-def _make_wdt_feed():
+def _make_wdt_feed(enabled: bool = True):
+    """返回喂狗回调；*enabled*=False 时**完全不武装**（CAM1 默认, 见 _WDT_ENABLED_DEFAULT）。
+
+    ⚠ 顺序很重要: `enabled=False` 必须在**构造 WDT 之前**返回 —— 一旦
+    `maix_wdt.WDT(...)` 被构造出来, 硬件倒计时就开始跑, 而 MaixPy 的 `stop()` 是空实现
+    （见 _WDT_ENABLED_DEFAULT 的注释）, 之后**没有任何用户态办法叫停它**（nowayout 时
+    连 raw ioctl 都会被内核拒绝）。所以"不重启"这件事只能在"别武装"这一步做。
+
     # CAM1(MaixCAM-Pro) 的模块布局是 `maix.wdt`，CAM2 才是 `maix.peripheral.wdt`
     # （docs/doc/zh/peripheral/wdt.md:15 官方示例 `from maix import wdt`）。
     # 两条路径都试：只写 CAM2 那条会让 CAM1 上 ImportError 被下面的 except 吞掉，
     # 看门狗**静默失效** —— 应用照常跑、协议照常通，只有日志一行不起眼的 FAIL，
     # 视觉/串口线程死锁时没有硬件复位兜底，现场表现为"设备卡死需断电"。
+    """
+    if not enabled:
+        log_print("[WDT] 未武装（wdt_enabled=false）—— 退出不会触发硬件复位；"
+                  "代价: 线程死锁时没有自动复位兜底（需兜底请在 project_config.yaml "
+                  "打开 wdt_enabled，但退出后 ~10s 设备会重启）")
+        return lambda: None
+
     maix_wdt = None
     try:
         from maix import wdt as _wdt_mod
@@ -437,11 +530,15 @@ def _make_wdt_feed():
         # 多处 feed 入口(main/coord/viz)共享同一节流时钟, 全局最多 1 次/周期,
         # 避免各自独立计时导致 C 层 WDT::feed() 刷屏 (窗口 10s 足够余量)
         if "_WDT_SHARED_STATE" not in globals():
-            globals()["_WDT_SHARED_STATE"] = {"last": 0.0, "fails": 0, "wdt": watchdog}
+            globals()["_WDT_SHARED_STATE"] = {
+                "last": 0.0, "fails": 0, "wdt": watchdog, "stopped": False}
         _state = globals()["_WDT_SHARED_STATE"]
         _state["wdt"] = watchdog
+        _state["stopped"] = False
 
         def _feed():
+            if _state.get("stopped"):
+                return          # 已 disarm（退出中），再 feed 会把停掉的狗重新武装
             now = time.monotonic()
             if now - _state["last"] < _WDT_FEED_PERIOD_S:
                 return
@@ -457,6 +554,125 @@ def _make_wdt_feed():
         # 看门狗失效属于"带病上台架"级别，措辞上与普通降级区分开
         log_print(f"[WDT] init FAIL（硬件看门狗未生效，线程死锁将无自动复位）: {e}")
         return lambda: None
+
+
+def _wdt_timeleft_s():
+    """内核报告的看门狗剩余秒数；读不到（PC 端 / 无该 sysfs）返回 None。
+
+    ⚠ 属性名并非总是 `timeleft`（2026-10-09 设备上就是读不到的）, 所以逐个试。
+    """
+    for name in _WATCHDOG_TIMELEFT_FILES:
+        try:
+            with open(f"{_WATCHDOG_SYSFS}/{name}") as f:
+                return int(f.read().strip())
+        except Exception:
+            continue
+    return None
+
+
+def _wdt_armed(sample_gap_s: float = 0.4):
+    """采样两次 timeleft: 递减 ⇒ 倒计时仍在跑(= 没能关掉)。None = 判不了。
+
+    这是绕过 MaixPy 那个**假 stop()** 的唯一验证手段: stop() 返回 0 却什么都不做,
+    只有内核自己的倒计时读数能说明真相。
+    """
+    a = _wdt_timeleft_s()
+    if a is None:
+        return None
+    time.sleep(sample_gap_s)
+    b = _wdt_timeleft_s()
+    if b is None:
+        return None
+    return b < a
+
+
+def _wdt_disarm_raw() -> str:
+    """绕过 MaixPy, 直接对 /dev/watchdog 下 `WDIOS_DISABLECARD`（stop() 本该做的事）。
+
+    返回人类可读结果串（只进日志, 不抛）。带 nowayout 的驱动会回 EBUSY(16) ——
+    那是内核层面禁止停止看门狗, 此时**没有任何用户态办法能关**, 只能"别武装"。
+
+    ⚠ 两个实测坑（2026-10-09）: ① open 必须 O_NONBLOCK, 否则已启动时挂死;
+    ② ioctl 码必须传有符号 32 位, 否则 EFAULT(14)。
+    """
+    try:
+        import fcntl
+        import struct
+        flags = os.O_RDWR | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(_WATCHDOG_DEV, flags)
+    except Exception as e:
+        return f"open {_WATCHDOG_DEV} 失败: {e!r}"
+    try:
+        buf = bytearray(struct.pack("i", 0))
+        fcntl.ioctl(fd, _i32(_WDIOC_SETOPTIONS), buf, True)
+        return "DISABLECARD OK"
+    except OSError as e:
+        extra = "（nowayout: 内核禁止停止看门狗）" if e.errno == 16 else ""
+        return f"DISABLECARD 失败 errno={e.errno} {e.strerror}{extra}"
+    finally:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+
+
+def _wdt_stop() -> None:
+    """退出前尽力解除硬件看门狗 —— 并**如实回报**到底解开了没有。
+
+    ⚠⚠ 2026-10-09 二次修正。第一版只调了 `wdt.stop()` 就打印 "stopped", 台架
+    反馈**照样重启**。原因是 MaixCDK 的实现
+    （`components/peripheral/port/linux_common/maix_wdt.cpp`）:
+
+        int WDT::stop() { log::warn("this operation is not supported"); return 0; }
+        int WDT::restart() { 同上, 也是空实现 }
+
+    **空实现**: 什么都不做却 `return 0`(=ERR_NONE)。调用方从返回值分辨不出,
+    所以第一版日志是一句善意的谎话。现在的流程是"调用 + **验证**":
+
+      1. 调 `maix stop()`（记下 rc, 但不再信它）;
+      2. 采样 `/sys/class/watchdog/watchdog0/timeleft` 两次: 递减 ⇒ 还武装着;
+      3. 还武装着 ⇒ 绕过 MaixPy 直接 raw ioctl `WDIOS_DISABLECARD`;
+      4. 再采样一次: 仍递减 ⇒ **明确告警**（写明 ~Ns 后设备会重启 + 规避办法）,
+         绝不再输出"已解除"这种会被当成结论的日志。
+
+    根治办法见 `_WDT_ENABLED_DEFAULT` 的注释: **CAM1 上默认不武装**。本函数保留
+    是因为 `wdt_enabled: true` 时若固件支持 DISABLECARD, 退出仍能干净收场; 同时它
+    把"这台机器到底能不能关看门狗"的答案直接打进日志, 台架一眼可见。
+    """
+    state = globals().get("_WDT_SHARED_STATE")
+    if not state or state.get("stopped"):
+        return
+    state["stopped"] = True     # 先置位: 让所有 _feed 入口立刻失效
+
+    wdt = state.get("wdt")
+    rc = None
+    if wdt is not None:
+        try:
+            rc = wdt.stop()
+        except Exception as e:
+            log_print(f"[WDT] maix stop() 抛异常: {e!r}")
+
+    if _wdt_armed() is False:
+        log_print(f"[WDT] disarm 已验证: 倒计时已停（maix stop() rc={rc}）")
+        return
+
+    detail = _wdt_disarm_raw()
+    armed = _wdt_armed()
+    if armed is False:
+        log_print(f"[WDT] disarm 已验证: maix stop() 是空实现（rc={rc}）, "
+                  f"改用 /dev/watchdog 的 {detail} 真正关掉了")
+        return
+    if armed is None:
+        log_print(f"[WDT] disarm 结论未知: maix stop() rc={rc}（空实现, 不可信）; "
+                  f"raw {detail}; 本机读不到 {_WATCHDOG_SYSFS}/timeleft, 无法验证。"
+                  f"wdt_enabled=true 时请用 scripts/wdt_probe.py 判定")
+        return
+    log_print(
+        f"[WDT] ⚠⚠ disarm 失败: 看门狗仍在跑, **退出后约 {_WDT_WINDOW_MS // 1000}s "
+        f"设备会重启**。原因: MaixPy/MaixCDK 的 WDT::stop() 是空实现（打 "
+        f"'this operation is not supported' 却 return 0）; raw {detail}。"
+        f"规避: project_config.yaml 设 wdt_enabled: false")
+
 
 
 def _load_exit_icon():
@@ -521,11 +737,44 @@ def _project_config() -> dict:
         return {}
 
 
+def _apply_perf_log_config(cfg) -> None:
+    """把 `perf_log:` 配置应用到 log_util 层的闸门。
+
+    两种写法都认（老配置不改也不炸）:
+        perf_log: true / false                     # 布尔: 全开 / 按默认组静音
+        perf_log: {enabled: false, names: [...]}   # 映射: 可自定义静音标签
+    缺键/解析异常 -> 保持默认（全开, 即改前行为）。
+    """
+    from utils.log_util import set_perf_log
+    try:
+        if isinstance(cfg, bool):
+            set_perf_log(cfg)
+            enabled, names = cfg, None
+        elif isinstance(cfg, dict):
+            enabled = bool(cfg.get("enabled", True))
+            names = cfg.get("names")
+            set_perf_log(enabled, names)
+        else:
+            return                      # 缺键/None -> 用模块默认（全开）
+    except Exception as e:
+        log_print(f"[PERFLOG] 配置应用失败, 保持全开: {type(e).__name__}: {e}")
+        return
+    log_print(f"[PERFLOG] perf_log={'ON' if enabled else 'MUTED'} "
+              f"names={list(names) if names else 'default'}")
+
+
 def main():
     log_print("0xfb709394")
 
     config = _project_config()
     start_log_writer()
+
+    # ---- 高频性能日志闸门（project_config.yaml `perf_log:`）----
+    # 必须在 `log_print("0xfb709394")`/DCONSOLE 之外最早生效: 闸门在 log_util 层,
+    # 设完之后下面所有线程的 `[PERF]`/`[MEM]`/`[WDT]`/`[UART TX] CMD_ACK` 等
+    # 高频行都被吞掉, 台架调试只剩事件类日志。
+    # 兼容旧的布尔写法 (`perf_log: true/false`) 与新的映射写法。
+    _apply_perf_log_config(config.get("perf_log"))
 
     # ---- 调试台（rich TUI）----
     # 决策权在 **run.py::_init_debug_console()**: 它在导入 app.main 之前读
@@ -549,7 +798,10 @@ def main():
             except Exception as e:
                 log_print(f"[DCONSOLE] 关闭失败: {type(e).__name__}: {e}")
 
-    wdt_feed = _make_wdt_feed()
+    # 看门狗是否武装: 由 project_config.yaml `wdt_enabled` 决定（缺键用默认,
+    # CAM1 默认 **False** —— MaixPy 的 stop() 是空实现, 武装了就关不掉, 退出即重启。
+    # 详见 _WDT_ENABLED_DEFAULT 的注释与 scripts/wdt_probe.py）。
+    wdt_feed = _make_wdt_feed(bool(config.get("wdt_enabled", _WDT_ENABLED_DEFAULT)))
 
     from framework.event_bus import EventBus
     from app.coordinator import GksCoordinator
@@ -608,15 +860,24 @@ def main():
     ui.set_display_policy(config.get("display_enabled"),
                           config.get("display_show_interval_ms"))
     if vision_manager is not None:
-        vision_manager.set_perf_log(config.get("perf_log", True))
+        # [PERF] vision 的静音统一由 log_util 层的 perf_log 闸门处理（见
+        # _apply_perf_log_config）。这里保留 set_perf_log(True) 作为**兜底**:
+        # 万一闸门没被配置（缺键）, 视觉线程的分项计时照旧输出, 不会因缺配置变哑。
+        vision_manager.set_perf_log(True)
 
     coordinator.start()
     ui.start_display_thread()
-    manager.run_main_loop(
-        coordinator,
-        tick_callback=ui.tick,
-        display_callback=ui.display_callback,
-    )
+    try:
+        manager.run_main_loop(
+            coordinator,
+            tick_callback=ui.tick,
+            display_callback=ui.display_callback,
+        )
+    finally:
+        # ⚠ **必须在任何退出路径上 disarm 硬件看门狗**（含异常路径与
+        # `app.need_exit()` 正常收工）。漏掉这一步 = 每次退出后 ~10s 设备重启,
+        # 详见 _wdt_stop 的说明。
+        _wdt_stop()
 
 
 if __name__ == "__main__":
@@ -626,4 +887,5 @@ if __name__ == "__main__":
         log_print(f"Unhandled exception: {e}")
         import traceback
         traceback.print_exc()
+        _wdt_stop()             # 崩溃退出同样不能把武装着的看门狗留给设备
         sys.exit(1)
