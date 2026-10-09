@@ -119,13 +119,43 @@ class MaixCam2Camera:
         旧帧"早退在设备上失效 —— 视觉线程会把同一帧反复当新帧算（any_fresh 恒真、
         只 sleep(0) 忙转），推流侧据此认为"一直有新结果"，1s 陈旧归零永远不触发，
         相机真的挂死时会以冻结误差持续喂主站。2026-09-28 修正为与契约一致。
+
+        **延迟转换（2026-10-09, `_lazy_convert` 为真时）**: 同 CAM1 —— 不在这里
+        做 image2cv, 交 LazyFrame 代理, 只有真用像素时才转（见 maixcam1 同款实现）。
         """
         if raw is None:
             return None
         self._last_raw = raw
+        if self.__dict__.get("_lazy_convert", False):
+            return self._ingest_lazy(raw)
         np_img = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
         self._last_frame = np_img[:, :, ::-1]
         return self._last_frame
+
+    def _ingest_lazy(self, raw):
+        """延迟转换路径（同 CAM1 语义，见 maixcam1/camera.py::_ingest_lazy）。"""
+        from framework.hal.platforms.lazy_frame import LazyFrame
+
+        def _convert(img):
+            np_img = maix.image.image2cv(img, ensure_bgr=False, copy=True)
+            if np_img is None:
+                # 转换失败: 交回 None 由 LazyFrame 退化为空数组, 不在此抛异常
+                # （见 lazy_frame.py::numpy 的降级说明, 与 CAM1 同款处理）。
+                return None
+            return np_img[:, :, ::-1]
+
+        shape_hw = None
+        try:
+            shape_hw = (int(raw.height()), int(raw.width()))
+        except Exception:
+            pass
+        frame = LazyFrame(raw, _convert, shape_hw=shape_hw)
+        self._last_frame = frame
+        return frame
+
+    def set_lazy_convert(self, enabled: bool) -> None:
+        """开关延迟转换（默认关 = 保持 `read_raw()` 急切转 numpy 的旧契约）。"""
+        self._lazy_convert = bool(enabled)
 
     def read_raw(self):
         if self._cam is None:

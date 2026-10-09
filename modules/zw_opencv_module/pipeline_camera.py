@@ -52,6 +52,7 @@ class PipelineCamera:
             image_width, image_height,
         )
         self._setup_tasks(task_configs)
+        self._enable_lazy_convert()
 
     @property
     def last_results(self) -> Dict[str, VisionResult]:
@@ -95,6 +96,28 @@ class PipelineCamera:
                 processor.set_ai(self._ai)
             task = Task(task_name, processor, task_enabled)
             self.task_manager.register_task(task)
+
+    def _enable_lazy_convert(self) -> None:
+        """让相机走"延迟转换"：不再每帧急切 image2cv（921KB 拷贝, 实测 9~16ms）。
+
+        为什么安全: 色块任务(EXPLOSIVE/TARGET) 走 C++ find_blobs 直接吃
+        `camera.last_raw`, 人质任务走 `_raw=True` 也是直接吃 maix Image ——
+        三个任务在**设备 + maix 可用**时都不需要那份 BGR numpy。只有 cv2 回退
+        路径(maix 不可用)与调参页需要, 而 LazyFrame 会在真正切片/传库时才转一次。
+
+        平台无 `set_lazy_convert`（linux/mock, 它们本就返回真实 numpy）时静默跳过
+        —— 那些平台没有"白做的拷贝"这个问题。
+        """
+        setter = getattr(self.camera, "set_lazy_convert", None)
+        if setter is None:
+            return
+        try:
+            setter(True)
+        except Exception:
+            # 开关失败绝不能影响流水线启动: 退回急切转换即改前行为。
+            import logging
+            logging.getLogger(__name__).warning(
+                "set_lazy_convert 失败, 保持急切 image2cv: %s", exc_info=True)
 
     def get_distance_to_target(self, real_size_mm: float, pixel_size: float) -> Optional[float]:
         if self.focal_calculator:

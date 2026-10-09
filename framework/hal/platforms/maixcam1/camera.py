@@ -319,7 +319,7 @@ class MaixCam1Camera:
             return None, True
 
     def read(self) -> Optional[np.ndarray]:
-        """调参页独占读帧用（可接受阻塞语义）。"""
+        """调参页独占读帧用（可接受阻塞语义）。**恒返回真 numpy**（见尾部收敛）。"""
         if self._cam is None:
             return None
         img, _ok = self._read_nonblocking()
@@ -331,25 +331,81 @@ class MaixCam1Camera:
                 return None
         if img is None:
             return None
-        return self._ingest_raw(img)
+        frame = self._ingest_raw(img)
+        if frame is not None and not isinstance(frame, np.ndarray):
+            # 懒转换模式下 _ingest_raw 交出 LazyFrame 代理 —— 但本方法的**返回
+            # 契约就是 np.ndarray**（签名如此, 调参页全链路每帧必用像素）。
+            # ⚠ 不能指望 cv2 自己转: OpenCV 的 Python 绑定（设备 4.9 / PC 5.0
+            # 实测同报错）对 cv2.resize/cvtColor **只收真 ndarray**,
+            # `__array__`/`__array_interface__` 协议一概不认 —— 不在这里收敛,
+            # 调参页第一帧就死在 resize 上（2026-10-09 真机
+            # "[PAGE] EXPLOSIVE step FAIL: ... src is not a numpy array"）。
+            # numpy() 只在首次访问时转一次并缓存, 这里就是那次访问。
+            frame = frame.numpy()
+        return frame
 
     def _ingest_raw(self, raw) -> Optional[np.ndarray]:
-        """新 raw 帧 -> 更新 last_raw/_last_frame 并返回 BGR numpy; None = 停帧。
+        """新 raw 帧 -> 更新 last_raw/_last_frame 并返回帧; None = 停帧。
 
         **不得回退 _last_frame**（契约见 framework/hal/interface/camera.py::
         read_raw）。CAM2 曾在这里回退过旧帧，导致 pipeline_camera 的"停帧不复用
         旧帧"在设备上失效：视觉线程把同一帧反复当新帧算、结果时间戳持续刷新，
         1s 陈旧归零永不触发，相机真的挂死时会以冻结误差持续喂主站
         （2026-09-28 修正）。CAM1 实现同款语义。
+
+        **延迟转换（2026-10-09, `_lazy_convert` 为真时）**: 不在这里做
+        `image2cv`（921KB 拷贝, 实测 9~16ms）, 改为交出 `LazyFrame` 代理 ——
+        只有真正用到像素（cv2 回退 / 调参页 / RESCUE 传 numpy）时才转一次。
+        TARGET/EXPLOSIVE 走 C++ find_blobs 时**一次拷贝都不发生**。
+        `_last_frame` 仍置为转换后的 numpy **或** 代理（依模式）; 显示侧只读
+        `last_raw`（maix Image）, 与本改动无关。
         """
         if raw is None:
             return None
         self._last_raw = raw
+        if self.__dict__.get("_lazy_convert", False):
+            return self._ingest_lazy(raw)
         _t0 = time.perf_counter()
         np_rgb = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
         self._last_frame = np_rgb[:, :, ::-1]
         self._mark_stage("convert", _t0)
         return self._last_frame
+
+    def _ingest_lazy(self, raw):
+        """延迟转换路径: 返回 LazyFrame, 不立刻 image2cv。
+
+        转换**首次被访问时**才发生, 并计入 `convert` 分项 —— 这样 `[PERF] vision`
+        的 conv 读数语义不变（只是从"每帧固定"变成"只在真用像素时才出现"）:
+        TARGET 纯 C++ 路径下 conv 应降到 0, 这正是本优化的验收信号。
+        """
+        from framework.hal.platforms.lazy_frame import LazyFrame
+
+        def _convert(img):
+            _t0 = time.perf_counter()
+            np_rgb = maix.image.image2cv(img, ensure_bgr=False, copy=True)
+            self._mark_stage("convert", _t0)
+            if np_rgb is None:
+                # 转换失败: 交回 None 由 LazyFrame 退化为空数组（不在闭包里抛,
+                # 否则异常会打断整帧 —— 见 lazy_frame.py::numpy 的降级说明）。
+                return None
+            return np_rgb[:, :, ::-1]
+
+        shape_hw = None
+        try:
+            shape_hw = (int(raw.height()), int(raw.width()))
+        except Exception:
+            pass
+        frame = LazyFrame(raw, _convert, shape_hw=shape_hw)
+        self._last_frame = frame
+        return frame
+
+    def set_lazy_convert(self, enabled: bool) -> None:
+        """开关延迟转换（默认关 = 保持 `read_raw()` 急切转 numpy 的旧契约）。
+
+        由 PipelineCamera 按"任务是否需要 numpy"决定; 台架/测试若依赖
+        `read_raw()` 直接返回 numpy, 保持默认即可。
+        """
+        self._lazy_convert = bool(enabled)
 
     def _mark_stage(self, key: str, t0: float) -> None:
         """记一笔分项耗时（毫秒）。
