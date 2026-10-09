@@ -1,31 +1,76 @@
 platform: maixcam1   # MaixCAM-Pro(cv181x) · 回移植分支 feat/maixcam1-port
 
 # ---- 显示输出（只影响 LCD；日志与协议推流完全不受影响）----
-# ⚠ 2026-10-08 台架实测 (MaixCAM-Pro)，`display.show()` 是本系统**单次最贵的调用**:
-#     墙上 avg=35.6ms, 而 CPU 只占 3.9ms  ->  差额 ~32ms 全是在**持着 GIL 等硬件**
-#     （VPU/显示通路）。也就是说它每被调用一次, 就把所有 Python 线程冻住约 32ms。
-#   证据链: 同一时刻 `[PERF] lcd show 4.6Hz -> 每秒占墙上 163ms / CPU 18ms`,
-#     而 `[PERF] mainloop` 的 tick 回调单次被阻塞 27.7ms（对比 coord=0.17 /
-#     touch=0.17 / wdt=0.04）—— 主循环几乎全部阻塞都发生在这段被冻结的窗口里。
-#   ⚠ 本键此前是**死配置**（全仓库无任何代码读它），已修正为真正生效。
-#   false = 完全不向 LCD 输出, 这是**彻底消除**那 32ms 冻结的唯一办法;
+# ⚠ 关于 show() 的代价（2026-10-09 用真机日志**校正**了早前注释）:
+#   早前这里写"墙上 35.6ms / 差额 32ms 持 GIL 等硬件", 但 s.log（真机 CAM1,
+#   TARGET 模式, 常态化运行）实测的是**完全不同的量级**:
+#       [PERF] lcd show 1.0Hz avg=2.3~6.2ms (cpu 2.1~3.2ms)
+#   即单次 show ≈ 2~6ms、差额仅 0~3ms, 十几次采样全部如此。
+#   视觉线程行也印证: `[PERF] vision ... disp=0.1ms` —— 带框绘制的真实代价极小。
+#   结论: **32ms 那条是早期/异常条件下的单次测量, 不是固有属性**。按 6ms 算,
+#   10Hz 也只占每秒 ~60ms, 完全可接受。判定标准始终是 `[PERF] lcd show` 那行。
+#
+#   false = 完全不向 LCD 输出（比赛最后一刻极限榨帧率时用）;
 #   触摸急停仍可用（退出图标命中框按帧宽高算, 与上屏无关）。
 display_enabled: true
 
-# 两次 show 的最小间隔(ms)。0 = 保留原来的"每 2 帧一次"帧跳语义。
-#   ⚠ 关键认识: show() 的代价是**每次调用的固定 32ms GIL 冻结**, 与显示频率无关 ——
-#   所以"降到 4.6Hz"只把每秒冻结从 234ms 降到 164ms, 收益有限;
-#   要真正见效必须**大幅降频**或彻底关掉。
-#   1000 = 1Hz: 每秒冻结 ~36ms（-78%），画面仍有（动作会一顿一顿, 用于监视足够）。
-#   提速优先/比赛时: 直接 display_enabled: false, 归零。
-display_show_interval_ms: 1000
+# 两次 show 的最小间隔(ms)。0 = 每 2 帧一次(帧跳语义)。
+#   100 = 10Hz（2026-10-09 用户要求）: 画面流畅可调试, 按实测 6ms/次 ≈ 每秒 60ms。
+#   HUD **绘制**也会用同一间隔节流（VisionManager.set_hud_draw_interval, main.py
+#   从本键透传）—— 避免"视觉每帧画、显示只 show 一部分"的白做绘制。
+#   必须与 HUD 绘制同频, 否则画了不 show 的那几帧纯浪费。
+#   提速优先/比赛时: display_enabled: false 归零; 或把本值调大(如 200/500)降频。
+display_show_interval_ms: 100
 
-# 每帧分项计时 [PERF] 汇总行(一秒一条)。定位"时间花在哪"的唯一手段, 别关。
-#   vision: loop/body/cpu/gil_wait | read(相机取帧) conv(image2cv拷贝) task(识别) disp
-#   mainloop: body/cpu/gil_wait + wdt/coord/tick(喂DebugConsole)/touch 分项
-#   lcd show: 墙上 + CPU（两者之差=持 GIL 等硬件的时间）
-#   读法: body - cpu = 被 GIL/调度器挡住的时间; 只报墙上会把"纯等待"误读成"在吃 CPU"。
-perf_log: true
+# ---- 硬件看门狗（WDT）是否武装 ----
+# ⚠⚠ **2026-10-09 起默认 false（不武装）**，这是一个**安全开关**，别随手打开。
+#
+# 台架现象: 运行期一切正常（帧率/推流/协议全绿），**一退出设备就重启**。
+# 根因（MaixCDK `components/peripheral/port/linux_common/maix_wdt.cpp` 实锤）:
+#   · `maix.wdt.WDT(0, ms)` 构造时就 open("/dev/watchdog") + 设超时 ⇒ **构造即自动启动**，
+#     硬件倒计时立刻开始（本项目窗口 10s）;
+#   · `WDT::stop()` 是**空实现** —— 只打一行 "this operation is not supported" 然后 `return 0`
+#     （返回 0 表示 ERR_NONE，所以调用方**分辨不出**它其实什么都没做）;
+#   · Linux 看门狗在 close 时若没写魔法字符 'V' 就保持运行（内核还会 print
+#     `watchdog0: watchdog did not stop!`）⇒ **进程退出不会让它停**。
+#   喂狗只来自三个 Python 线程（主循环/协调器/视觉），进程一退出三者全没
+#   ⇒ 10s 后 SoC 硬复位 = 设备重启。所以这不是崩溃，是看门狗到点。
+#
+# false = 不武装: 退出干净利落，不再莫名重启（MaixVision/SSH 也不会断线）。
+#         代价 = 失去"线程死锁 → 硬件自动复位"的兜底，卡死时需人工断电。
+# true  = 武装（仅在你确实需要死锁兜底时用）: **必须接受"每次退出后 ~10s 设备重启"**，
+#         除非该固件的 /dev/watchdog 允许 DISABLECARD（退出时 app/main.py 会尝试，
+#         并把真实结果打进日志）。判别办法: 在设备上跑 `python scripts/wdt_probe.py info`
+#         看 nowayout（=1 ⇒ 内核禁止停止看门狗，谁都关不掉，只能用 false 规避）。
+wdt_enabled: false
+
+# 高频性能日志闸门（默认 enabled: false = 台架调试时不再刷屏）。
+#   为什么: `[PERF] vision/mainloop/lcd` × 3 + `[UART TX] DATA_STREAM` + `CMD_ACK`
+#   + `[WDT] feed` + `[MEM]` 每秒各刷一条, 合起来把真正想看的信息淹掉。
+#   关掉**只少打印, 不改变任何行为**: 推流帧照发、计数器照累加、log_print 仍非阻塞。
+#   唯一副作用: 被吞的行不进 logs/debug.log。
+#
+#   enabled: false = 吞掉下面 names 里的行;  true = 逐行照打（旧行为, 定位"时间花在哪"时开）。
+#   names:   子串匹配, `[PERF] vision` 或 `PERF vision` 写法都命中。
+#     · [PERF] vision/mainloop/lcd show  每帧/每秒分项计时
+#     · [UART TX] DATA_STREAM            推流率心跳（每秒一条）
+#     · [UART TX] CMD_ACK                Brain 重订阅洪泛源
+#     · [WDT] (主/协调/视觉喂狗痕迹)  · [MEM] (user/CMM)
+#   ⚠ **刻意不在默认组里**（关了就看不出链路状态, 建议保留）:
+#     · [UART ACTION] 门控/锁存变化   · [UART RX] 收帧
+#     · [UART TX] CMD_NACK 不该 ACK 时的拒绝   · [FPS] pipeline 帧率
+#
+# 想全静音: names 追加 "[UART ACTION]", "[UART RX]"。想全开: enabled: true。
+perf_log:
+  enabled: false
+  names:
+    - "[PERF] vision"
+    - "[PERF] mainloop"
+    - "[PERF] lcd show"
+    - "[UART TX] DATA_STREAM"
+    - "[UART TX] CMD_ACK"
+    - "[WDT] "
+    - "[MEM] "
 
 # 调试台（rich 全屏 TUI）。**2026-10-09 起默认关闭**，原因三条，全部实测/读码确认：
 #   ① `utils/debug_console.py` 在**模块顶层** `import rich`。rich 是纯 Python 大包，
@@ -41,21 +86,17 @@ perf_log: true
 # 台架需要 TUI 时改回 true（启动器会按本键决定是否导入 rich）。
 debug_console_enabled: false
 
-# 比赛模式开关（默认 false = 台架行为, HUD 与 wifi 推流全开）。
-#   true  = 关掉每帧的显示侧开销: HUD 约 20 次 maix draw_string/draw_rect
-#           （CAM1 纯软件渲染, TARGET 模式还多 6 个误差刻度标签）+ wifi JPEG 编码。
-#           去年 main.py task2 单线程 read→find_blobs→send, 只画 1 个框 + 1 行字;
-#           当前实现拆成视觉线程 + deque + 主循环 + 显示四段, 这些绘制串在
-#           取帧→推流的同一拍里, 直接表现为打靶误差滞后。
+# 比赛模式开关（**当前 false = 台架行为, HUD 与 wifi 推流全开**）。
+#   ⚠ 2026-10-09 改回 false: 用户要恢复带框的调试画面。恢复后 show() 的频率由
+#     上面的 display_show_interval_ms(100=10Hz) 控制, HUD 绘制同频节流 ——
+#     按真机实测(见文件头)每帧绘制 ~0.1ms、show ~2~6ms, 10Hz 开销可接受。
+#   true  = 关掉每帧 HUD 叠加与 wifi JPEG 推流（极限榨帧率/正式比赛时用）。
+#           去年 main.py task2 是单线程 read→find_blobs→send, 只画 1 个框 + 1 行字。
 #   ⚠ 只影响显示: log_print 走独立写盘线程, UART DATA_STREAM 走主循环,
-#     **日志与协议推流完全不受影响**, 台架验收照旧看 [FPS] pipeline 与
-#     [UART TX] DATA_STREAM 的 Hz。
-#   保留: 画面照常上屏（显示线程拿 _display_frame）、退出图标照画（触摸急停）。
-#   ⚠ 2026-10-08: 本开关**不控制 LCD 上屏**。show() 的开销(实测 23.4ms/次, 持 GIL)
-#     由上面的 display_enabled / display_show_interval_ms 单独控制 —— 此前没人管它,
-#     比赛模式下显示线程照旧每 2 帧全屏刷一次, 是"识别链路 59.7Hz 而真机 20.3Hz"
-#     的首位嫌疑。要榨帧率就把这两个键一起动。
-competition_mode: true
+#     **日志与协议推流完全不受影响**。
+#   ⚠ 本开关**不控制 LCD 上屏**。上屏由 display_enabled / display_show_interval_ms
+#     单独控制, 两个键要一起看。
+competition_mode: false
 
 cameras:
   - camera_id: "main"

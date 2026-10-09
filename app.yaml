@@ -1,7 +1,7 @@
 id: gks_nearcam
 name: gks_nearcam
 name[zh]: 工科赛近端视觉
-version: 2.9.3
+version: 2.11.0
 icon: app.png
 author: GongKeSai 2026
 desc: >-
@@ -96,7 +96,9 @@ files:
   - modules\zw_uart_module\uart_driver.py
   - modules\zw_wifi_stream\__init__.py
   - modules\zw_wifi_stream\streamer.py
+  - scripts\wdt_probe.py
   - utils\__init__.py
+  - utils\boot_timing.py
   - utils\camera_misc_util.py
   - utils\console_capture.py
   - utils\cpu_affinity.py
