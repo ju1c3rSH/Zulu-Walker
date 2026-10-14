@@ -166,6 +166,19 @@ gks:
       #   ⚠ 只服务打靶。排爆要全帧三色定序（首次检出先后）、人质走 YOLO 全帧,
       #     缩小搜索域会**改语义**而不是省时间, 故不适用。
       track_roi_px: 64
+      # 跟踪窗模式: off | fixed(上帧 cx±track_roi_px, 即上注释) | dynamic。
+      #   dynamic: 窗宽 = min(2*track_roi_px, max(track_win_min_w, track_win_scale*blob_w)),
+      #            窗高 = min(roi高, blob_h + 2*track_v_pad_px), 中心对齐上帧 (cx,cy)。
+      #   横宽纵窄贴合"云台只闭环 X 轴"; 双向封顶不大于 fixed 窗, miss 成本也不高于
+      #   fixed; 未命中仍当帧回退全 ROI, 结果语义不变。非法值按 fixed。
+      track_mode: dynamic
+      track_win_scale: 4.0
+      track_win_min_w: 48
+      track_v_pad_px: 16
+      # 候选填充率过滤 pixels/(w*h): 环≈0.5~0.7, 实心矩形≈0.9+。全开区间=不过滤。
+      #   cv2 回退路径内孔被填实(环≈0.79), max 需留余量; 阈值必须真机标定后再收。
+      fill_min: 0.0
+      fill_max: 1.0
       lab:                # 与 explosive 段同值（"什么是红/绿/蓝"不随任务变）
         # 现场可按 ROI 内实际光比分头标定 —— 两者物理条件不同（爆: 全帧三坑 +
         # 10000 面积门槛; 靶: 窄 ROI + 1000）, 同一组值只是起点而非最优;

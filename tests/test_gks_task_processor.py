@@ -1124,3 +1124,86 @@ def test_target_track_not_used_by_explosive_or_rescue(cfg, pit_frame):
         proc.process(pit_frame)
     assert proc._target_track_hits == 0
     assert proc._target_track_miss == 0
+
+
+# ---------- 动态跟踪窗（target.track_mode=dynamic, 2026-10-15）----------
+#
+# 不变量同 fixed: 跟踪只省时间不改结果, 未命中当帧回退全 ROI。
+
+def test_target_dynamic_window_geometry():
+    """dynamic 窗几何: 缩放/封顶/夹回/退化。"""
+    roi = [0, 169, 640, 197]
+    c = {"track_win_scale": 4.0, "track_win_min_w": 48, "track_v_pad_px": 16}
+    box = {"x": 300, "y": 250, "w": 40, "h": 40, "cx": 320.0, "cy": 270.0}
+    # 4*40=160 超横向封顶 -> 宽 128; 高 40+32=72
+    assert GksTaskProcessor._target_dynamic_window(box, roi, 64, c) == [256, 234, 128, 72]
+    small = {"x": 310, "y": 260, "w": 20, "h": 20, "cx": 320.0, "cy": 270.0}
+    assert GksTaskProcessor._target_dynamic_window(small, roi, 64, c) == [280, 244, 80, 52]
+    # 贴边夹回 ROI
+    left = {"x": 0, "y": 170, "w": 100, "h": 100, "cx": 10.0, "cy": 175.0}
+    assert GksTaskProcessor._target_dynamic_window(left, roi, 64, c) == [0, 169, 128, 132]
+    # 退化窗口 -> None（回退全 ROI）
+    assert GksTaskProcessor._target_dynamic_window(box, [0, 0, 640, 2], 64, c) is None
+
+
+def test_target_dynamic_track_hit_matches_full_roi(cfg, pit_frame):
+    """dynamic 命中: err 与全 ROI 逐位一致。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (1, 1, 1))
+    r0 = proc.process(pit_frame).result_data
+    assert r0["found"] is True
+    cfg["target"]["track_mode"] = "dynamic"
+    cfg["target"]["track_roi_px"] = 64
+    r1 = proc.process(pit_frame).result_data
+    assert (r1["found"], r1["err_fixed"]) == (r0["found"], r0["err_fixed"])
+    assert proc._target_track_hits == 1 and proc._target_track_miss == 0
+
+
+def test_target_dynamic_track_miss_falls_back(cfg, pit_frame):
+    """dynamic 未命中: 当帧回退全 ROI, 不漏检。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (1, 1, 1))
+    cfg["target"]["track_mode"] = "dynamic"
+    cfg["target"]["track_roi_px"] = 64
+    proc.process(pit_frame)                            # 建立历史
+    proc._target_last_box = {"x": 600, "y": 200, "w": 20, "h": 20,
+                             "cx": 610.0, "cy": 210.0}  # 空白区 -> 窗必落空
+    r = proc.process(pit_frame).result_data
+    assert r["found"] is True and r["err_fixed"] == -6656
+    assert proc._target_track_miss == 1 and proc._target_track_hits == 0
+
+
+def test_target_track_mode_off_and_invalid(cfg, pit_frame):
+    """off 不扫; 非法 mode 按 fixed。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (1, 1, 1))
+    cfg["target"]["track_roi_px"] = 64
+    cfg["target"]["track_mode"] = "off"
+    for _ in range(3):
+        proc.process(pit_frame)
+    assert proc._target_track_hits == 0 and proc._target_track_miss == 0
+    cfg["target"]["track_mode"] = "nonsense"
+    proc.process(pit_frame)   # last_cx 已有历史 -> 立即按 fixed 走窄窗
+    assert proc._target_track_hits == 1
+
+
+def test_target_dynamic_state_cleared_on_reset(cfg, pit_frame):
+    """换任务/STOP 后 box 与窗必须清, 首帧不得继承旧窗。"""
+    proc = GksTaskProcessor(config=cfg)
+    proc.set_task(MODE_TARGET, (1, 1, 1))
+    cfg["target"]["track_mode"] = "dynamic"
+    cfg["target"]["track_roi_px"] = 64
+    proc.process(pit_frame)
+    assert proc._target_last_box is not None
+    proc._reset_latch()
+    assert proc._target_last_box is None and proc.target_track_win() is None
+
+
+def test_target_filter_by_fill():
+    """填充率过滤: 环留矩形踢; 默认不过滤; 全被滤掉回退原列表。"""
+    ring = {"pixels": 2000, "w": 60, "h": 60}   # fill ≈ 0.556
+    rect = {"pixels": 8000, "w": 95, "h": 90}   # fill ≈ 0.934
+    f = GksTaskProcessor._filter_by_fill
+    assert f([rect, ring], {"fill_min": 0.3, "fill_max": 0.85}) == [ring]
+    assert f([rect, ring], {}) == [rect, ring]                        # 默认全开区间
+    assert f([rect], {"fill_min": 0.3, "fill_max": 0.85}) == [rect]   # 空集回退

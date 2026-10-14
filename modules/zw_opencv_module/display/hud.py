@@ -42,6 +42,7 @@ _YELLOW = (255, 255, 0)
 _RED = (255, 64, 64)
 _GRAY = (160, 160, 160)
 _WHITE = (255, 255, 255)
+_CYAN = (0, 255, 255)
 
 _BAR_H = 30
 _LINE2_H = 24
@@ -85,6 +86,7 @@ class DisplayHUD:
             "red": self._mk_color(_RED, "COLOR_RED"),
             "gray": self._mk_color(_GRAY, "COLOR_GRAY"),
             "white": self._mk_color(_WHITE, "COLOR_WHITE"),
+            "cyan": self._mk_color(_CYAN, "COLOR_CYAN"),
         }
 
     @property
@@ -250,6 +252,7 @@ class DisplayHUD:
         mode = str(status.get("state", "IDLE"))
         if mode == "TARGET":
             self._draw_roi_band(img, status)
+            self._draw_track_win(img, status)
             self._draw_error_axis(img, status)
         elif mode == "EXPLOSIVE":
             self._draw_roi_band(img, status, key="explosive_roi", dim=True)
@@ -268,6 +271,17 @@ class DisplayHUD:
                 img.draw_rect(0, y, img.width(), 1, color=color, thickness=-1)
             except Exception as e:
                 self._diag("roi_line", e)
+
+    def _draw_track_win(self, img, status) -> None:
+        """靶标动态跟踪窗青框（无窗不画）。"""
+        win = status.get("target_track_win")
+        if not win:
+            return
+        try:
+            img.draw_rect(int(win[0]), int(win[1]), int(win[2]), int(win[3]),
+                          color=self._c["cyan"], thickness=1)
+        except Exception as e:
+            self._diag("track_win", e)
 
     def _draw_error_axis(self, img, status) -> None:
         h = img.height()

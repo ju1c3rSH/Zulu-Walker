@@ -189,16 +189,20 @@ _DEFAULT_CONFIG = {
         #   取小了追不上目标一帧内的位移 -> 窄窗扫不到、回落粗结果（精度打折）;
         #   取大了就吃掉降采样的收益。默认按 640x480 标定, 换分辨率按比例调。
         "refine_pad_px": 24,
-        # 跨帧跟踪窄窗（2026-10-09, 默认 0 = 关闭）。
-        #   >0 时: 若上一帧有结果, 本帧优先只在 "上一帧 cx ± track_roi_px" 的窄窗里扫;
-        #   窄窗未命中则**同一帧内回退全 ROI 复扫** —— 所以检出率与精度与"全程全 ROI"
-        #   完全一致, 只在命中时省时间。find_blobs 成本≈正比于搜索面积（实测
-        #   640x197=8.96ms / 640x40=1.53ms）, 而真机带目标时 task 达 21ms。
-        #   打靶是云台闭环 -> 帧间位移小, 这个假设成立。
-        #   ⚠ pad 取小了会频繁未命中, 净收益变负（白花一次窄窗 + 一次全 ROI）;
-        #     按 [GKS] target 跟踪窄窗未命中 日志的频率调。建议起点 48~64。
-        #   ⚠ 不用于排爆/人质: 那两个必须全帧（三色定序 / YOLO）。
+        # fixed 跟踪窗半宽; 0 = 关。dynamic 模式下作横向封顶(窗宽 ≤ 2×此值)。
         "track_roi_px": 0,
+        # 跟踪窗模式: off | fixed(上帧 cx±track_roi_px) | dynamic(随上帧 bbox 缩放)。
+        # 非法值按 fixed。未命中均当帧回退全 ROI, 结果语义不变。
+        "track_mode": "fixed",
+        # dynamic 窗: 宽 = min(2*track_roi_px, max(min_w, scale*blob_w)),
+        #             高 = min(roi高, blob_h + 2*v_pad)。双向封顶不大于 fixed 窗。
+        "track_win_scale": 4.0,
+        "track_win_min_w": 48,
+        "track_v_pad_px": 16,
+        # 候选填充率过滤 pixels/(w*h): 环≈0.5~0.7, 实心矩形≈0.9+。
+        # 全开区间 = 不过滤; cv2 路径内孔被填实(环≈0.79), max 需留余量, 阈值真机标定。
+        "fill_min": 0.0,
+        "fill_max": 1.0,
         # 与 explosive 段同值（"什么是红/绿/蓝"不随任务变）; 现场可按 ROI 内实际光比
         # 分头标定 —— 物理条件不同（爆: 全帧三坑 + 10000 面积门槛; 靶: 窄 ROI + 1000）,
         # 同一组值只是起点而非最优; 要分开标定先改这里。
@@ -431,6 +435,10 @@ class GksTaskProcessor(Processor):
             return tuple(float(v) for v in roi)
         return None
 
+    def target_track_win(self):
+        """最近一次使用的跟踪窄窗 [x,y,w,h] 全帧像素坐标, 或 None。"""
+        return list(self._target_track_win) if self._target_track_win else None
+
     @property
     def pit_status(self) -> dict:
         """调试页读锁存进度（爆炸物/人质坑位映射当前状态）。"""
@@ -485,6 +493,10 @@ class GksTaskProcessor(Processor):
         # hits 命中=省下全 ROI 扫描; miss=窄窗没命中、当帧回退全 ROI（多花一次窄窗）。
         self._target_track_hits: int = 0
         self._target_track_miss: int = 0
+        self._target_last_box: Optional[dict] = None   # 上帧候选 bbox(dynamic 窗用)
+        self._target_track_win: Optional[list] = None  # 最近一次跟踪窗(HUD 用)
+        self._target_track_scans: int = 0              # 窄窗扫描累计(平均窗面积日志)
+        self._target_track_area_sum: int = 0
 
     # ---- thresholds ----
 
@@ -1000,6 +1012,9 @@ class GksTaskProcessor(Processor):
             # 确认之后**才写(见 _target_confirm_ok), 否则被丢弃的帧也会污染死区基准。
             err_fixed = self._apply_target_deadband(err_fixed, cfg)
             self._target_last_cx = cx
+            self._target_last_box = {"x": int(largest["x"]), "y": int(largest["y"]),
+                                     "w": int(largest["w"]), "h": int(largest["h"]),
+                                     "cx": cx, "cy": float(largest["cy"])}
             if not self._target_confirm_ok(err_fixed, cfg):
                 return {"err_fixed": 0, "found": False}, hits, True
             return {"err_fixed": err_fixed, "found": True}, hits, True
@@ -1007,7 +1022,8 @@ class GksTaskProcessor(Processor):
 
     # ---- task2 候选选择与时序（防误检, 2026-10-08）----
     def _target_tracked_scan(self, frame, maix_img, lab, roi_px, cfg, scale):
-        """跨帧跟踪窄窗扫描。返回 blob 列表 = 命中; **None = 调用方应走全 ROI 路径**。
+        """跨帧跟踪窄窗扫描(track_mode: fixed/dynamic)。返回 blob 列表 = 命中;
+        **None = 调用方应走全 ROI 路径**。
 
         返回 None 的两种情况（调用方无需区分, 都会落到全 ROI 那条路）:
           · 不适用: 开关关闭 / scale<1（不与两段式混用）/ 无上一帧历史 / 窗口退化;
@@ -1021,17 +1037,30 @@ class GksTaskProcessor(Processor):
         就不会被选中。而 target.roi 是全宽的、prefer_continuity 默认关闭 —— 对
         "背景大片红赢过真球"那个已知风险, 跟踪窗口反而是加固（不是削弱）。
         """
+        mode = str(cfg.get("track_mode") or "fixed").strip().lower()
+        if mode == "off":
+            return None
+        if mode not in ("fixed", "dynamic"):   # 非法值按 fixed
+            mode = "fixed"
         try:
             pad = int(cfg.get("track_roi_px") or 0)
         except (TypeError, ValueError):
             pad = 0
         if pad <= 0 or scale < 1.0 or roi_px is None:
             return None
-        if self._target_last_cx is None:
-            return None
-        win = self._target_track_window(self._target_last_cx, roi_px, pad)
+        if mode == "fixed":
+            if self._target_last_cx is None:
+                return None
+            win = self._target_track_window(self._target_last_cx, roi_px, pad)
+        else:
+            if self._target_last_box is None:
+                return None
+            win = self._target_dynamic_window(self._target_last_box, roi_px, pad, cfg)
         if win is None:
             return None
+        self._target_track_win = list(win)
+        self._target_track_scans += 1
+        self._target_track_area_sum += win[2] * win[3]
         blobs = self._scan_blobs(frame, maix_img, lab, win,
                                  cfg["pixels_threshold"], cfg["area_threshold"],
                                  merge=bool(cfg["merge"]),
@@ -1039,8 +1068,10 @@ class GksTaskProcessor(Processor):
         if blobs:
             self._target_track_hits += 1
             if self._target_track_hits % 200 == 1:
+                avg = self._target_track_area_sum // max(1, self._target_track_scans)
                 log_print(f"[GKS] target 跟踪窄窗命中 x{self._target_track_hits} "
-                          f"(win={win[2]}x{win[3]}px, 命中时省下全 ROI 扫描)")
+                          f"(win={win[2]}x{win[3]}px, 平均窗 {avg}px², "
+                          f"窗扫 {self._target_track_scans} 次)")
             return blobs
         self._note_target_track_miss()
         return None
@@ -1060,6 +1091,30 @@ class GksTaskProcessor(Processor):
             return None
         return [x0, ry, x1 - x0, rh]
 
+    @staticmethod
+    def _target_dynamic_window(box, roi_px, pad, cfg):
+        """dynamic 跟踪窗: 上帧 bbox 缩放, 横宽纵窄, 夹回 ROI; 退化返回 None。
+
+        宽 = min(2*pad, max(min_w, scale*bw)); 高 = min(rh, bh + 2*v_pad)。
+        双向封顶保证任何一帧的窗口不大于 fixed 模式的 2*pad × rh。
+        """
+        rx, ry, rw, rh = roi_px
+        bw = max(1, int(box["w"]))
+        bh = max(1, int(box["h"]))
+        try:
+            k = float(cfg.get("track_win_scale", 4.0))
+            min_w = int(cfg.get("track_win_min_w", 48))
+            v_pad = int(cfg.get("track_v_pad_px", 16))
+        except (TypeError, ValueError):
+            return None
+        w = min(2 * pad, max(min_w, int(k * bw)), rw)
+        h = min(rh, max(1, bh + 2 * v_pad))
+        if w <= 2 or h <= 2:
+            return None
+        x0 = max(rx, min(int(box["cx"]) - w // 2, rx + rw - w))
+        y0 = max(ry, min(int(box["cy"]) - h // 2, ry + rh - h))
+        return [x0, y0, w, h]
+
     def _note_target_track_miss(self) -> None:
         """窄窗未命中的按批汇总日志（不逐帧刷屏）。"""
         self._target_track_miss += 1
@@ -1067,6 +1122,22 @@ class GksTaskProcessor(Processor):
             log_print(f"[GKS] target 跟踪窄窗未命中 x{self._target_track_miss} "
                       f"-> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次窄窗）;"
                       f" 频繁出现请调大 target.track_roi_px")
+
+    @staticmethod
+    def _filter_by_fill(blobs: list, cfg: dict) -> list:
+        """候选填充率过滤 pixels/(w*h); 空集回退原列表(只降误检, 不制造漏检)。"""
+        try:
+            lo = float(cfg.get("fill_min", 0.0))
+            hi = float(cfg.get("fill_max", 1.0))
+        except (TypeError, ValueError):
+            return blobs
+        if lo <= 0.0 and hi >= 1.0:
+            return blobs
+        kept = [b for b in blobs
+                if lo <= b["pixels"] / max(1, b["w"] * b["h"]) <= hi]
+        if not kept:
+            log_print("[GKS] target 填充率过滤后无候选 -> 回退不过滤")
+        return kept or blobs
 
     def _pick_target_blob(self, blobs: list, cfg: dict):
         """从候选里挑一个靶标 blob。
@@ -1083,6 +1154,7 @@ class GksTaskProcessor(Processor):
         这里统一用 **(-判据, cx)** 显式比较, 保证同一候选集的挑选结果可复现 ——
         否则现场连"跳没跳"都无法归因。
         """
+        blobs = self._filter_by_fill(blobs, cfg)
         last_cx = self._target_last_cx
 
         if bool(cfg.get("prefer_continuity")) and last_cx is not None:

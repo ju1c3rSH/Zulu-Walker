@@ -585,6 +585,7 @@ class GksCoordinator:
             "last_nack": self._last_nack,
             "target_roi": self._target_roi_snapshot(),
             "explosive_roi": self._explosive_roi_snapshot(),
+            "target_track_win": self._target_track_win_snapshot(),
         }
 
     def _target_roi_snapshot(self):
@@ -598,5 +599,12 @@ class GksCoordinator:
         processor = self._get_gks_processor()
         try:
             return processor.explosive_roi() if processor is not None else None
+        except Exception:
+            return None
+
+    def _target_track_win_snapshot(self):
+        processor = self._get_gks_processor()
+        try:
+            return processor.target_track_win() if processor is not None else None
         except Exception:
             return None

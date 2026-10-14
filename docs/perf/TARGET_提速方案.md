@@ -231,16 +231,18 @@
 
 ---
 
-### P2-A｜自适应跟踪窗（**收益为假设，备选**）
+### P2-A｜动态跟踪窗（**已实现 2026-10-15**）
 
-`_target_track_window():925` 用固定 `pad`（半宽 64px）。
-设想 `pad = max(track_roi_px, int(last_blob_w * k))`。
-
-**⚠ 疑点**：初稿说"远景时窗可收到 32-40px" —— 靶标远小时背景红块的**相对**危险性更高
-（`_pick_target_blob:950` 注释专门警告"背景大片红赢过真球"）。
-收窄窗可能恰好排除背景干扰（好事），但收窄过头会退回全 ROI。**方向对，幅度是猜的。**
-**⚠ 风险**：需新增 `_target_last_w` 状态，`_reset_latch():373` 必须一并清。
-**结论：备选，非主线。**
+`target.track_mode: dynamic`：窗中心对齐上帧 (cx,cy)，
+宽 = `min(2*track_roi_px, max(track_win_min_w, track_win_scale*blob_w))`，
+高 = `min(roi高, blob_h + 2*track_v_pad_px)`。横宽纵窄贴合"云台只闭环 X 轴"；
+双向封顶保证任何一帧的窗口不大于 fixed 窗（2*pad × roi高），miss 成本也不高于 fixed
+（窄窗更小）。未命中仍当帧回退全 ROI，结果语义不变（测试钉住）。
+配套 opt-in 候选填充率过滤（`target.fill_min/fill_max`，环≈0.5~0.7 vs 实心矩形≈0.9+；
+cv2 路径内孔被填实（环≈0.79），max 须留余量并真机标定，默认全开区间=关；
+空集回退不过滤，不制造漏检）。
+HUD 青框显示当前窗；命中日志含平均窗面积与累计扫描次数。
+回退：`track_mode: fixed`（原行为）/ `off`（关闭）。
 
 ---
 
