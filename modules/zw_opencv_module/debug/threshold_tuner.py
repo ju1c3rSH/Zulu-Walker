@@ -20,6 +20,7 @@ import time
 
 import numpy as np
 
+from framework.display.gate import warn_slow_format
 from modules.zw_opencv_module.debug.lab_session import (
     GROUP_NAMES,
     THRESHOLD_FILE,
@@ -154,6 +155,7 @@ class GksThresholdTuner:
                 continue
             frame_bgr = self._to_bgr(frame)
             img = self._render_step(frame_bgr, disp, ts)
+            warn_slow_format(disp, img)   # 告警而非 assert: 抛异常会被上层吞成冻屏
             disp.show(img)
             if self._session_stop:
                 break
@@ -174,6 +176,7 @@ class GksThresholdTuner:
         img = self._render_step(frame_bgr, disp, ts)
         self._note_phase("render", time.perf_counter() - _t)
         _t = time.perf_counter()
+        warn_slow_format(disp, img)   # 告警而非 assert: 抛异常会被上层吞成冻屏
         disp.show(img)
         self._flush_phase(time.perf_counter() - _t)
 
@@ -372,8 +375,13 @@ class GksThresholdTuner:
 
     @staticmethod
     def _to_maix(bgr):
+        """BGR numpy -> FMT_RGB888 原生画布, 免 show() 内部整帧转换。
+
+        ⚠ 相机给的是负步长视图, 必须先落成连续 RGB 字节, 否则红蓝互换。
+        """
         import maix.image
-        return maix.image.cv2image(bgr, bgr=True, copy=True)
+        rgb = np.ascontiguousarray(bgr[:, :, ::-1])
+        return maix.image.cv2image(rgb, bgr=False, copy=True)
 
     @staticmethod
     def _analyze(frame_bgr, lab_threshold, scale: float = 1.0,

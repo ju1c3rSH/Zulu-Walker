@@ -6,9 +6,13 @@ from typing import Optional
 import maix.display
 import maix.err
 
+from framework.display.types import DisplayCaps, PixelFormat
 from utils.boot_timing import boot_stage
 
 logger = logging.getLogger(__name__)
+
+# MaixCAM-Pro 触摸屏面板尺寸; 构造失败时 caps() 的唯一兜底。
+_FALLBACK_W, _FALLBACK_H = 552, 368
 
 
 class MaixCam1Display:
@@ -63,6 +67,19 @@ class MaixCam1Display:
             return err == maix.err.Err.ERR_NONE
         except Exception:
             return False
+
+    def caps(self) -> DisplayCaps:
+        """平台上屏能力; 尺寸读真实 Display, 读不到退回 552x368 面板。"""
+        try:
+            w, h = self._disp.width(), self._disp.height()
+        except Exception:
+            w = h = 0
+        return DisplayCaps(
+            width=w or _FALLBACK_W, height=h or _FALLBACK_H,
+            native_format=PixelFormat.RGB888,
+            accepted=frozenset((PixelFormat.NATIVE, PixelFormat.RGB888)),
+            encode_in_show=True,
+        )
 
     def width(self) -> int:
         if self._disp is None:

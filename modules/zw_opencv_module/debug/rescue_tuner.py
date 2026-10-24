@@ -19,6 +19,9 @@ GksTaskProcessor._log_rescue_dets。
 import os
 import time
 
+import numpy as np
+
+from framework.display.gate import warn_slow_format
 from modules.zw_opencv_module.processors.gks_task_processor import RESCUE_PARAMS_FILE
 
 
@@ -225,6 +228,7 @@ class GksRescueTuner:
         if clicked and self._in(x, y, (2, 2, 90, _UI_TOPBAR_H - 6)):
             self._stop = True
             _t = time.perf_counter()
+            warn_slow_format(disp, img)   # 告警而非 assert: 抛异常会被上层吞成冻屏
             disp.show(img)
             self._flush_phase(time.perf_counter() - _t)
             return
@@ -240,6 +244,7 @@ class GksRescueTuner:
         if self._toast and time.time() < self._toast_until:
             self._text(img, 8, 34, self._toast, self._C["yellow"], 1.2)
         _t = time.perf_counter()
+        warn_slow_format(disp, img)   # 告警而非 assert: 抛异常会被上层吞成冻屏
         disp.show(img)
         self._flush_phase(time.perf_counter() - _t)
 
@@ -366,8 +371,13 @@ class GksRescueTuner:
         return img
 
     def _to_maix(self, bgr):
+        """BGR numpy -> FMT_RGB888 原生画布, 免 show() 内部整帧转换。
+
+        ⚠ 相机给的是负步长视图, 必须先落成连续 RGB 字节, 否则红蓝互换。
+        """
         import maix.image
-        return maix.image.cv2image(bgr, bgr=True, copy=True)
+        rgb = np.ascontiguousarray(bgr[:, :, ::-1])
+        return maix.image.cv2image(rgb, bgr=False, copy=True)
 
     def _text(self, img, x, y, s, color, scale=1.0):
         try:
