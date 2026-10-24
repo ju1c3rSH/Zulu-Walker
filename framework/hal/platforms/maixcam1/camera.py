@@ -442,13 +442,19 @@ class MaixCam1Camera:
         st[key] = (time.perf_counter() - t0) * 1000.0
 
     def _note_conv(self, t0: float, raw=None) -> None:
-        """`[PERF] conv` 探针: image2cv 每帧代价 + 源格式。源格式只取一次（要问 C++）。"""
+        """`[PERF] conv` 探针: image2cv 每帧代价 + 源格式。
+
+        ⚠ 格式缓存 1s 过期: `format()` 要问 C++, 但缓存到进程结束会让 src= 永久失真。
+        """
         if not perf_detail_enabled():
             return
+        now = time.monotonic()
         tag = self.__dict__.get("_conv_fmt")
-        if tag is None:
-            tag = self.__dict__["_conv_fmt"] = _fmt_tag(
-                raw if raw is not None else self._last_raw)
+        if tag is None or now - self.__dict__.get("_conv_fmt_ts", 0.0) >= 1.0:
+            tag = _fmt_tag(raw if raw is not None
+                           else self.__dict__.get("_last_raw"))
+            self.__dict__["_conv_fmt"] = tag
+            self.__dict__["_conv_fmt_ts"] = now
         perf_note("conv", (time.perf_counter() - t0) * 1000.0, f"src={tag} out=BGR")
 
     def read_raw(self) -> Optional[np.ndarray]:

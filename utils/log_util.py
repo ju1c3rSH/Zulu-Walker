@@ -46,12 +46,24 @@ _DEFAULT_PERF_NAMES = (
 
 _PERF_LOG_NAMES: set = set()
 
-# `observability:` 两级闸门, 只管 `[PERF] ` 行; 上面的 names 路径照旧管非 [PERF] 高频行。
+# `observability:` 两级闸门, 只管 `[PERF] ` 行; 上面的 names 路径管非 [PERF] 高频行。
 # ⚠ 前缀必须带尾空格: startswith("[PERF") 会误吞 [PERFLOG] 配置行。
 _PERF_TAG = "[PERF] "
 _PERF_COARSE = ("[PERF] vision", "[PERF] mainloop", "[PERF] lcd show")
 _PERF_GATE = True
 _PERF_DETAIL = True
+_PERF_GATE_SET = False      # observability.perf 是否被显式配置过
+_PERF_NAMES_MUTE_ALL = False  # 默认组被整组静音 -> 未列名的 `[PERF] ` 行也吞
+_PERF_DEFAULT_SET = frozenset(_DEFAULT_PERF_NAMES)
+
+
+def _refresh_mute_all() -> None:
+    """默认组被整组静音 = 关掉性能日志, 未列入名单的 `[PERF] ` 行也一起吞。
+
+    ⚠ 判据是"超集"而非"相等": 追加 `[UART ACTION]` 等名字不能让 `[PERF] page*` 漏出来。
+    """
+    global _PERF_NAMES_MUTE_ALL
+    _PERF_NAMES_MUTE_ALL = bool(_PERF_LOG_NAMES) and _PERF_DEFAULT_SET <= _PERF_LOG_NAMES
 
 
 def set_perf_log(enabled: bool = True, names=None) -> None:
@@ -64,27 +76,28 @@ def set_perf_log(enabled: bool = True, names=None) -> None:
     调用点: `app/main.py` 从 `project_config.yaml` 的 `perf_log:` 段读取。
     默认（enabled=True）不设过滤集合, 保持"改前逐行照打"。
 
-    ⚠ 关默认组时一并落 `_PERF_GATE`: 未进名单的 `[PERF] page*` 等也必须静音。
+    ⚠ 本函数**不碰** `_PERF_GATE`/`_PERF_DETAIL`: 否则会反向放行 observability 的关闭。
     """
-    global _PERF_LOG_NAMES, _PERF_GATE, _PERF_DETAIL
+    global _PERF_LOG_NAMES
     if enabled:
         _PERF_LOG_NAMES = set()
-        _PERF_GATE = True
-        _PERF_DETAIL = True
-        return
-    if not names:
-        _PERF_LOG_NAMES = set(_DEFAULT_PERF_NAMES)
-        _PERF_GATE = False
-        return
-    _PERF_LOG_NAMES = {str(n) for n in names}
-    _PERF_GATE = True                   # 自定义名单只静音列出的标签, 其余照打
+    else:
+        _PERF_LOG_NAMES = (set(_DEFAULT_PERF_NAMES) if not names
+                           else {str(n) for n in names})
+    _refresh_mute_all()
 
 
-def set_perf_gate(perf: bool = True, detail: bool = True) -> None:
-    """`observability` 闸门: perf = 所有 `[PERF] ` 行, detail = 细粒度分项。"""
-    global _PERF_GATE, _PERF_DETAIL
-    _PERF_GATE = bool(perf)
-    _PERF_DETAIL = bool(detail)
+def set_perf_gate(perf=None, detail=None) -> None:
+    """`observability` 闸门: perf = 所有 `[PERF] ` 行, detail = 细粒度分项。
+
+    ⚠ None = 该键未配置, 保持现值（空字典不得把闸门重置成全开）。
+    """
+    global _PERF_GATE, _PERF_DETAIL, _PERF_GATE_SET
+    if perf is not None:
+        _PERF_GATE = bool(perf)
+        _PERF_GATE_SET = True
+    if detail is not None:
+        _PERF_DETAIL = bool(detail)
 
 
 def perf_log_enabled() -> bool:
@@ -93,18 +106,22 @@ def perf_log_enabled() -> bool:
 
 
 def perf_enabled() -> bool:
-    """`[PERF] ` 行总开关 —— 探针在拼字符串之前先问这一句。"""
-    return _PERF_GATE
+    """`[PERF] ` 行总开关（observability 显式配置优先, 否则由名单推导）。"""
+    if _PERF_GATE_SET:
+        return _PERF_GATE
+    return not _PERF_NAMES_MUTE_ALL
 
 
 def perf_detail_enabled() -> bool:
     """细粒度探针开关（总开关关掉时恒 False, 热路径直接跳过）。"""
-    return _PERF_GATE and _PERF_DETAIL
+    return _PERF_DETAIL and perf_enabled()
 
 
 def perf_t0() -> float:
     """探针计时起点: 关闸时返回 0.0, 调用方据此跳过计时与格式化。"""
-    return time.perf_counter() if _PERF_GATE and _PERF_DETAIL else 0.0
+    if _PERF_DETAIL and perf_enabled():
+        return time.perf_counter()
+    return 0.0
 
 
 def _is_coarse_perf(msg: str) -> bool:
@@ -117,7 +134,7 @@ def _is_coarse_perf(msg: str) -> bool:
 def _is_perf_log(msg: str) -> bool:
     """消息是否命中当前被吞的性能日志标签。空集合 -> 恒 False（零开销）。"""
     if msg.startswith(_PERF_TAG):
-        if not _PERF_GATE:
+        if not perf_enabled():
             return True
         if not _PERF_DETAIL and not _is_coarse_perf(msg):
             return True
@@ -142,7 +159,7 @@ class PerfAgg:
         self._ms = 0.0
 
     def add(self, ms: float, tag: Optional[str] = None) -> None:
-        if not _PERF_GATE or not _PERF_DETAIL:
+        if not perf_detail_enabled():
             return
         self._n += 1
         self._ms += ms
@@ -170,7 +187,7 @@ _AGGS: Dict[str, PerfAgg] = {}
 
 def perf_note(label: str, ms: float, tag: Optional[str] = None) -> None:
     """探针入口: 每秒一条 `[PERF] <label>` 汇总。闸门关闭时只有一次布尔判断。"""
-    if not _PERF_GATE or not _PERF_DETAIL:
+    if not perf_detail_enabled():
         return
     agg = _AGGS.get(label)
     if agg is None:

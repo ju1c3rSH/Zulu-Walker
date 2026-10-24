@@ -309,12 +309,13 @@ class DebugPageFactory:
                 log_print(f"[PAGE] display.show FAIL: {type(e).__name__}: {e}")
         self._last_show_time = now
         _wall_ms = (time.perf_counter() - t0) * 1000.0
+        _cpu_ms = (_thread_cpu() - cpu0) * 1000.0    # ⚠ 必须在 fmt 探针之前采样
         self._iter["show"] += _wall_ms
         self._last_show_tag = _frame_tag(frame)
         # [PERF] fmt: to_format 在 C++ show() 内部, 拆不出来 —— 这里记帧格式 + 总耗时。
         if perf_detail_enabled():
             perf_note("fmt", _wall_ms, f"fmt={self._last_show_tag}")
-        self._note_show_perf(_wall_ms, (_thread_cpu() - cpu0) * 1000.0)
+        self._note_show_perf(_wall_ms, _cpu_ms)
         return True
 
     def _note_show_perf(self, wall_ms: float, cpu_ms: float = 0.0) -> None:
@@ -687,10 +688,11 @@ class MainUiShell:
         self._last_show_time = now
         self._last_show_tag = _frame_tag(frame)
         _wall = (time.perf_counter() - t0) * 1000.0
+        _cpu = (_thread_cpu() - cpu0) * 1000.0       # ⚠ 必须在 fmt 探针之前采样
         # [PERF] fmt: to_format 在 C++ show() 内部, 拆不出来 —— 这里记帧格式 + 总耗时。
         if perf_detail_enabled():
             perf_note("fmt", _wall, f"fmt={self._last_show_tag}")
-        self._note_show_perf(_wall, (_thread_cpu() - cpu0) * 1000.0)
+        self._note_show_perf(_wall, _cpu)
 
     def _cmm_pressure_throttled(self) -> bool:
         """CMM 压力查询降频到 1s 一次。
@@ -1031,45 +1033,35 @@ def _apply_perf_log_config(cfg, observability=None) -> None:
     两种写法都认（老配置不改也不炸）:
         perf_log: true / false                     # 布尔: 全开 / 按默认组静音
         perf_log: {enabled: false, names: [...]}   # 映射: 可自定义静音标签
-    `observability.perf` / `.perf_detail` 决定 `[PERF] ` 行（存在时优先）。
+    `observability.perf` / `.perf_detail` 只管 `[PERF] ` 行（存在该键时才生效）。
     缺键/解析异常 -> 保持默认（全开, 即改前行为）。
     """
-    from utils.log_util import set_perf_log, set_perf_gate, _DEFAULT_PERF_NAMES
-    perf = detail = True
-    enabled, names = True, None
-    handled = False
+    from utils.log_util import (set_perf_log, set_perf_gate, perf_log_enabled,
+                                perf_enabled, perf_detail_enabled)
+    perf = detail = None
     try:
         if isinstance(cfg, bool):
-            enabled = cfg
-            handled = True
+            set_perf_log(cfg)
         elif isinstance(cfg, dict):
-            enabled = bool(cfg.get("enabled", True))
             names = cfg.get("names")
-            handled = True
-        if handled:
-            # ⚠ 关默认组 = 关性能日志, 故未列入名单的 `[PERF] ` 行也要静音。
-            if not enabled and (not names
-                                or {str(n) for n in names} == set(_DEFAULT_PERF_NAMES)):
-                names = None
-            set_perf_log(enabled, names)
+            set_perf_log(bool(cfg.get("enabled", True)),
+                         None if names is None else list(names))
         if isinstance(observability, dict):
-            perf = bool(observability.get("perf", True))
-            detail = perf and bool(observability.get("perf_detail", True))
+            # ⚠ 只认真正存在的键: 空字典/无关键必须是 no-op, 不能把闸门重置回全开。
+            if "perf" in observability:
+                perf = bool(observability["perf"])
+            if "perf_detail" in observability:
+                detail = bool(observability["perf_detail"])
             set_perf_gate(perf, detail)
-            if not perf and not handled:
-                # ⚠ observability 取代 perf_log: 只写这一段也要静音非 [PERF] 的心跳行。
-                enabled, names = False, None
+            if perf is False:
+                # ⚠ observability.perf=false 连心跳行一起静音（DATA_STREAM/WDT/MEM）。
                 set_perf_log(False)
-            handled = True
-        if not handled:
-            return                      # 缺键/None/乱写 -> 用模块默认（全开）
     except Exception as e:
         log_print(f"[PERFLOG] 配置应用失败, 保持全开: {type(e).__name__}: {e}")
         return
-    log_print(f"[PERFLOG] perf_log={'ON' if enabled else 'MUTED'} "
-              f"names={list(names) if names else 'default'} "
-              f"observability.perf={'ON' if perf else 'OFF'} "
-              f"perf_detail={'ON' if detail else 'OFF'}")
+    log_print(f"[PERFLOG] perf_log={'ON' if perf_log_enabled() else 'MUTED'} "
+              f"observability.perf={'ON' if perf_enabled() else 'OFF'} "
+              f"perf_detail={'ON' if perf_detail_enabled() else 'OFF'}")
 
 
 def main():

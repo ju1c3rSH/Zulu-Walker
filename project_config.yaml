@@ -46,6 +46,7 @@ wdt_enabled: false
 
 # ---- 观测闸门（supersedes perf_log, 但 perf_log: 仍然生效）----
 # perf=false 吞掉全部 `[PERF] ` 行; perf_detail=false 只留 vision/mainloop/lcd show。
+# ⚠ perf=false 连 DATA_STREAM/WDT/MEM 心跳一起静音, 与 perf_log: 写什么无关。
 observability:
   perf: false
   perf_detail: false
