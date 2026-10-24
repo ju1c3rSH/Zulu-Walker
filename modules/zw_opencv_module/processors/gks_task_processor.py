@@ -76,6 +76,11 @@ _LASER_CALIB_KEYS = {
     "dom_min":  ("laser", "dom_min", int),
     "min_area": ("laser", "min_area", int),
     "max_area": ("laser", "max_area", int),
+    # 亮环境/白背景签名扩展（2026-10-25; 判据链见 laser_calib_tuner.py 文件头）。
+    # "白核+淡红晕"签名默认开启; halo_pad=0 整体关闭回到旧"绝对红"单入口。
+    "dom_faint": ("laser", "dom_faint", int),   # 白核+淡晕确认: 窗口内 max(dom) 下限
+    "halo_pad":  ("laser", "halo_pad", int),    # 白核膨胀半径(0=关闭签名入口)
+    "prom_min":  ("laser", "prom_min", int),    # 白核门限(R,G,B 三通道同时>=此值)
 }
 
 
@@ -279,6 +284,16 @@ _DEFAULT_CONFIG = {
         # 面积过滤（像素, 全分辨率口径; 光斑 3~30px 直径随距离变化）。
         "min_area": 8,
         "max_area": 4000,
+        # ---- 亮环境/白背景签名扩展（判据链见 laser_calib_tuner.py 文件头）----
+        # 台架实测(bbcf8e0): 白背景 50cm 远距光斑泛白成"白点+一点红晕", 晕 dom
+        # 25~45 在 dom_min=40 门限两侧抖动 -> 概率性丢点; 暗背景/近距旧判据够用。
+        # 白核(R,G,B 全>=prom_min)膨胀 halo_pad 作第二候选入口 + 逐块"白核+淡晕"
+        # 确认修复之; 判据链细节与 HUD 标定读数见 laser_calib_tuner.py 文件头。
+        "dom_faint": 12,
+        # 白核膨胀半径 / 确认窗口外扩。0 = 关闭签名扩展（旧"绝对红"单入口）。
+        "halo_pad": 3,
+        # 白核门限; HUD 读数 core=最白像素三通道最小值, 现场取 core-10。
+        "prom_min": 240,
         "calib_file": LASER_CALIB_FILE,
     },
     "rescue": {
