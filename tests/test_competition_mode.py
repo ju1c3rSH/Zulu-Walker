@@ -94,9 +94,12 @@ def test_competition_mode_skips_capture_sink(vm_with_pipe):
     vm.set_capture_sink(pushed.append)
 
     vm.set_render_enabled(True)
-    for _ in range(vm._CAPTURE_EVERY_N):
+    n = vm._CAPTURE_EVERY_N
+    for _ in range(n):
         vm._update_display_frame()
-    assert len(pushed) == 1, "渲染开启时推流应照常"
+    # 生产者每帧都喂; 节流由 sink 按 fps 自己做。
+    # 旧实现用 `_capture_seq += 1` 放在 if 内 -> 整进程只喂 1 帧(bug), 此处曾断言 ==1。
+    assert len(pushed) == n, "渲染开启时每帧都应喂给 sink"
 
     pushed.clear()
     vm.set_render_enabled(False)

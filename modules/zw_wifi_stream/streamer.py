@@ -156,10 +156,19 @@ class JpegStreamer:
         self._enc_n = 0
         if n:
             perf_note("jpeg", avg)
+        # 推流健康度: 这几项是"页面空白"时唯一能定位问题的依据
+        from utils.log_util import log_print
+        log_print(f"[HTTP] stream enc={n}/s avg={avg:.1f}ms "
+                  f"drop={self._dropped} fail={self._failed}")
+        self._dropped = 0
 
     def push_frame(self, img) -> None:
-        """喂一帧。按 fps 时间节流；deque(maxlen=1) 丢旧，永不阻塞生产者。"""
-        if not self._is_running or self._server is None:
+        """喂一帧。按 fps 时间节流；deque(maxlen=1) 丢旧，永不阻塞生产者。
+
+        就绪判据用 `_server`（而非 `_is_running`）: 后者在 srv.start() 之后才置位,
+        启动早期送达的帧会被静默丢弃, 表现为浏览器永远空白。
+        """
+        if self._server is None:
             return
         if self._min_interval_s > 0.0:
             now = time.monotonic()

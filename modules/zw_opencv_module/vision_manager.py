@@ -361,9 +361,9 @@ class VisionManager:
             else:
                 # 比赛模式: 无 HUD 可画, 每帧照旧发布（保持"最新原始帧"语义）
                 self._display_frame = raw_img
-            if self._render_enabled and self._capture_sink is not None \
-                    and self._capture_seq % self._CAPTURE_EVERY_N == 0:
-                self._capture_seq += 1
+            if self._render_enabled and self._capture_sink is not None:
+                # 每帧都喂, 节流由 sink 按 fps 自己做。此前用帧计数闸门
+                # (`_capture_seq += 1` 在 if 内) 导致自增只发生一次 -> 整进程只喂 1 帧。
                 self._capture_sink(raw_img)
             return
 
