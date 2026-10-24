@@ -99,11 +99,22 @@ def test_vision_thread_has_no_capture_sink(vm_with_pipe):
     assert not hasattr(vm, "_capture_sink"), "视觉线程不得再持有推流钩子"
 
     # 渲染开/关都只更新 HUD 与 _display_frame, 不产生任何编码副作用
-    for render in (True, False):
-        vm.set_render_enabled(render)
-        for _ in range(4):
-            vm._update_display_frame()
-        assert vm.get_display_frame() == "RAW_FRAME"
+    import modules.zw_wifi_stream.streamer as st_mod
+    calls = {"push": 0, "encode": 0}
+    orig_push, orig_enc = st_mod.JpegStreamer.push_frame, st_mod.JpegStreamer._encode
+    st_mod.JpegStreamer.push_frame = lambda self, img: calls.__setitem__("push", calls["push"] + 1)
+    st_mod.JpegStreamer._encode = lambda self, img: calls.__setitem__("encode", calls["encode"] + 1)
+    try:
+        for render in (True, False):
+            vm.set_render_enabled(render)
+            for _ in range(20):
+                vm._update_display_frame()
+            assert vm.get_display_frame() == "RAW_FRAME"
+            # 结构性检查: 视觉线程一次编码都不做（推流只由 presenter 的 JpegTap 发起）
+            assert calls["push"] == 0 and calls["encode"] == 0, \
+                "视觉线程发生了推流/编码, 编码已迁出视觉线程"
+    finally:
+        st_mod.JpegStreamer.push_frame, st_mod.JpegStreamer._encode = orig_push, orig_enc
 
 
 def test_render_toggle_is_reversible(vm_with_pipe):

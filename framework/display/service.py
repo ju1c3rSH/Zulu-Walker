@@ -124,17 +124,19 @@ class PresenterService:
                 self._skipped += 1
                 shown = False
             # ⚠ 推流独立于 LCD 节流: 关了屏也要继续供帧（fps 节流在 streamer 内）
-            if self.policy.stream_enabled:
+            # ⚠ frame is None（present(show_fn) 路径）时绝不能把 callable 塞给 tap
+            if self.policy.stream_enabled and frame is not None:
                 self._offer_taps(frame)
             return shown
 
-    def show(self, frame: Any, *args, **kwargs) -> bool:
-        """调试页把 presenter 当 display 用: show(img) == submit(source="page")。"""
-        return self.submit(frame, source="page")
+    def present(self, show_fn: Callable[[], Any], frame: Any = None,
+                *, source: str = "page") -> bool:
+        """旧 `_maybe_show(show_fn)` 的等价入口: 自定义上屏闭包 + 同一条 gate。"""
+        return self.submit(frame, source=source, show_fn=show_fn)
 
     def _render(self, frame: Any, source: str,
                 show_fn: Optional[Callable[[], Any]]) -> None:
-        """锁内真正上屏: show_fn 优先（旧调用点自带 show 闭包）, 否则走 LCD tap。"""
+        """调用方已持锁: show_fn 优先（旧调用点自带 show 闭包）, 否则走 LCD tap。"""
         if show_fn is not None:
             t0 = time.perf_counter()
             try:
@@ -150,12 +152,6 @@ class PresenterService:
         self._lcd.offer(frame, self.frame_counter)
         cpu = (thread_cpu() - cpu0) * 1000.0
         self._note_show((time.perf_counter() - t0) * 1000.0, frame, source, cpu)
-
-    def present(self, show_fn: Callable[[], Any], frame: Any = None,
-                *, source: str = "page") -> bool:
-        """旧 `_maybe_show(show_fn)` 的等价入口: 自定义上屏闭包 + 同一条 gate。"""
-        return self.submit(frame if frame is not None else show_fn,
-                           source=source, show_fn=show_fn)
 
     def _gate(self, now: float) -> bool:
         """锁内调用: 策略判定 + CMM 降频; 通过时刷新时间戳。"""
@@ -187,12 +183,17 @@ class PresenterService:
                 self._cmm_pressure = False
         return self._cmm_pressure
 
-    def _offer_lcd(self, frame: Any, source: str) -> None:
-        t0 = time.perf_counter()
-        cpu0 = thread_cpu()          # ⚠ 必须在 show 之前采样
-        self._lcd.offer(frame, self.frame_counter)
-        cpu = (thread_cpu() - cpu0) * 1000.0
-        self._note_show((time.perf_counter() - t0) * 1000.0, frame, source, cpu)
+    def _offer_taps(self, frame: Any) -> None:
+        """调用方已持锁: 非 LCD tap 逐个投递, attached()=False 直接跳过（零编码）。"""
+        seq = self.frame_counter
+        for tap in self._taps:
+            if tap is self._lcd:
+                continue
+            try:
+                if tap.attached():
+                    tap.offer(frame, seq)
+            except Exception:
+                pass
 
     def take_last_show_ms(self) -> float:
         """读走最近一次上屏耗时并清零（调试页逐帧归因用, 不会被重复累加）。"""
@@ -213,21 +214,10 @@ class PresenterService:
         if m.add(wall_ms, cpu_ms):
             log_print(m.line(self._last_fmt.name))
 
-    def _offer_taps(self, frame: Any) -> None:
-        """非 LCD tap 逐个投递; attached()=False 的直接跳过（零编码成本）。"""
-        seq = self.frame_counter
-        for tap in self._taps:
-            if tap is self._lcd:
-                continue
-            try:
-                if tap.attached():
-                    tap.offer(frame, seq)
-            except Exception:
-                pass
-
     # ---------------- 兼容垫片: 调试页的 disp 用法 ----------------
 
     def show(self, frame: Any, *args, **kwargs) -> bool:
+        """调试页把 presenter 当 display 用: show(img) == submit(source="page")。"""
         return self.submit(frame, source="page")
 
     def width(self) -> int:

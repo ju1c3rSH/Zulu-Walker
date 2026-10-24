@@ -10,7 +10,8 @@ import time
 
 class Metrics:
     __slots__ = ("label", "window_s", "_cap", "_wall", "_cpu", "_idx", "_n",
-                 "_wall_sum", "_cpu_sum", "_t0", "_elapsed", "_pend", "_shows")
+                 "_wall_sum", "_cpu_sum", "_t0", "_elapsed", "_pend", "_shows",
+                 "_last_n", "_last_wall", "_last_cpu")
 
     def __init__(self, label: str, window_s: float = 1.0,
                  capacity: int = 120) -> None:
@@ -27,12 +28,19 @@ class Metrics:
         self._elapsed = 0.0
         self._pend = 0                      # 本窗口内 add 次数(超过 cap 也照数)
         self._shows = 0
+        self._last_n = 0                    # 最近一次报告的窗口快照
+        self._last_wall = 0.0
+        self._last_cpu = 0.0
 
     def add(self, wall_ms: float, cpu_ms: float = 0.0) -> bool:
-        """记一次 show; 返回 True 表示该打一条汇总了（每秒最多一次）。"""
+        """记一次 show; 返回 True 表示该打一条汇总了（每秒最多一次）。
+
+        ⚠ 报告后**必须**清空本窗口的计数/累计, 否则窗口一过就每次调用都返回
+          True（日志洪水）, 且 avg= 变成累计均值而不可与历史日志比较。
+        """
         self._shows += 1
         self._pend += 1
-        if self._n < self._cap:             # 缓冲满了就不再覆盖前半段样本
+        if self._n < self._cap:             # 环形缓冲只服务 p95, 跨窗口保留
             self._wall[self._n] = wall_ms
             self._cpu[self._n] = cpu_ms
             self._n += 1
@@ -45,20 +53,26 @@ class Metrics:
         elapsed = now - self._t0
         if elapsed < self.window_s:
             return False
-        self._elapsed = elapsed
+        self._elapsed = elapsed             # line() 读窗口值, 随后清零
+        self._last_n = self._pend
+        self._last_wall = self._wall_sum
+        self._last_cpu = self._cpu_sum
+        self._t0 = now
+        self._pend = 0
+        self._wall_sum = 0.0
+        self._cpu_sum = 0.0
         return True
 
     def line(self, fmt_tag: str = "") -> str:
         """只在 add() 返回 True 后调用 —— 未打印时不做任何格式化。"""
-        n = self._pend or 1
+        n = self._last_n or 1
         elapsed = self._elapsed if self._elapsed > 0.0 else 1.0
-        avg = self._wall_sum / n
-        cpu = self._cpu_sum / n
         fmt = " fmt=" + fmt_tag if fmt_tag else ""
         return ("[PERF] %s show %.1fHz avg=%.1fms (cpu %.1fms)%s "
                 "-> 每秒占墙上 %.0fms / CPU %.0fms"
-                % (self.label, self._pend / elapsed, avg, cpu, fmt,
-                   self._wall_sum / elapsed, self._cpu_sum / elapsed))
+                % (self.label, n / elapsed, self._last_wall / n,
+                   self._last_cpu / n, fmt,
+                   self._last_wall / elapsed, self._last_cpu / elapsed))
 
     @property
     def shows(self) -> int:

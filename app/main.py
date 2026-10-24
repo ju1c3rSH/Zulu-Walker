@@ -336,10 +336,8 @@ class DebugPageFactory:
         只清激活标记, 于是下次切入同一页时 ensure_entered 会重新走一遍 begin()
         （重置滑条等交互态, 不重建页面）。
 
-        ⚠⚠ 这个方法此前**根本不存在**, 而 MainUiShell.tick() 在 MAIN 页每一拍都在
-        调它 —— 于是每一拍都抛 AttributeError, 被 ModuleManager.run_main_loop 的
-        `except Exception: logger.exception("tick_callback() failed")` 吞掉。
-        两个后果都不报错, 只能靠打点发现:
+        ⚠⚠ 这个方法曾经不存在, 而 MainUiShell.tick() 每拍都调它 —— 于是每拍抛
+        AttributeError, 被 run_main_loop 的 except 吞掉。两个后果都不报错:
 
           ① 每拍格式化一次**完整 traceback** 再写盘。台架实测 `[PERF] mainloop`
              里 tick=27.7ms, 而 coord=0.17 / touch=0.17 / wdt=0.04ms —— 主循环
@@ -349,8 +347,9 @@ class DebugPageFactory:
              DebugConsole 状态栏一直是 "-", 台架在控制台上看不到任何状态。
              也就是说: 这个 bug 让"给台架看状态"的功能整个失效, 同时还在拖慢主循环。
 
-        修法取最小语义(清激活标记), 与 step_active 里页面自请求退出时的
-        `self._active = None` 一致; 重复清是幂等的。
+        修法取最小语义(清激活标记), 与 step_active 里页面自请求退出时一致。
+        ⚠ 调用点必须是**页面切换边沿**（见 tick）: 每 tick 调一次会连带
+          清掉节流相位, 让 interval_ms 当场失效。
         2026-10-15: 清标记前先 _leave_page 通知旧页收尾（LASER 页关激光）。
         """
         if self._active is not None:
@@ -425,6 +424,7 @@ class MainUiShell:
         self._touch_x = 0
         self._touch_y = 0
         self._last_status_push = 0.0
+        self._last_page = None          # 页面切换边沿检测（见 tick）
         # 上屏策略/节流/统计全在 presenter —— MAIN 与调试页共用同一个出口。
         self.presenter = presenter or _make_presenter(machine.display)
 
@@ -443,8 +443,15 @@ class MainUiShell:
 
     def tick(self, coordinator) -> None:
         page_name = self._pages.name
+        # ⚠ 只在**真正的页面切换**时清节流相位: 本函数每 2ms 跑一次,
+        #   每 tick 清相会让 interval_ms 完全失效（实测 100ms->407 次/秒）。
+        if page_name != self._last_page:
+            self._last_page = page_name
+            if page_name == STATE_MAIN:
+                self._factory.reset()          # 内含 presenter.reset_phase()
+            else:
+                self._factory.presenter.reset_phase()
         if page_name == STATE_MAIN:
-            self._factory.reset()
             # 限频: 见 _STATUS_PUSH_INTERVAL_S 的说明（这是主循环最大的阻塞源）
             now = time.monotonic()
             if now - self._last_status_push >= self._STATUS_PUSH_INTERVAL_S:
