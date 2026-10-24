@@ -287,16 +287,26 @@ class DisplayHUD:
         h = img.height()
         w = img.width()
         mid_y = h // 2
+        # 零点: 校准值(laser_cx, TARGET err 的实际零点) 或画面中心。
+        zero = int(status.get("target_zero") or 0)
+        center_x = zero if 0 < zero < w else w // 2
         color = self._c["green"] if status.get("found") else self._c["gray"]
         tick_len = max(8, int(h * _TICK_H_RATIO))
         try:
             img.draw_rect(0, mid_y, w, 1, color=color, thickness=-1)
         except Exception as e:
             self._diag("axis_mid", e)
+        # 校准生效时把零点位置标出来（白色短刻度, 与 ± 刻度区分）。
+        if 0 < zero < w:
+            try:
+                img.draw_rect(center_x, mid_y - tick_len, 2, 2 * tick_len,
+                              color=self._c["white"], thickness=-1)
+            except Exception as e:
+                self._diag("axis_zero", e)
         for fraction in _GUIDE_TICK_FRACTIONS:
             if fraction == 0.0:
                 continue
-            x = int(w // 2 * (1.0 + fraction))
+            x = int(center_x + w // 2 * fraction)
             try:
                 img.draw_rect(x, mid_y - tick_len // 2, 1, tick_len + 1,
                               color=color, thickness=-1)

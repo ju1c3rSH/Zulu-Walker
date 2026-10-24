@@ -24,6 +24,7 @@
 | 0x22 | CMD_NACK | 从→主 | [data_id, reason]（相机链路 2B，v2.2 起不变）；底盘链路 v2.2 升级为 [0x21, sub_cmd_echo, reason]（3B，legacy 2B 仍须被接受，按 payload 长度判别） |
 | 0x23 | CMD_STOP | 主→从 | 空 |
 | 0x24 | DATA_STREAM | 从→主 | [seq, data_id, sub_payload(8B)] |
+| 0x25 | CMD_LASER | 从→主 | [on_off, rsv x7]（v2.3 附录新增, 见 gks_laser_ctrl_addendum_v2.3.md） |
 
 DATA_STREAM 的 payload **统一 10 字节**：`seq(1) + data_id(1) + sub_payload(8)`，
 多字节字段小端序。
@@ -464,6 +465,7 @@ UART4 底盘→中控 TRACKING_FAULT(预留, 未实现):AA 55 0D 24 05 22 06 00 
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v2.3 | 2026-10-15 | 附录新增从→主帧型 0x25 CMD_LASER（激光开关, Brain 写 PA4）—— 仅以独立附录 gks_laser_ctrl_addendum_v2.3.md 承载, 本文档帧型表补指针行 |
 | v2.2 | 2026-09-14 | NACK 全链路语义落地（§1.4 新章节）：原因码统一枚举 0x01 FORMAT/0x02 BUSY/0x03 PARAM/0x04 UNKNOWNSUB（相机 0x01/0x02 语义与格式不变）；底盘 NACK 升级 3B `[0x21, sub_cmd_echo, reason]`（legacy 2B 仍接受，master 按 payload 长度判别），逐请求拒绝对照表 + 样例帧；Brain 新增三链路 NACK 解析与 volatile 计数 / fresh 事件标志，按 sub_cmd_echo 立即作废对应 sent 标志触发下拍重发，USART3 调试口主循环异步回显 NACK 事件与计数；底盘新增 USART2 调试口（RX DMA1_S5/CH4）ACK/NACK 事件与 '?' 状态查询（§7.1）；Zulu-Walker SDK NACK_REASON_NAMES 补 0x03/0x04 |
 | v2.1 | 2026-09-12 | 入桶方向补全 + 航向重锚恢复：REQ_TURNTABLE arg0 扩展 4~6 对桶（270°/270°/90°反向CW，摆位沿用旧实测值）与 7 回正90°，TURN_DONE echo 泛化为 arg0 回显，投放后回正与下一 NAV 同拍并行；nav_id 新增 6/7 重锚伪路线（MF_SEG_TURN_TO 原地转绝对角 −90.3°/−179.8°，复用 NAV 幂等/看门狗/重发全套机制），主控在排爆区对坑前与携人质返程前各调度一次 |
 | v2.0 | 2026-09-11 | 打靶段内跟瞄（段表不断）：视觉 0x02 直推归一化误差 e=(cx-320)/320；新增 TRACKING_START/ERROR/STOP + TRACKING_DONE/FAULT（全称语义变量）；底盘段内叠加视觉航向修正、收敛段内刹停、发射后继续走完当前段；REQ_TURNTABLE 恢复固定角（删 err）；激光 PA4 拉低发射 |

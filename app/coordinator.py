@@ -586,6 +586,7 @@ class GksCoordinator:
             "target_roi": self._target_roi_snapshot(),
             "explosive_roi": self._explosive_roi_snapshot(),
             "target_track_win": self._target_track_win_snapshot(),
+            "target_zero": self._target_zero_snapshot(),
         }
 
     def _target_roi_snapshot(self):
@@ -608,3 +609,10 @@ class GksCoordinator:
             return processor.target_track_win() if processor is not None else None
         except Exception:
             return None
+
+    def _target_zero_snapshot(self) -> int:
+        processor = self._get_gks_processor()
+        try:
+            return processor.target_zero_px() if processor is not None else 0
+        except Exception:
+            return 0

@@ -21,6 +21,7 @@ zw_uart_module - 2026 工科赛协议定义 (panzer_links_protocol.md v2.1)
 | 0x22 | CMD_NACK    | 从→主 | [data_id, reason]                           |
 | 0x23 | CMD_STOP    | 主→从 | 空                                          |
 | 0x24 | DATA_STREAM | 从→主 | [seq, data_id, sub_payload(8B)]             |
+| 0x25 | CMD_LASER   | 从→主 | [on_off, rsv x7]（v2.3 附录, 见 docs/competition/gks_laser_ctrl_addendum_v2.3.md） |
 
 订阅语义（USART1 v1.3 扩展）:
 - 5B 完整订阅帧携带任务码（爆色/靶色/形状 随订阅下发）;
@@ -51,6 +52,7 @@ TYPE_CMD_ACK      = 0x21  # Slave -> Master: 订阅应答
 TYPE_CMD_NACK     = 0x22  # Slave -> Master: 拒绝
 TYPE_CMD_STOP     = 0x23  # Master -> Slave: 停止推送
 TYPE_DATA_STREAM  = 0x24  # Slave -> Master: 数据流
+TYPE_CMD_LASER    = 0x25  # Slave -> Master: 激光开关（v2.3 附录, Brain 消费）
 
 # NACK reasons (v2.2 §1.4 统一枚举；0x01/0x02 相机链沿用，0x03/0x04 为底盘链路专属)
 NACK_UNSUPPORTED_TYPE = 0x01
@@ -183,6 +185,12 @@ def build_cmd_nack_frame(data_id: int, reason: int) -> bytes:
 def build_cmd_stop_frame() -> bytes:
     """Build TYPE_CMD_STOP frame（空载荷; Brain Cam1_Stop 下发, 本端只收）。"""
     return _build_frame(TYPE_CMD_STOP, b"")
+
+
+def build_cmd_laser_frame(on: bool) -> bytes:
+    """Build TYPE_CMD_LASER frame [on_off, rsv x7]; Brain 写 PA4, 无应答。"""
+    payload = bytes([0x01 if on else 0x00]) + b"\x00" * 7
+    return _build_frame(TYPE_CMD_LASER, payload)
 
 
 def build_data_stream_frame(seq: int, data_id: int, sub_payload: bytes) -> bytes:

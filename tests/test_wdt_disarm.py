@@ -282,24 +282,30 @@ class _Touch:
 
 
 def test_exit_icon_disarms_watchdog_before_os_exit(monkeypatch, wdt_state):
-    """回归: 触摸退出图标 → 必须先 `_wdt_stop()` 再 `os._exit(0)`。
+    """回归: 触摸退出图标 → 必须先关激光/_wdt_stop() 再 `os._exit(0)`。
 
-    `os._exit(0)` 不走 finally/atexit, 这是唯一能挡住"按退出=设备重启"的地方。
+    `os._exit(0)` 不走 finally/atexit, 这是唯一能挡住"按退出=设备重启"的地方,
+    也是唯一能挡住"退出后激光常亮"的地方。
     """
-    stopped = []
-    monkeypatch.setattr(M, "_wdt_stop", lambda: stopped.append(True))
+    order = []
+    monkeypatch.setattr(M, "_wdt_stop", lambda: order.append("wdt_stop"))
     exited = []
     monkeypatch.setattr(os, "_exit", lambda code: exited.append(code))
 
-    ui = M.MainUiShell(machine=_StubMachine(), pages=None, factory=None,
-                       vision_manager=_StubVM())
+    class _StubFactory:
+        def send_laser_off(self):
+            order.append("laser_off")
+
+    ui = M.MainUiShell(machine=_StubMachine(), pages=None,
+                       factory=_StubFactory(), vision_manager=_StubVM())
     ui._touch = _Touch(pressed=True)
     ui._consume_main_touch()
     ui._touch = _Touch(pressed=False)
     ui._consume_main_touch()
 
     assert exited == [0]
-    assert stopped == [True], "os._exit(0) 之前必须先 disarm"
+    assert order == ["laser_off", "wdt_stop"], \
+        "os._exit(0) 之前必须先关激光再 disarm"
 
 
 # ---------------- 配置接线 ----------------

@@ -165,9 +165,48 @@ class GksThresholdTuner:
     # ---- lifecycle: 页面模式 ----
 
     def step(self, disp, ts, frame_bgr) -> None:
-        """主程序 KEY_OK 切入后每帧调用: 渲染调参页并处理触屏。"""
+        """主程序 KEY_OK 切入后每帧调用: 渲染调参页并处理触屏。
+
+        分项归因见 laser_calib_tuner 同名方法; 这里只分两段（render / show）,
+        因为调参页的成本几乎全在 _render_step 里的 findContours。
+        """
+        _t = time.perf_counter()
         img = self._render_step(frame_bgr, disp, ts)
+        self._note_phase("render", time.perf_counter() - _t)
+        _t = time.perf_counter()
         disp.show(img)
+        self._flush_phase(time.perf_counter() - _t)
+
+    # ---- 分项归因（2026-10-15）----
+
+    def _note_phase(self, key: str, dt_s: float) -> None:
+        ph = self.__dict__.get("_phases")
+        if ph is None:
+            ph = self.__dict__["_phases"] = {"t0": 0.0, "n": 0, "render": 0.0, "show": 0.0}
+        ph[key] += dt_s * 1000.0
+
+    def _flush_phase(self, show_s: float) -> None:
+        ph = self.__dict__.get("_phases")
+        if ph is None:
+            return
+        ph["show"] += show_s * 1000.0
+        ph["n"] += 1
+        now = time.monotonic()
+        if ph["t0"] == 0.0:
+            ph["t0"] = now
+            return
+        elapsed = now - ph["t0"]
+        if elapsed < 1.0:
+            return
+        n = max(1, ph["n"])
+        try:
+            from utils.log_util import log_print
+            log_print(f"[PERF] tuner page {n / elapsed:.1f}Hz "
+                      f"render={ph['render'] / n:.1f}ms show={ph['show'] / n:.1f}ms "
+                      f"total={(ph['render'] + ph['show']) / n:.1f}ms")
+        except Exception:
+            pass
+        ph.update(t0=now, n=0, render=0.0, show=0.0)
 
     def exit_requested(self) -> bool:
         """页面模式下用户点 Exit / 外部 stop()。"""

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """UI 页面状态机（framework/state_machine 引擎承载）。
 
-四态: MAIN 正常运行 / EXPLOSIVE / TARGET / RESCUE 三调试页。
+五态: MAIN 正常运行 / EXPLOSIVE / TARGET / RESCUE / LASER 四调试页。
 页面语义: 调试页独占相机（enter 暂停视觉采集）, 回 MAIN 恢复;
 页面切换由 app.main DebugPageFactory 驱动, UI 实例由其懒建。
 """
@@ -9,7 +9,7 @@ from framework.state_machine.base import BaseStateMachine, State
 
 
 STATE_MAIN = "MAIN"
-_DEBUG_STATES = ("EXPLOSIVE", "TARGET", "RESCUE")
+_DEBUG_STATES = ("EXPLOSIVE", "TARGET", "RESCUE", "LASER")
 PAGE_CYCLE = (STATE_MAIN,) + _DEBUG_STATES
 
 
@@ -49,7 +49,7 @@ class DebugPageState(State):
 
 
 class PageStateMachine(BaseStateMachine):
-    """四页状态机; 页面切换事件为 GOTO_<目标页>。"""
+    """五页状态机; 页面切换事件为 GOTO_<目标页>。"""
 
     def __init__(self, vision_manager):
         super().__init__()

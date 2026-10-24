@@ -9,7 +9,7 @@ from .parser import ProtocolParser, ParserState, ParserStats, parse_stream
 from .protocol import (
     SOF1, SOF2,
     TYPE_CMD_REQUEST, TYPE_CMD_ACK, TYPE_CMD_NACK,
-    TYPE_CMD_STOP, TYPE_DATA_STREAM,
+    TYPE_CMD_STOP, TYPE_DATA_STREAM, TYPE_CMD_LASER,
     DATA_EXPLOSIVE, DATA_TARGET, DATA_RESCUE,
     SUPPORTED_DATA_IDS, DATA_ID_NAMES,
     SUB_PAYLOAD_SIZE, DATA_STREAM_PAYLOAD_LENGTH,
@@ -21,6 +21,7 @@ from .protocol import (
     NACK_UNSUPPORTED_TYPE, NACK_NOT_READY, NACK_PARAM, NACK_UNKNOWNSUB,
     FrameData, parse_frame, crc16_ccitt,
     build_cmd_ack_frame, build_cmd_nack_frame,
+    build_cmd_laser_frame,
     build_data_stream_frame,
     build_explosive_sub_payload, build_target_sub_payload,
     build_rescue_sub_payload,

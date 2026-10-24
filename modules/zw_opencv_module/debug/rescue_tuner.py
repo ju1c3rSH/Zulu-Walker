@@ -74,6 +74,41 @@ class GksRescueTuner:
             "cyan": self._mk_color((0, 255, 255), "COLOR_CYAN"),
         }
 
+    # ---- 分项归因（2026-10-15）----
+
+    def _note_phase(self, key: str, dt_s: float) -> None:
+        ph = self.__dict__.get("_phases")
+        if ph is None:
+            ph = self.__dict__["_phases"] = {
+                "t0": 0.0, "n": 0, "infer": 0.0, "canvas": 0.0,
+                "resize": 0.0, "draw": 0.0, "show": 0.0}
+        ph[key] += dt_s * 1000.0
+
+    def _flush_phase(self, show_s: float) -> None:
+        ph = self.__dict__.get("_phases")
+        if ph is None:
+            return
+        ph["show"] += show_s * 1000.0
+        ph["n"] += 1
+        now = time.monotonic()
+        if ph["t0"] == 0.0:
+            ph["t0"] = now
+            return
+        elapsed = now - ph["t0"]
+        if elapsed < 1.0:
+            return
+        n = max(1, ph["n"])
+        try:
+            from utils.log_util import log_print
+            log_print(f"[PERF] rescue page {n / elapsed:.1f}Hz | "
+                      f"infer={ph['infer'] / n:.1f} canvas={ph['canvas'] / n:.1f} "
+                      f"resize={ph['resize'] / n:.1f} draw={ph['draw'] / n:.1f} "
+                      f"show={ph['show'] / n:.1f}")
+        except Exception:
+            pass
+        ph.update(t0=now, n=0, infer=0.0, canvas=0.0, resize=0.0,
+                  draw=0.0, show=0.0)
+
     def _diag(self, site, exc):
         if site not in self._diag_logged:
             self._diag_logged[site] = True
@@ -167,9 +202,17 @@ class GksRescueTuner:
         self._toast, self._toast_until = "RESET->code defaults", time.time() + 1.0
 
     def step(self, disp, ts, frame_bgr) -> None:
+        """分项归因（2026-10-15）: infer / canvas / resize / draw / show 五段。"""
+        _t = time.perf_counter()
         dets = self._infer(frame_bgr)
+        self._note_phase("infer", time.perf_counter() - _t)
+        _t = time.perf_counter()
         img = self._to_maix(frame_bgr)
+        self._note_phase("canvas", time.perf_counter() - _t)
+        _t = time.perf_counter()
         img = self._fit_display(img, disp)
+        self._note_phase("resize", time.perf_counter() - _t)
+        _t = time.perf_counter()
         self._rect(img, 0, 0, img.width(), _UI_TOPBAR_H,
                    color=self._C["black"], thickness=-1)
         # 叠加画在 topbar 之后: 检测框永远可见, 后画的 UI 控件优先响应触摸
@@ -181,7 +224,9 @@ class GksRescueTuner:
         self._pressed_last = pressed
         if clicked and self._in(x, y, (2, 2, 90, _UI_TOPBAR_H - 6)):
             self._stop = True
+            _t = time.perf_counter()
             disp.show(img)
+            self._flush_phase(time.perf_counter() - _t)
             return
         if clicked and self._in(x, y, (img.width() - 212, 2, 100, _UI_TOPBAR_H - 6)):
             self._save_params()
@@ -190,10 +235,13 @@ class GksRescueTuner:
             self._reset_params()
             self._toast = "RESET -> loaded values"
             self._toast_until = time.time() + 1.0
+        self._note_phase("draw", time.perf_counter() - _t)
         self._draw_sliders(img, x, y, pressed)
         if self._toast and time.time() < self._toast_until:
             self._text(img, 8, 34, self._toast, self._C["yellow"], 1.2)
+        _t = time.perf_counter()
         disp.show(img)
+        self._flush_phase(time.perf_counter() - _t)
 
     def exit_requested(self) -> bool:
         return self._stop

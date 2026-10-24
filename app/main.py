@@ -138,6 +138,41 @@ def _push_coordinator_status(coordinator) -> None:
     dc.set("tx_hz", f"{info.get('tx_hz', 0.0):.1f}")
 
 
+def _frame_tag(frame) -> str:
+    """把一帧的"真实格式/内存来源"压缩成短标记, 用于 [PERF] show 归因。
+
+    为什么需要（2026-10-15, MaixCDK 源码证实）:
+      MaixCAM1 的 `Display::show()` 只白名单接受 FMT_RGB888 / YVU420SP /
+      YUV420SP / BGRA8888 / GRAYSCALE。其它格式会先在 show() 内部走一次
+      `to_format(FMT_RGB888)` **全帧分配 + 逐像素通道交换**, 而且结果落在
+      CPU 堆而不是 CMM/VIPU, VO 再拷一次。
+      而 `maix.image.cv2image(bgr, bgr=True)` 产出的正是 **FMT_BGR888** ——
+      于是调试页每一帧都白付这两次全帧搬运。
+    这就是"调试页图更小(552x368)却比 MAIN(640x480)慢 3~8 倍"的全部原因:
+    成本在**格式/内存来源**, 不在像素数量。
+
+    返回值: "RGB888" / "BGR888" / "numpy" / 类型名 —— 出现非 RGB888 即是病。
+    """
+    if frame is None:
+        return "none"
+    try:
+        import maix.image as _mi
+        fmt_fn = getattr(frame, "format", None)
+        if callable(fmt_fn):
+            fmt = fmt_fn()
+            names = getattr(_mi, "Format", None)
+            for attr in dir(names) if names is not None else []:
+                if attr.startswith("FMT_") and getattr(names, attr) == fmt:
+                    return attr[4:]
+            return str(fmt)
+    except Exception:
+        pass
+    shape = getattr(frame, "shape", None)
+    if shape is not None:
+        return f"numpy{tuple(shape[2:]) or ''}"
+    return type(frame).__name__
+
+
 class DebugPageFactory:
     """调试页懒创建 + 会话保持: 页面实例跨按键循环连续存在。
 
@@ -153,10 +188,180 @@ class DebugPageFactory:
         self._instances = {}
         self._active = None
         self._step_fail_logged = set()
+        self._laser_sender = None
+        # ---- 调试页上屏节流（2026-10-15）----
+        # 为什么必须在这里节流: 调试页的 disp.show() 由页面自己调（见 step_active）,
+        # 而 MainUiShell._maybe_show 的 display_show_interval_ms 节流**只在 MAIN 页生效**
+        #（_display_loop 对非 MAIN 页直接 continue 让位）。于是调试页上 show() 退化为
+        # "每个相机帧一次" ≈ 58Hz, 比 MAIN 页的 10Hz 高约 6 倍, 且每次都走一遍 MaixCAM1
+        # 的 VPU/VENC JPEG 编码（show 同时要压缩一份发给 MaixVision）。
+        # 这正是「激光页 fps 低 + CVI_VENC_GetStream failed 0xc0078012 /
+        # compress image failed 刷屏」的应用层成因 —— 官方 FAQ 明确: 拿不到 venc 资源
+        # 就报该错, 并建议"关掉 maixvision 预览视图, 或者切换到 png 流"。
+        # 语义与 MAIN 页完全一致: 同一组配置键 display_enabled / display_show_interval_ms;
+        # interval == 0 回退到 _DISPLAY_SHOW_SKIP 帧跳 = 改前行为。
+        self._display_enabled = True
+        self._show_interval_s = 0.0
+        self._last_show_time = 0.0
+        self._display_counter = 0
+        self._show_ms_sum = 0.0
+        self._show_cpu_sum = 0.0
+        self._show_n = 0
+        self._show_t0 = 0.0
+        self._last_show_tag = "-"
+        # ---- 调试页迭代归因（2026-10-15）----
+        # 为什么需要: 台架实测调试页"每轮 ~150ms, 其中 show 只占 18ms", 剩下 ~130ms
+        # 完全无法归因 —— 而 MAIN 页的视觉线程有 [PERF] vision 的 read/conv/task/disp
+        # 四项打点, 调试页这条路径却是黑盒。没有归因就只能靠猜, 所以先补打点再谈重构。
+        # 分项语义（全部是"墙钟", 单位 ms）:
+        #   read = cam.read()（含 image2cv 拷贝与负步长视图生成）
+        #   prep = 构造上屏代理
+        #   step = page.step() 全程（不含 show, show 由代理单独计时到 show 项）
+        #   show = 真正进入 display.show() 的那一段（编码 + 上屏）
+        #   iter = step_active 整体; 与 1/Hz 的真实周期对照, 差额就是"iter 之外"的开销
+        self._iter = {"t0": 0.0, "n": 0, "read": 0.0, "prep": 0.0,
+                      "step": 0.0, "show": 0.0, "iter": 0.0, "none": 0}
+
+    def _note_page_iter(self, key: str, dt_s: float) -> None:
+        self._iter[key] += dt_s * 1000.0
+
+    def _flush_page_iter(self, page_name: str) -> None:
+        """每秒一条 [PERF] page: 把调试页一轮的耗时拆到 read/prep/step/show。
+
+        读法: iter 是 step_active 自身耗时, 1/Hz 是真实周期,
+        `iter外 = 周期 - iter` = 主循环里**非调试页**的开销
+        （coordinator.loop + 视觉线程抢 GIL + display_callback + MAIN_LOOP_DELAY）——
+        这一项才是"每轮还有 130ms"的答案。
+        """
+        it = self._iter
+        if it["t0"] == 0.0:
+            it["t0"] = time.monotonic()
+            return
+        elapsed = time.monotonic() - it["t0"]
+        if elapsed < 1.0 or it["n"] == 0:
+            return
+        n = it["n"]
+        iter_ms = it["iter"] / n
+        period_ms = elapsed / n * 1000.0
+        show_ms = it["show"] / n
+        log_print(
+            f"[PERF] page[{page_name}] {n / elapsed:.1f}Hz period={period_ms:.1f}ms | "
+            f"read={it['read'] / n:.1f} prep={it['prep'] / n:.1f} "
+            f"step={it['step'] / n:.1f}(含show {show_ms:.1f}) "
+            f"iter={iter_ms:.1f} none={it['none']} | "
+            f"iter外={period_ms - iter_ms:.1f}ms(主循环+视觉抢GIL)")
+        self._iter = {"t0": time.monotonic(), "n": 0, "read": 0.0, "prep": 0.0,
+                      "step": 0.0, "show": 0.0, "iter": 0.0, "none": 0}
+
+    def set_display_policy(self, enabled=None, show_interval_ms=None) -> None:
+        """调试页上屏策略（与 MainUiShell 同名同语义, 由 main() 注入同一组配置键）。
+
+        为什么两个类各持一份状态而不共享: MAIN 页与调试页的调用方线程和节奏不同,
+        共享 _last_show_time 会让"上一页的节流相位"漏到下一页, 表现为进页第一帧被吞。
+        语义必须一致, 状态不能共享。
+        """
+        if enabled is not None:
+            self._display_enabled = bool(enabled)
+        if show_interval_ms is not None:
+            self._show_interval_s = max(0.0, float(show_interval_ms) / 1000.0)
+
+    def _page_display(self, ts=None):
+        """返回给 page.step() 用的 display 代理（show 被节流, 其余透传）。
+
+        每次现建一个极轻的代理对象（无状态, 状态都在 factory 上）, 避免
+        display 实例被页面长期持有而在切页后继续用旧策略上屏。
+        """
+        return _ThrottledPageDisplay(self, self._machine.display)
+
+    def _reset_show_clock(self) -> None:
+        """进页/回 MAIN 时清节流相位: 新页首帧必须上屏（用户据此判断"进没进去"）。"""
+        self._last_show_time = 0.0
+        self._display_counter = 0
+
+    def _maybe_show(self, show_fn, frame=None) -> bool:
+        """按策略决定这一拍要不要真的上屏; 返回是否执行了 show_fn。
+
+        与 MainUiShell._maybe_show 的四条语义逐一对应（见 tests/test_display_policy.py）:
+          1. display_enabled=False -> 一次都不上屏;
+          2. interval > 0 -> 按**时间**限流, 与帧率无关;
+          3. interval == 0 -> 回退"每 _DISPLAY_SHOW_SKIP 帧一次"帧跳;
+          4. "有无新帧"由调用方判（调试页每次都是刚读到的帧）。
+        另按秒汇总 show 的墙上/CPU 开销 —— 判断 VENC 编码是否成为瓶颈的唯一依据。
+        """
+        if not self._display_enabled:
+            return False
+        now = time.monotonic()
+        if self._show_interval_s > 0.0:
+            if now - self._last_show_time < self._show_interval_s:
+                return False
+        else:
+            self._display_counter += 1
+            if self._display_counter % _DISPLAY_SHOW_SKIP != 0:
+                return False
+        t0 = time.perf_counter()
+        cpu0 = _thread_cpu()
+        try:
+            show_fn()
+        except Exception as e:
+            if "show" not in self._step_fail_logged:
+                self._step_fail_logged.add("show")
+                log_print(f"[PAGE] display.show FAIL: {type(e).__name__}: {e}")
+        self._last_show_time = now
+        _wall_ms = (time.perf_counter() - t0) * 1000.0
+        self._iter["show"] += _wall_ms
+        self._last_show_tag = _frame_tag(frame)
+        self._note_show_perf(_wall_ms, (_thread_cpu() - cpu0) * 1000.0)
+        return True
+
+    def _note_show_perf(self, wall_ms: float, cpu_ms: float = 0.0) -> None:
+        """调试页每秒一条 [PERF] page show（与 MAIN 页 [PERF] lcd show 同口径）。"""
+        self._show_ms_sum += wall_ms
+        self._show_cpu_sum += cpu_ms
+        self._show_n += 1
+        now = time.monotonic()
+        if self._show_t0 == 0.0:
+            self._show_t0 = now
+        elapsed = now - self._show_t0
+        if elapsed < 1.0:
+            return
+        n = max(1, self._show_n)
+        log_print(f"[PERF] page show {n / elapsed:.1f}Hz "
+                  f"avg={self._show_ms_sum / n:.1f}ms "
+                  f"(cpu {self._show_cpu_sum / n:.1f}ms) "
+                  f"fmt={self._last_show_tag} "
+                  f"-> 每秒占墙上 {self._show_ms_sum / elapsed:.0f}ms / "
+                  f"CPU {self._show_cpu_sum / elapsed:.0f}ms")
+        self._show_t0 = now
+        self._show_ms_sum = 0.0
+        self._show_cpu_sum = 0.0
+        self._show_n = 0
+
+    def set_laser_sender(self, sender) -> None:
+        """注入激光帧发送回调（main() 装配 UART 后传入, LASER 页专用）。"""
+        self._laser_sender = sender
+
+    def _leave_page(self, page_name: str) -> None:
+        """页面被切走时通知其收尾（LASER 页据此自动关激光）。"""
+        page = self._instances.get(page_name)
+        if page is not None and hasattr(page, "on_leave"):
+            try:
+                page.on_leave()
+            except Exception as e:
+                log_print(f"[PAGE] {page_name} on_leave FAIL: {e}")
+
+    def send_laser_off(self) -> None:
+        """程序退出兜底: LASER 页开过激光才发关帧（幂等, os._exit 前手动调）。"""
+        page = self._instances.get("LASER")
+        if page is None or not getattr(page, "laser_is_on", lambda: False)():
+            return
+        self._leave_page("LASER")
 
     def ensure_entered(self, page_name: str) -> None:
         if self._active == page_name:
             return
+        if self._active is not None:
+            self._leave_page(self._active)
+            self._active = None
         page = self._instances.get(page_name)
         if page is None:
             page = self._create(page_name)
@@ -166,6 +371,9 @@ class DebugPageFactory:
                 return
             self._instances[page_name] = page
             log_print(f"[PAGE] built debug page: {page_name}")
+        # 进页清节流相位: 上一页残留的 _last_show_time 会把新页首帧吞掉,
+        # 而"进页第一帧"正是用户确认页面切过来了的依据。
+        self._reset_show_clock()
         # begin() 与 step() 同一条静默链路（tick 兜底只写 app.log）: 抛异常时
         # 同样留痕 + 回 MAIN, 避免页面卡在"建好了但永远渲染不出来"的冻屏态。
         try:
@@ -179,6 +387,15 @@ class DebugPageFactory:
         self._active = page_name
 
     def step_active(self, page_name: str) -> None:
+        _t_iter = time.perf_counter()
+        try:
+            self._step_active_inner(page_name)
+        finally:
+            self._iter["iter"] += (time.perf_counter() - _t_iter) * 1000.0
+            self._iter["n"] += 1
+            self._flush_page_iter(page_name)
+
+    def _step_active_inner(self, page_name: str) -> None:
         page = self._instances.get(page_name)
         ts = self._ensure_touchscreen()
         cam = self._vm.get_pipeline_camera() if self._vm else None
@@ -186,10 +403,19 @@ class DebugPageFactory:
             log_print(f"[PAGE] {page_name} unavailable, "
                       f"touch={ts is not None} cam={cam is not None} -> main")
             self._pages.select(STATE_MAIN)
+            self._leave_page(page_name)
             self._active = None
             return
+        _t_read = time.perf_counter()
         frame_bgr = cam.read()
+        self._note_page_iter("read", time.perf_counter() - _t_read)
         if frame_bgr is None:
+            # 停帧/取帧失败：**必须退让**, 否则这里会以主循环上限 500Hz 空转
+            # （MAIN_LOOP_DELAY=2ms 是唯一节拍）, 白吃 CPU 且与视觉线程抢 GIL,
+            # 而且控制台一行提示都没有 —— 用户只看到 LCD 冻住。
+            # 节拍取 5ms: 远快于任何相机帧率, 又比 2ms 自旋少一半唤醒。
+            self._iter["none"] += 1
+            time.sleep(0.005)
             return
         # ⚠ 页面渲染抛异常绝不能静默: run_main_loop 的 tick_callback 兜底只把
         # traceback 写进 logs/app.log（控制台看不见）, 而显示线程对非 MAIN 页
@@ -197,17 +423,31 @@ class DebugPageFactory:
         # （2026-10-09 真机现象, 根因是 LazyFrame 缺 .copy()）。这里改为:
         # 控制台留痕一次 + 自动回 MAIN 页恢复显示, 别让用户对着一帧死画面猜。
         try:
-            page.step(self._machine.display, ts, frame_bgr)
+            # 上屏节流: 页面 step() 的最后一句是 disp.show()。这里交给一个
+            # **只拦 show 的代理**, 而不是把整个 step() 包进节流里 ——
+            # step() 里还有 ts.read() 与识别，必须每帧照跑（否则触摸/退出失效，
+            # 页面直接变成死的）。代理把 show 按 display_enabled /
+            # display_show_interval_ms 与 MAIN 页同口径限流, 顺带按秒统计开销。
+            _t_pre = time.perf_counter()
+            _disp = self._page_display(ts)
+            self._note_page_iter("prep", time.perf_counter() - _t_pre)
+            _t_step = time.perf_counter()
+            try:
+                page.step(_disp, ts, frame_bgr)
+            finally:
+                self._iter["step"] += (time.perf_counter() - _t_step) * 1000.0
         except Exception as e:
             if page_name not in self._step_fail_logged:
                 self._step_fail_logged.add(page_name)
                 log_print(f"[PAGE] {page_name} step FAIL: "
                           f"{type(e).__name__}: {e} -> 回 MAIN（详见 logs/app.log）")
             self._pages.select(STATE_MAIN)
+            self._leave_page(page_name)
             self._active = None
             return
         if getattr(page, "exit_requested", lambda: False)():
             self._pages.select(STATE_MAIN)
+            self._leave_page(page_name)
             self._active = None
             log_print("[KEY] debug page Exit -> main, vision resume")
 
@@ -236,8 +476,12 @@ class DebugPageFactory:
 
         修法取最小语义(清激活标记), 与 step_active 里页面自请求退出时的
         `self._active = None` 一致; 重复清是幂等的。
+        2026-10-15: 清标记前先 _leave_page 通知旧页收尾（LASER 页关激光）。
         """
+        if self._active is not None:
+            self._leave_page(self._active)
         self._active = None
+        self._reset_show_clock()
 
     def _ensure_touchscreen(self):
         if self._touchscreen is None:
@@ -260,6 +504,12 @@ class DebugPageFactory:
                 get_processor=self._get_gks_processor,
                 get_ai=lambda: self._machine.ai,
             )
+        if page_name == "LASER":
+            from modules.zw_opencv_module.debug.laser_calib_tuner import GksLaserCalibTuner
+            return GksLaserCalibTuner(
+                get_processor=self._get_gks_processor,
+                send_laser=self._laser_sender or (lambda on: False),
+            )
         return None
 
     def _get_gks_processor(self):
@@ -270,6 +520,32 @@ class DebugPageFactory:
             return None
         task = pipe.task_manager.get_task(_TASK_GKS)
         return task.processor if task else None
+
+
+class _ThrottledPageDisplay:
+    """调试页专用的 display 代理: **只拦 show()**, 其余接口原样转发。
+
+    为什么不能直接节流整个 step(): 调试页的 step() 里既有识别也有 ts.read(),
+    触摸退出判定就在 show 之前 —— 一票否决 step 会让页面既看不出画面也没法退出。
+    """
+
+    def __init__(self, factory, real):
+        self._factory = factory
+        self._real = real
+
+    def show(self, frame, *args, **kwargs):
+        return self._factory._maybe_show(
+            lambda: self._real.show(frame, *args, **kwargs), frame=frame)
+
+    def width(self):
+        return self._real.width()
+
+    def height(self):
+        return self._real.height()
+
+    def __getattr__(self, name):
+        # 其余接口（close/set_backlight/...）一律透传给真实 display
+        return getattr(self._real, name)
 
 
 class MainUiShell:
@@ -318,6 +594,7 @@ class MainUiShell:
         self._show_cpu_sum = 0.0
         self._show_n = 0
         self._show_t0 = 0.0
+        self._last_show_tag = "-"
 
     def set_display_policy(self, enabled=None, show_interval_ms=None) -> None:
         """注入显示策略（main() 从 project_config.yaml 读取）。
@@ -404,6 +681,7 @@ class MainUiShell:
         except Exception:
             pass
         self._last_show_time = now
+        self._last_show_tag = _frame_tag(frame)
         self._note_show_perf((time.perf_counter() - t0) * 1000.0,
                             (_thread_cpu() - cpu0) * 1000.0)
 
@@ -441,6 +719,7 @@ class MainUiShell:
         log_print(f"[PERF] lcd show {n / elapsed:.1f}Hz "
                   f"avg={self._show_ms_sum / n:.1f}ms "
                   f"(cpu {self._show_cpu_sum / n:.1f}ms) "
+                  f"fmt={self._last_show_tag} "
                   f"-> 每秒占墙上 {self._show_ms_sum / elapsed:.0f}ms / "
                   f"CPU {self._show_cpu_sum / elapsed:.0f}ms")
         self._show_t0 = now
@@ -461,6 +740,8 @@ class MainUiShell:
                 if self._in_exit_button(self._touch_x, self._touch_y):
                     # ⚠ `os._exit(0)` 跳过所有 finally/atexit —— 必须**先**手动解除
                     # 硬件看门狗, 否则用户按"退出"看到的是一次设备重启
+                    if self._factory is not None:
+                        self._factory.send_laser_off()   # 同理跳过 finally, 激光先关
                     _wdt_stop()
                     os._exit(0)
         except Exception:
@@ -833,6 +1114,13 @@ def main():
     if uart_interface:
         coordinator.set_uart_sender(uart_interface.send_raw)
 
+    # 激光帧发送回调（LASER 调试页专用; 0x25 CMD_LASER, 无应答）。
+    def _send_laser(on: bool) -> bool:
+        if not uart_interface:
+            return False
+        from modules.zw_uart_module.protocol import build_cmd_laser_frame
+        return uart_interface.send_raw(build_cmd_laser_frame(on))
+
     coordinator.set_ai(machine.ai)
     _apply_stream_policy(coordinator, config)
     _apply_render_policy(vision_manager, config)
@@ -855,6 +1143,10 @@ def main():
         KeyCycleRouter(pages)
 
     factory = DebugPageFactory(machine, vision_manager, pages)
+    factory.set_laser_sender(_send_laser)
+    # 调试页上屏与 MAIN 页同口径（同一组配置键）; 缺键即保持改前行为
+    factory.set_display_policy(config.get("display_enabled"),
+                               config.get("display_show_interval_ms"))
     ui = MainUiShell(machine, pages, factory, vision_manager)
     # 显示策略与分项计时的配置入口（缺键即保持改前行为, 可一键回退）
     ui.set_display_policy(config.get("display_enabled"),
@@ -874,6 +1166,7 @@ def main():
             display_callback=ui.display_callback,
         )
     finally:
+        factory.send_laser_off()   # 激光兜底关（os._exit 路径已单独处理）
         # ⚠ **必须在任何退出路径上 disarm 硬件看门狗**（含异常路径与
         # `app.need_exit()` 正常收工）。漏掉这一步 = 每次退出后 ~10s 设备重启,
         # 详见 _wdt_stop 的说明。
@@ -887,5 +1180,5 @@ if __name__ == "__main__":
         log_print(f"Unhandled exception: {e}")
         import traceback
         traceback.print_exc()
-        _wdt_stop()             # 崩溃退出同样不能把武装着的看门狗留给设备
+        _wdt_stop()
         sys.exit(1)

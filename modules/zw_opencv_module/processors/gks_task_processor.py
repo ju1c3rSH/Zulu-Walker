@@ -66,6 +66,17 @@ RESCUE_PARAMS_FILE = "/my-threshold/my_rescue_params.txt"
 # 可被该文件覆盖的键（与调参页滑条一一对应）及类型。
 _RESCUE_PARAM_KEYS = {"conf_th": float, "iou_th": float, "x_crop_px": int}
 
+# 激光校准页 SAVE 落盘文件（laser_cx + 红点检测参数）。mtime 热重载语义同上。
+LASER_CALIB_FILE = "/my-threshold/my_laser_calib.txt"
+# 文件键 -> (cfg 段, 键, 类型)。
+_LASER_CALIB_KEYS = {
+    "laser_cx": ("target", "laser_cx", int),
+    "lum_min":  ("laser", "lum_min", int),
+    "dom_min":  ("laser", "dom_min", int),
+    "min_area": ("laser", "min_area", int),
+    "max_area": ("laser", "max_area", int),
+}
+
 
 def load_rescue_params_file(path: str) -> dict:
     """解析人质调参覆盖文件（key=value 行, '#' 注释, 空行忽略）。
@@ -93,6 +104,29 @@ def load_rescue_params_file(path: str) -> dict:
         except ValueError:
             continue
         params[key.strip()] = int(val) if conv is int else val
+    return params
+
+
+def load_laser_calib_file(path: str) -> dict:
+    """解析激光校准覆盖文件（key=value 行）。键集见 _LASER_CALIB_KEYS, 非法行忽略。"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except OSError:
+        return {}
+    params = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        spec = _LASER_CALIB_KEYS.get(key.strip())
+        if spec is None:
+            continue
+        try:
+            params[key.strip()] = int(float(value))
+        except ValueError:
+            continue
     return params
 
 # maix.image 是否可用的惰性探测结果（None=未探测 / False=不可用 / True=可用）。
@@ -211,6 +245,20 @@ _DEFAULT_CONFIG = {
             "green": [25, 85, -80, -25, 30, 85],
             "blue":  [0, 60, -8, 45, -75, -25],
         },
+        # 激光校准零点（像素 x, 640 宽帧口径）。0 = 未校准, err 用画面中心 w/2;
+        # >0 时 err = (cx - laser_cx)/(w/2)×10000 —— 只平移零点, 除数不变。
+        "laser_cx": 0,
+    },
+    # 红点激光检测参数（LASER 调试页用; 分层判据见 laser_calib_tuner.py 文件头）。
+    "laser": {
+        # 候选提取: R 通道亮度门限（白核红环均满足）。
+        "lum_min": 200,
+        # 颜色确认: R - max(G,B) 最小差值（排白墙/高光: 白像素三通道同值, 差≈0）。
+        "dom_min": 40,
+        # 面积过滤（像素, 全分辨率口径; 光斑 3~30px 直径随距离变化）。
+        "min_area": 8,
+        "max_area": 4000,
+        "calib_file": LASER_CALIB_FILE,
     },
     "rescue": {
         "conf_th": 0.7,
@@ -242,7 +290,7 @@ def load_gks_config(config_path: Optional[str] = None) -> dict:
     cfg = {k: (dict(v) if isinstance(v, dict) else list(v)
                if isinstance(v, list) else v)
            for k, v in _DEFAULT_CONFIG.items()}
-    for key in ("explosive", "target", "rescue"):
+    for key in ("explosive", "target", "laser", "rescue"):
         cfg[key] = dict(_DEFAULT_CONFIG[key])
     if config_path is None:
         config_path = os.path.join(os.path.dirname(os.path.dirname(
@@ -354,6 +402,11 @@ class GksTaskProcessor(Processor):
         self._rescue_params_file = str(self._cfg.get("rescue_params_file") or "")
         self._rescue_params_mtime: Optional[float] = None
         self._reload_rescue_params(force=True)
+        # 激光校准文件（laser_cx + 红点检测参数）, mtime 热重载语义同上。
+        self._laser_calib_file = str(
+            self._cfg.get("laser", {}).get("calib_file") or "")
+        self._laser_calib_mtime: Optional[float] = None
+        self._reload_laser_calib(force=True)
 
         self._reset_latch()
 
@@ -383,7 +436,8 @@ class GksTaskProcessor(Processor):
         """CMD_STOP / 主机静默: 清锁存, 保留模式（下次 set_task 决定）。"""
         self._reset_latch()
 
-    _IMMUTABLE_RUNTIME_KEYS = frozenset({"thresholds_file", "rescue_params_file"})
+    _IMMUTABLE_RUNTIME_KEYS = frozenset(
+        {"thresholds_file", "rescue_params_file", "calib_file"})
 
     def set_runtime_param(self, section: str, key: str, value) -> None:
         """调试页运行时改参（立即生效于 process(), 不落盘不清锁存）。
@@ -401,6 +455,9 @@ class GksTaskProcessor(Processor):
             if isinstance(default_section[key], dict):
                 raise ValueError(f"{section}.{key} is a nested section")
             self._cfg[section][key] = value
+            if key == "laser_cx":
+                log_print(f"[GKS] target err zero -> "
+                          f"{'center' if not value else f'laser_cx={int(value)}'}")
             return
         if default_section is None and section not in _DEFAULT_CONFIG:
             raise ValueError(f"unknown runtime param: {section}.{key}")
@@ -538,8 +595,10 @@ class GksTaskProcessor(Processor):
 
         2026-10-10: 人质参数文件（rescue_params_file）共用本闸门 —— SAVE 产物
         同样是人手频率的落盘, 2Hz 足够; 但**两个文件各一次 stat**, 任一存在才进入。
+        2026-10-15: 激光校准文件共用本闸门（LASER 页 SAVE 产物, 同语义）。
         """
-        if not self._thresholds_file and not self._rescue_params_file:
+        if (not self._thresholds_file and not self._rescue_params_file
+                and not self._laser_calib_file):
             return
         now = self._now()
         if now - self._thresholds_poll_ts < self._THRESHOLD_POLL_INTERVAL_S:
@@ -553,6 +612,7 @@ class GksTaskProcessor(Processor):
             if mtime is not None and mtime != self._thresholds_mtime:
                 self._reload_thresholds()
         self._reload_rescue_params()
+        self._reload_laser_calib()
 
     def _reload_rescue_params(self, force: bool = False) -> None:
         """人质参数文件（调参页 SAVE 产物）加载/热重载。
@@ -577,6 +637,30 @@ class GksTaskProcessor(Processor):
             log_print(f"[GKS] rescue params "
                       f"{'loaded' if force else 'reloaded'} from "
                       f"{self._rescue_params_file}: {params}")
+
+    def _reload_laser_calib(self, force: bool = False) -> None:
+        """激光校准文件（LASER 页 SAVE 产物）加载/热重载。语义同 _reload_rescue_params。"""
+        if not self._laser_calib_file:
+            return
+        try:
+            mtime = os.stat(self._laser_calib_file).st_mtime
+        except OSError:
+            return
+        if not force and mtime == self._laser_calib_mtime:
+            return
+        self._laser_calib_mtime = mtime
+        params = load_laser_calib_file(self._laser_calib_file)
+        if params:
+            for key, value in params.items():
+                section, _, _ = _LASER_CALIB_KEYS[key]
+                self._cfg[section][key] = value
+            log_print(f"[GKS] laser calib "
+                      f"{'loaded' if force else 'reloaded'} from "
+                      f"{self._laser_calib_file}: {params}")
+
+    def target_zero_px(self) -> int:
+        """TARGET err 零点（像素 x）; 0 = 未校准, err 用画面中心。"""
+        return int(self._cfg.get("target", {}).get("laser_cx") or 0)
 
     def _lab_for(self, mode: str, color_code: int) -> Optional[list]:
         key = COLOR_KEYS.get(color_code)
@@ -1002,10 +1086,12 @@ class GksTaskProcessor(Processor):
             hits.append({"x": int(largest["x"]), "y": int(largest["y"]),
                          "w": int(largest["w"]), "h": int(largest["h"]),
                          "text": "TGT", "color": (255, 0, 0)})
-            # 归一化横向误差 (cx - w/2)/(w/2), clamp ±1, 定点 ×10000
-            # (640 宽帧下与旧版 (cx-320)/320 逐位一致)
+            # 归一化横向误差 (cx - zero)/(w/2), clamp ±1, 定点 ×10000。
+            # zero = 校准零点(laser_cx>0, 激光校准页 SAVE) 或画面中心 w/2;
+            # 除数保持 w/2 —— 只平移零点不改归一化增益, Brain 闭环参数不动。
             half = w / 2.0
-            normalized = (cx - half) / half
+            zero = self.target_zero_px() or half
+            normalized = (cx - zero) / half
             normalized = max(-1.0, min(1.0, normalized))
             err_fixed = int(normalized * 10000)   # int(): 与 main.py 同为截断取整
             # 顺序要紧: 先记last_cx/桶, 再判确认 —— _target_last_err 必须在**通过

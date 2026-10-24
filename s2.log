@@ -1,0 +1,1590 @@
+start running...
+
+-- [I] [Maix Comm Protocol] listening on uart port: /dev/serial0
+[02:25:45] 0xfb709394
+[SAMPLE_COMM_SNS_ParseIni]-2191: Parse /mnt/data/sensor_cfg.ini
+[parse_source_devnum]-1784: devNum =  1
+[parse_sensor_name]-1865: sensor =  GCORE_GC4653_MIPI_4M_30FPS_10BIT
+[parse_sensor_busid]-1894: bus_id =  4
+[parse_sensor_i2caddr]-1905: sns_i2c_addr =  29
+[parse_sensor_mipidev]-1916: mipi_dev =  0
+[parse_sensor_laneid]-1927: Lane_id =  4, 3, 2, -1, -1
+[parse_sensor_pnswap]-1938: pn_swap =  0, 0, 0, 0, 0
+[parse_sensor_mclken]-1960: mclk_en =  1
+[parse_sensor_mclk]-1971: mclk =  1
+[SAMPLE_COMM_SNS_ParseIni]-2191: Parse /mnt/data/sensor_cfg.ini
+[parse_source_devnum]-1784: devNum =  1
+[parse_sensor_name]-1865: sensor =  GCORE_GC4653_MIPI_4M_30FPS_10BIT
+[parse_sensor_busid]-1894: bus_id =  4
+[parse_sensor_i2caddr]-1905: sns_i2c_addr =  29
+[parse_sensor_mipidev]-1916: mipi_dev =  0
+[parse_sensor_laneid]-1927: Lane_id =  4, 3, 2, -1, -1
+[parse_sensor_pnswap]-1938: pn_swap =  0, 0, 0, 0, 0
+[parse_sensor_mclken]-1960: mclk_en =  1
+[parse_sensor_mclk]-1971: mclk =  1
+try release sys ok
+[_mmf_init]-1144: maix multi-media version:67a90e2-musl_riscv64
+maix multi-media init ok
+try release vio ok
+try release venc ok
+ISP Vipipe(0) Allocate pa(0x8a52c000) va(0x0x3fde3ad000) size(291424)
+stSnsrMode.u16Width 1280 stSnsrMode.u16Height 720 60.000000 wdrMode 0 pstSnsObj 0x3fdf06c058
+[SAMPLE_COMM_VI_StartMIPI]-494: sensor 0 stDevAttr.devno 0
+awbInit ver 6.9@2021500
+0 R:1400 B:3100 CT:2850
+1 R:1500 B:2500 CT:3900
+2 R:2300 B:1600 CT:6500
+Golden 1024 1024 1024
+WB Quadratic:0
+isWdr:0
+ViPipe:0,===GC4653 720P 60fps 10bit LINEAR Init OK!===
+********************************************************************************
+cvi_bin_isp message
+gerritId:      97347          commitId:      fc6ce647       
+md5:           d6db2297ddfd44e8252c1f3f888f47b2
+sensorNum      1              
+sensorName0    4653           
+
+PQBIN message
+gerritId:      
+              commitId:      fc6ce647       
+md5:           d6db2297ddfd44e8252c1f3f888f47b2
+sensorNum      1              
+sensorName0    4653           
+
+author:        lxowalle       desc:          gc4653 30fps   
+createTime:    2024-03-26 13:41:34version:                      
+tool Version:       v3.0.5.48           mode:      
+********************************************************************************
+[SAMPLE_COMM_ISP_Thread]-95: ISP Dev 0 running!
+0 R:1298 B:3773 CT:2688
+1 R:1629 B:2599 CT:3890
+2 R:2430 B:1675 CT:7300
+Golden 1629 1024 2599
+wdrLEOnly:1
+[02:25:48] [BOOT] machine import_platform: 500ms  <-- SLOW
+[SAMPLE_COMM_VO_StartChn]-351: u32Width:480, u32Height:640, u32Square:1
+[02:25:48] [BOOT] machine camera.open(main): 1ms
+[02:25:49] [BOOT] cam.open:L1(full-kwargs): 999ms  <-- SLOW
+[02:25:49] [CAM1] camera open level=1 fps=60 buff_num=2
+[02:25:49] [BOOT] disp.open:L1(open=True): 14ms
+-- [I] [Maix Comm Protocol] exit...
+-- [I] [Maix Comm Protocol] exit success
+-- [I] [Maix Comm Protocol] UART /dev/serial0 ready to init
+[02:25:49] [BOOT] machine display: 1018ms  <-- SLOW
+[02:25:49] [BOOT] uart.pinmap: 0ms
+[02:25:49] [BOOT] uart.open: 312ms  <-- SLOW
+-- [I] load cvimodel from: /root/models/model_239147.cvimodel
+-- [I] model info:
+	type: yolov5
+	input type: rgb
+	mean:123.500000 123.500000 123.500000 
+	scale:0.017125 0.017125 0.017125 
+	labels num: 3
+	anchors:10.00 13.00 16.00 30.00 33.00 23.00 30.00 61.00 62.00 45.00 59.00 119.00 116.00 90.00 156.00 198.00 373.00 326.00 
+	input size: 224x224
+
+[02:25:49] [BOOT] machine uart: 332ms  <-- SLOW
+[02:25:49] [BOOT] machine ai.create: 1ms
+[02:25:49] [BOOT] machine ai.register: 9ms
+[02:25:50] [BOOT] machine ai.switch(load): 741ms  <-- SLOW
+[02:25:50] [BOOT] machine Machine.create: 2603ms  <-- SLOW
+WDT::feed()
+[02:25:52] [UART CFG] stream: push_on_new_result=1 min_push_interval=0ms
+[02:25:52] [RENDER] hud+stream OFF (competition)
+[HTTP] http://0.0.0.0:8000/
+[02:25:52] cam w:640 h:480
+-- [I] wait read key thread exit
+-- [I] read key thread exit
+-- [I] MaixCAM-Pro: Init pmu power key.
+-- [I] /dev/input/powerkey symlink to /dev/input/event2.
+[02:25:52] [KEY] KEY_OK cycles pages (default exit-app disabled)
+[02:25:52] [DISPLAY] lcd=ON, 1000ms 限流
+[02:25:52] [FPS] pipeline: 0.0
+WDT::feed()
+[02:25:53] [PERF] vision 31.8Hz loop=31.5ms body=21.1ms cpu=8.4ms gil_wait=12.7ms | read=7.9(cpu7.18) conv=7.5 task=3.7(cpu0.68) disp=0.3(cpu0.25) none=0 | idle=10.4ms 自身cpu=0.30ms 未归因=1.7ms
+[02:25:53] [PERF] mainloop 108Hz body=0.66ms cpu=0.60ms gil_wait=0.06ms | wdt=0.04 coord=0.21 tick=0.11 touch=0.17 | 每秒 CPU 64ms
+WDT::feed()
+[02:25:54] [PERF] vision 58.9Hz loop=17.0ms body=15.5ms cpu=8.4ms gil_wait=7.1ms | read=8.8(cpu7.50) conv=5.4 task=0.6(cpu0.55) disp=0.1(cpu0.10) none=0 | idle=1.5ms 自身cpu=0.29ms 未归因=0.7ms
+[02:25:54] [PERF] lcd show 1.5Hz avg=10.3ms (cpu 2.6ms) -> 每秒占墙上 16ms / CPU 4ms
+[02:25:54] [PERF] mainloop 110Hz body=0.69ms cpu=0.59ms gil_wait=0.10ms | wdt=0.07 coord=0.21 tick=0.14 touch=0.14 | 每秒 CPU 65ms
+WDT::feed()
+[02:25:55] [PERF] vision 59.1Hz loop=16.9ms body=14.3ms cpu=8.1ms gil_wait=6.2ms | read=9.0(cpu7.16) conv=3.7 task=0.8(cpu0.60) disp=0.2(cpu0.10) none=0 | idle=2.6ms 自身cpu=0.29ms 未归因=0.7ms
+[02:25:55] [PERF] mainloop 112Hz body=0.66ms cpu=0.60ms gil_wait=0.06ms | wdt=0.09 coord=0.16 tick=0.09 touch=0.17 | 每秒 CPU 67ms
+[02:25:55] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:25:56] [PERF] vision 59.1Hz loop=16.9ms body=14.8ms cpu=8.1ms gil_wait=6.7ms | read=9.2(cpu7.14) conv=4.5 task=0.6(cpu0.59) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.29ms 未归因=0.5ms
+[02:25:56] [PERF] mainloop 114Hz body=0.76ms cpu=0.58ms gil_wait=0.18ms | wdt=0.10 coord=0.21 tick=0.13 touch=0.18 | 每秒 CPU 65ms
+[02:25:56] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+WDT::feed()
+[02:25:57] [PERF] vision 59.0Hz loop=16.9ms body=14.6ms cpu=8.1ms gil_wait=6.5ms | read=9.3(cpu7.08) conv=4.0 task=0.6(cpu0.57) disp=0.1(cpu0.11) none=0 | idle=2.4ms 自身cpu=0.30ms 未归因=0.6ms
+[02:25:57] [FPS] pipeline: 59.0
+[02:25:57] [PERF] mainloop 115Hz body=0.69ms cpu=0.61ms gil_wait=0.09ms | wdt=0.07 coord=0.24 tick=0.09 touch=0.17 | 每秒 CPU 70ms
+[02:25:57] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:25:57] [WDT] main feed #600
+[02:25:57] [WDT] coord feed #600
+WDT::feed()
+[02:25:58] [PERF] vision 58.3Hz loop=17.2ms body=14.4ms cpu=8.0ms gil_wait=6.5ms | read=9.3(cpu7.05) conv=4.0 task=0.6(cpu0.55) disp=0.1(cpu0.09) none=0 | idle=2.7ms 自身cpu=0.28ms 未归因=0.5ms
+[02:25:58] [PERF] mainloop 119Hz body=0.61ms cpu=0.57ms gil_wait=0.03ms | wdt=0.05 coord=0.17 tick=0.09 touch=0.17 | 每秒 CPU 68ms
+[02:25:58] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:25:59] [PERF] vision 58.7Hz loop=17.0ms body=15.0ms cpu=8.4ms gil_wait=6.6ms | read=9.4(cpu7.35) conv=4.4 task=0.7(cpu0.65) disp=0.1(cpu0.13) none=0 | idle=2.0ms 自身cpu=0.28ms 未归因=0.5ms
+[02:25:59] [PERF] mainloop 105Hz body=0.78ms cpu=0.62ms gil_wait=0.16ms | wdt=0.05 coord=0.31 tick=0.09 touch=0.17 | 每秒 CPU 65ms
+[02:25:59] [PERF] lcd show 1.0Hz avg=2.6ms (cpu 2.3ms) -> 每秒占墙上 3ms / CPU 2ms
+WDT::feed()
+[02:26:00] [PERF] vision 58.9Hz loop=17.0ms body=15.3ms cpu=8.5ms gil_wait=6.9ms | read=10.0(cpu7.49) conv=4.2 task=0.6(cpu0.59) disp=0.1(cpu0.09) none=0 | idle=1.6ms 自身cpu=0.28ms 未归因=0.4ms
+[02:26:00] [PERF] mainloop 115Hz body=0.71ms cpu=0.58ms gil_wait=0.13ms | wdt=0.05 coord=0.19 tick=0.14 touch=0.18 | 每秒 CPU 67ms
+[02:26:00] [MEM] user=100/128MB CMM=0/0MB
+[02:26:00] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:01] [PERF] vision 58.4Hz loop=17.1ms body=14.6ms cpu=8.0ms gil_wait=6.5ms | read=8.6(cpu7.05) conv=3.9 task=0.8(cpu0.57) disp=0.3(cpu0.10) none=0 | idle=2.6ms 自身cpu=0.29ms 未归因=0.9ms
+[02:26:01] [PERF] mainloop 108Hz body=0.77ms cpu=0.64ms gil_wait=0.13ms | wdt=0.08 coord=0.23 tick=0.12 touch=0.14 | 每秒 CPU 69ms
+[02:26:01] [PERF] lcd show 1.0Hz avg=3.8ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+WDT::feed()
+[02:26:02] [PERF] vision 59.1Hz loop=16.9ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=8.1(cpu7.29) conv=5.2 task=0.9(cpu0.60) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.30ms 未归因=0.7ms
+[02:26:02] [FPS] pipeline: 59.0
+[02:26:02] [PERF] mainloop 110Hz body=0.78ms cpu=0.60ms gil_wait=0.18ms | wdt=0.05 coord=0.23 tick=0.09 touch=0.20 | 每秒 CPU 66ms
+[02:26:02] [WDT] viz feed #600
+[02:26:02] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:03] [PERF] vision 58.6Hz loop=17.1ms body=15.3ms cpu=8.3ms gil_wait=6.9ms | read=9.1(cpu7.33) conv=5.0 task=0.6(cpu0.58) disp=0.1(cpu0.11) none=0 | idle=1.8ms 自身cpu=0.31ms 未归因=0.4ms
+[02:26:03] [WDT] main feed #1200
+[02:26:03] [WDT] coord feed #1200
+[02:26:03] [PERF] mainloop 110Hz body=0.72ms cpu=0.59ms gil_wait=0.13ms | wdt=0.07 coord=0.22 tick=0.09 touch=0.15 | 每秒 CPU 65ms
+[02:26:03] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:04] [PERF] vision 58.9Hz loop=17.0ms body=14.8ms cpu=8.4ms gil_wait=6.4ms | read=9.5(cpu7.47) conv=4.0 task=0.7(cpu0.57) disp=0.1(cpu0.10) none=0 | idle=2.2ms 自身cpu=0.29ms 未归因=0.5ms
+[02:26:04] [PERF] mainloop 115Hz body=0.77ms cpu=0.57ms gil_wait=0.19ms | wdt=0.05 coord=0.18 tick=0.15 touch=0.23 | 每秒 CPU 66ms
+[02:26:04] [PERF] lcd show 1.0Hz avg=3.8ms (cpu 2.2ms) -> 每秒占墙上 4ms / CPU 2ms
+WDT::feed()
+[02:26:05] [PERF] vision 59.1Hz loop=16.9ms body=14.2ms cpu=8.2ms gil_wait=6.0ms | read=9.1(cpu7.20) conv=3.8 task=0.6(cpu0.57) disp=0.2(cpu0.10) none=0 | idle=2.7ms 自身cpu=0.28ms 未归因=0.5ms
+[02:26:05] [PERF] mainloop 119Hz body=0.68ms cpu=0.57ms gil_wait=0.11ms | wdt=0.05 coord=0.18 tick=0.10 touch=0.21 | 每秒 CPU 67ms
+[02:26:05] [PERF] lcd show 1.0Hz avg=4.1ms (cpu 2.3ms) -> 每秒占墙上 4ms / CPU 2ms
+WDT::feed()
+[02:26:06] [PERF] vision 59.2Hz loop=16.9ms body=14.5ms cpu=8.1ms gil_wait=6.3ms | read=8.6(cpu7.12) conv=4.5 task=0.6(cpu0.58) disp=0.1(cpu0.09) none=0 | idle=2.4ms 自身cpu=0.34ms 未归因=0.6ms
+[02:26:06] [PERF] mainloop 110Hz body=0.84ms cpu=0.58ms gil_wait=0.26ms | wdt=0.05 coord=0.18 tick=0.16 touch=0.23 | 每秒 CPU 63ms
+[02:26:06] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:07] [PERF] vision 59.2Hz loop=16.9ms body=15.0ms cpu=8.3ms gil_wait=6.7ms | read=8.9(cpu7.37) conv=4.9 task=0.7(cpu0.58) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.30ms 未归因=0.5ms
+[02:26:07] [FPS] pipeline: 59.0
+[02:26:07] [PERF] mainloop 111Hz body=0.76ms cpu=0.58ms gil_wait=0.18ms | wdt=0.06 coord=0.19 tick=0.12 touch=0.18 | 每秒 CPU 64ms
+[02:26:07] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:08] [PERF] vision 58.8Hz loop=17.0ms body=15.0ms cpu=8.4ms gil_wait=6.7ms | read=9.5(cpu7.37) conv=4.4 task=0.7(cpu0.62) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.4ms
+[02:26:08] [PERF] mainloop 107Hz body=0.76ms cpu=0.64ms gil_wait=0.11ms | wdt=0.08 coord=0.28 tick=0.09 touch=0.15 | 每秒 CPU 69ms
+[02:26:08] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:26:08] [WDT] main feed #1800
+[02:26:08] [WDT] coord feed #1800
+[02:26:08] [MEM] user=99/128MB CMM=0/0MB
+WDT::feed()
+[02:26:09] [PERF] vision 58.2Hz loop=17.2ms body=15.6ms cpu=8.4ms gil_wait=7.2ms | read=8.4(cpu7.43) conv=5.9 task=0.8(cpu0.60) disp=0.1(cpu0.09) none=0 | idle=1.6ms 自身cpu=0.28ms 未归因=0.4ms
+[02:26:09] [PERF] mainloop 116Hz body=0.63ms cpu=0.57ms gil_wait=0.06ms | wdt=0.05 coord=0.16 tick=0.09 touch=0.17 | 每秒 CPU 66ms
+[02:26:09] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:10] [PERF] vision 58.8Hz loop=17.0ms body=15.1ms cpu=8.4ms gil_wait=6.7ms | read=8.9(cpu7.36) conv=5.0 task=0.6(cpu0.60) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.32ms 未归因=0.4ms
+[02:26:10] [PERF] mainloop 112Hz body=0.70ms cpu=0.59ms gil_wait=0.11ms | wdt=0.06 coord=0.19 tick=0.09 touch=0.21 | 每秒 CPU 66ms
+[02:26:10] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:11] [PERF] vision 59.1Hz loop=16.9ms body=15.1ms cpu=8.4ms gil_wait=6.7ms | read=9.5(cpu7.37) conv=4.3 task=0.7(cpu0.64) disp=0.1(cpu0.11) none=0 | idle=1.8ms 自身cpu=0.32ms 未归因=0.4ms
+[02:26:11] [PERF] mainloop 110Hz body=0.79ms cpu=0.60ms gil_wait=0.20ms | wdt=0.08 coord=0.26 tick=0.09 touch=0.21 | 每秒 CPU 66ms
+[02:26:11] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:12] [PERF] vision 59.0Hz loop=16.9ms body=15.1ms cpu=8.5ms gil_wait=6.6ms | read=9.3(cpu7.44) conv=4.5 task=0.6(cpu0.59) disp=0.1(cpu0.13) none=0 | idle=1.9ms 自身cpu=0.34ms 未归因=0.5ms
+[02:26:12] [FPS] pipeline: 58.9
+[02:26:12] [PERF] mainloop 108Hz body=0.81ms cpu=0.60ms gil_wait=0.21ms | wdt=0.05 coord=0.20 tick=0.12 touch=0.23 | 每秒 CPU 65ms
+[02:26:12] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:26:12] [WDT] viz feed #1200
+WDT::feed()
+[02:26:13] [PERF] vision 59.0Hz loop=17.0ms body=15.1ms cpu=8.5ms gil_wait=6.7ms | read=9.1(cpu7.38) conv=4.6 task=0.8(cpu0.66) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.32ms 未归因=0.5ms
+[02:26:13] [PERF] mainloop 107Hz body=0.72ms cpu=0.60ms gil_wait=0.12ms | wdt=0.08 coord=0.18 tick=0.11 touch=0.21 | 每秒 CPU 64ms
+[02:26:13] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+WDT::feed()
+[02:26:14] [WDT] main feed #2400
+[02:26:14] [WDT] coord feed #2400
+[02:26:14] [PERF] vision 57.1Hz loop=17.5ms body=15.7ms cpu=8.3ms gil_wait=7.3ms | read=9.4(cpu7.28) conv=4.5 task=0.7(cpu0.58) disp=0.1(cpu0.11) none=0 | idle=1.8ms 自身cpu=0.34ms 未归因=0.9ms
+[02:26:14] [PERF] mainloop 110Hz body=0.69ms cpu=0.58ms gil_wait=0.11ms | wdt=0.05 coord=0.19 tick=0.12 touch=0.17 | 每秒 CPU 64ms
+[02:26:14] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:15] [PERF] vision 59.1Hz loop=16.9ms body=15.1ms cpu=8.4ms gil_wait=6.8ms | read=8.8(cpu7.34) conv=5.0 task=0.6(cpu0.60) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.32ms 未归因=0.5ms
+[02:26:15] [PERF] mainloop 112Hz body=0.78ms cpu=0.60ms gil_wait=0.18ms | wdt=0.05 coord=0.23 tick=0.12 touch=0.18 | 每秒 CPU 67ms
+[02:26:15] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:16] [PERF] vision 59.0Hz loop=16.9ms body=15.0ms cpu=8.4ms gil_wait=6.6ms | read=8.7(cpu7.38) conv=5.1 task=0.6(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.34ms 未归因=0.5ms
+[02:26:16] [PERF] mainloop 111Hz body=0.74ms cpu=0.59ms gil_wait=0.15ms | wdt=0.08 coord=0.16 tick=0.15 touch=0.20 | 每秒 CPU 65ms
+[02:26:16] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:26:16] [MEM] user=99/128MB CMM=0/0MB
+WDT::feed()
+[02:26:17] [PERF] vision 58.8Hz loop=17.0ms body=15.1ms cpu=8.4ms gil_wait=6.7ms | read=9.0(cpu7.39) conv=4.9 task=0.6(cpu0.60) disp=0.1(cpu0.11) none=0 | idle=1.9ms 自身cpu=0.28ms 未归因=0.4ms
+[02:26:17] [FPS] pipeline: 59.0
+[02:26:17] [PERF] mainloop 107Hz body=0.89ms cpu=0.63ms gil_wait=0.26ms | wdt=0.09 coord=0.25 tick=0.15 touch=0.20 | 每秒 CPU 67ms
+[02:26:17] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:18] [PERF] vision 59.0Hz loop=17.0ms body=15.0ms cpu=8.4ms gil_wait=6.6ms | read=9.3(cpu7.32) conv=4.5 task=0.7(cpu0.62) disp=0.1(cpu0.14) none=0 | idle=1.9ms 自身cpu=0.30ms 未归因=0.4ms
+[02:26:18] [PERF] mainloop 111Hz body=0.81ms cpu=0.66ms gil_wait=0.15ms | wdt=0.10 coord=0.24 tick=0.11 touch=0.21 | 每秒 CPU 73ms
+[02:26:18] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:19] [PERF] vision 59.1Hz loop=16.9ms body=15.0ms cpu=8.4ms gil_wait=6.7ms | read=9.2(cpu7.33) conv=4.6 task=0.6(cpu0.60) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.34ms 未归因=0.5ms
+[02:26:19] [WDT] main feed #3000
+[02:26:19] [WDT] coord feed #3000
+[02:26:19] [PERF] mainloop 106Hz body=0.85ms cpu=0.61ms gil_wait=0.24ms | wdt=0.09 coord=0.25 tick=0.09 touch=0.25 | 每秒 CPU 65ms
+[02:26:19] [PERF] lcd show 1.0Hz avg=5.4ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:26:20] [PERF] vision 58.7Hz loop=17.0ms body=15.2ms cpu=8.4ms gil_wait=6.8ms | read=9.7(cpu7.44) conv=4.2 task=0.7(cpu0.59) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.29ms 未归因=0.5ms
+[02:26:20] [PERF] mainloop 111Hz body=0.76ms cpu=0.58ms gil_wait=0.18ms | wdt=0.05 coord=0.24 tick=0.15 touch=0.17 | 每秒 CPU 64ms
+[02:26:20] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:26:21] [PERF] vision 59.1Hz loop=16.9ms body=14.7ms cpu=8.3ms gil_wait=6.4ms | read=9.0(cpu7.33) conv=3.9 task=1.0(cpu0.57) disp=0.3(cpu0.10) none=0 | idle=2.3ms 自身cpu=0.29ms 未归因=0.5ms
+[02:26:21] [PERF] mainloop 119Hz body=0.63ms cpu=0.56ms gil_wait=0.07ms | wdt=0.05 coord=0.18 tick=0.14 touch=0.14 | 每秒 CPU 66ms
+[02:26:21] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 2.2ms) -> 每秒占墙上 4ms / CPU 2ms
+WDT::feed()
+[02:26:22] [PERF] vision 59.0Hz loop=16.9ms body=14.3ms cpu=8.1ms gil_wait=6.2ms | read=9.2(cpu7.18) conv=3.9 task=0.6(cpu0.54) disp=0.1(cpu0.09) none=0 | idle=2.6ms 自身cpu=0.29ms 未归因=0.6ms
+[02:26:22] [FPS] pipeline: 59.0
+[02:26:22] [PERF] mainloop 117Hz body=0.67ms cpu=0.58ms gil_wait=0.09ms | wdt=0.06 coord=0.19 tick=0.09 touch=0.21 | 每秒 CPU 68ms
+[02:26:22] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:26:23] [WDT] viz feed #1800
+WDT::feed()
+[02:26:23] [PERF] vision 59.1Hz loop=16.9ms body=14.7ms cpu=8.1ms gil_wait=6.6ms | read=8.9(cpu7.14) conv=4.4 task=0.6(cpu0.54) disp=0.2(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.32ms 未归因=0.6ms
+[02:26:23] [PERF] mainloop 113Hz body=0.75ms cpu=0.58ms gil_wait=0.17ms | wdt=0.05 coord=0.25 tick=0.09 touch=0.18 | 每秒 CPU 65ms
+[02:26:23] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.1ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:26:24] [PERF] vision 58.9Hz loop=17.0ms body=15.0ms cpu=8.4ms gil_wait=6.6ms | read=9.7(cpu7.53) conv=4.2 task=0.6(cpu0.53) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.28ms 未归因=0.4ms
+[02:26:24] [PERF] mainloop 119Hz body=0.57ms cpu=0.56ms gil_wait=0.00ms | wdt=0.05 coord=0.16 tick=0.09 touch=0.14 | 每秒 CPU 67ms
+[02:26:24] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:26:24] [WDT] main feed #3600
+[02:26:24] [WDT] coord feed #3600
+[02:26:24] [MEM] user=99/128MB CMM=0/0MB
+WDT::feed()
+[02:26:25] [PERF] vision 58.8Hz loop=17.0ms body=14.2ms cpu=7.9ms gil_wait=6.3ms | read=9.3(cpu6.92) conv=3.6 task=0.6(cpu0.56) disp=0.1(cpu0.09) none=0 | idle=2.8ms 自身cpu=0.28ms 未归因=0.6ms
+[02:26:25] [PERF] mainloop 115Hz body=0.79ms cpu=0.59ms gil_wait=0.20ms | wdt=0.09 coord=0.23 tick=0.09 touch=0.18 | 每秒 CPU 68ms
+[02:26:25] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:26] [PERF] vision 59.2Hz loop=16.9ms body=15.1ms cpu=8.5ms gil_wait=6.5ms | read=8.5(cpu7.56) conv=4.9 task=1.2(cpu0.59) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.29ms 未归因=0.4ms
+[02:26:26] [PERF] mainloop 117Hz body=0.58ms cpu=0.55ms gil_wait=0.03ms | wdt=0.08 coord=0.15 tick=0.09 touch=0.15 | 每秒 CPU 65ms
+[02:26:26] [PERF] lcd show 1.0Hz avg=13.6ms (cpu 2.4ms) -> 每秒占墙上 13ms / CPU 2ms
+WDT::feed()
+[02:26:27] [PERF] vision 59.0Hz loop=17.0ms body=14.8ms cpu=8.4ms gil_wait=6.3ms | read=8.9(cpu7.51) conv=4.2 task=0.8(cpu0.55) disp=0.3(cpu0.10) none=0 | idle=2.2ms 自身cpu=0.28ms 未归因=0.5ms
+[02:26:27] [FPS] pipeline: 59.0
+[02:26:27] [PERF] mainloop 113Hz body=0.59ms cpu=0.56ms gil_wait=0.03ms | wdt=0.05 coord=0.16 tick=0.12 touch=0.14 | 每秒 CPU 63ms
+[02:26:27] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:26:28] [PERF] vision 58.9Hz loop=17.0ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=9.0(cpu7.29) conv=4.2 task=0.9(cpu0.58) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.29ms 未归因=0.8ms
+[02:26:28] [PERF] mainloop 113Hz body=0.63ms cpu=0.59ms gil_wait=0.04ms | wdt=0.05 coord=0.19 tick=0.09 touch=0.17 | 每秒 CPU 66ms
+[02:26:28] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:26:29] [PERF] vision 59.1Hz loop=16.9ms body=15.1ms cpu=8.5ms gil_wait=6.7ms | read=8.7(cpu7.50) conv=4.6 task=1.2(cpu0.58) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.28ms 未归因=0.6ms
+[02:26:29] [PERF] mainloop 113Hz body=0.74ms cpu=0.57ms gil_wait=0.17ms | wdt=0.07 coord=0.18 tick=0.15 touch=0.14 | 每秒 CPU 65ms
+[02:26:29] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:26:30] [WDT] main feed #4200
+[02:26:30] [WDT] coord feed #4200
+WDT::feed()
+[02:26:30] [PERF] vision 59.0Hz loop=17.0ms body=14.2ms cpu=8.1ms gil_wait=6.1ms | read=8.9(cpu7.17) conv=3.8 task=0.6(cpu0.57) disp=0.2(cpu0.10) none=0 | idle=2.7ms 自身cpu=0.29ms 未归因=0.8ms
+[02:26:30] [PERF] mainloop 110Hz body=0.73ms cpu=0.59ms gil_wait=0.14ms | wdt=0.06 coord=0.22 tick=0.13 touch=0.14 | 每秒 CPU 65ms
+[02:26:30] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:26:31] [PERF] vision 59.0Hz loop=16.9ms body=15.0ms cpu=8.3ms gil_wait=6.7ms | read=9.0(cpu7.31) conv=3.9 task=1.2(cpu0.60) disp=0.2(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.29ms 未归因=0.8ms
+[02:26:31] [PERF] mainloop 112Hz body=0.71ms cpu=0.57ms gil_wait=0.14ms | wdt=0.05 coord=0.16 tick=0.09 touch=0.18 | 每秒 CPU 63ms
+[02:26:31] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:32] [PERF] vision 59.1Hz loop=16.9ms body=14.7ms cpu=8.4ms gil_wait=6.4ms | read=8.9(cpu7.40) conv=3.9 task=1.0(cpu0.56) disp=0.2(cpu0.10) none=0 | idle=2.2ms 自身cpu=0.30ms 未归因=0.8ms
+[02:26:32] [FPS] pipeline: 59.0
+[02:26:32] [MEM] user=99/128MB CMM=0/0MB
+[02:26:32] [PERF] mainloop 114Hz body=0.57ms cpu=0.57ms gil_wait=-0.00ms | wdt=0.05 coord=0.16 tick=0.09 touch=0.14 | 每秒 CPU 65ms
+[02:26:32] [PERF] lcd show 1.0Hz avg=3.8ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+WDT::feed()
+[02:26:33] [WDT] viz feed #2400
+[02:26:33] [PERF] vision 59.1Hz loop=16.9ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=9.3(cpu7.25) conv=4.4 task=0.6(cpu0.56) disp=0.2(cpu0.15) none=0 | idle=1.8ms 自身cpu=0.34ms 未归因=0.6ms
+[02:26:33] [PERF] mainloop 113Hz body=0.67ms cpu=0.60ms gil_wait=0.07ms | wdt=0.05 coord=0.20 tick=0.09 touch=0.16 | 每秒 CPU 68ms
+[02:26:33] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:34] [PERF] vision 59.0Hz loop=17.0ms body=14.9ms cpu=8.3ms gil_wait=6.6ms | read=9.6(cpu7.29) conv=3.8 task=0.7(cpu0.61) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.31ms 未归因=0.7ms
+[02:26:34] [PERF] mainloop 117Hz body=0.66ms cpu=0.61ms gil_wait=0.05ms | wdt=0.06 coord=0.20 tick=0.09 touch=0.16 | 每秒 CPU 71ms
+[02:26:34] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+WDT::feed()
+[02:26:35] [WDT] main feed #4800
+[02:26:35] [WDT] coord feed #4800
+[02:26:35] [PERF] vision 58.4Hz loop=17.1ms body=14.7ms cpu=8.1ms gil_wait=6.6ms | read=9.4(cpu7.13) conv=4.1 task=0.6(cpu0.55) disp=0.1(cpu0.09) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.6ms
+[02:26:35] [PERF] mainloop 109Hz body=0.87ms cpu=0.63ms gil_wait=0.24ms | wdt=0.09 coord=0.21 tick=0.20 touch=0.17 | 每秒 CPU 69ms
+[02:26:35] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:36] [PERF] vision 59.1Hz loop=16.9ms body=15.0ms cpu=8.3ms gil_wait=6.8ms | read=8.4(cpu7.27) conv=4.2 task=1.3(cpu0.57) disp=0.2(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.32ms 未归因=0.9ms
+[02:26:36] [PERF] mainloop 112Hz body=0.83ms cpu=0.60ms gil_wait=0.23ms | wdt=0.09 coord=0.22 tick=0.10 touch=0.24 | 每秒 CPU 67ms
+[02:26:36] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:37] [PERF] vision 58.9Hz loop=17.0ms body=14.4ms cpu=8.2ms gil_wait=6.2ms | read=8.3(cpu7.27) conv=4.4 task=1.0(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=2.6ms 自身cpu=0.29ms 未归因=0.7ms
+[02:26:37] [FPS] pipeline: 59.2
+[02:26:37] [PERF] mainloop 112Hz body=0.71ms cpu=0.59ms gil_wait=0.11ms | wdt=0.07 coord=0.19 tick=0.11 touch=0.17 | 每秒 CPU 66ms
+[02:26:38] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:38] [PERF] vision 59.0Hz loop=16.9ms body=15.0ms cpu=8.2ms gil_wait=6.8ms | read=8.3(cpu7.11) conv=4.5 task=1.1(cpu0.63) disp=0.3(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.37ms 未归因=0.9ms
+[02:26:38] [PERF] mainloop 107Hz body=0.76ms cpu=0.60ms gil_wait=0.16ms | wdt=0.06 coord=0.21 tick=0.09 touch=0.23 | 每秒 CPU 64ms
+[02:26:39] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:39] [PERF] vision 58.7Hz loop=17.0ms body=15.0ms cpu=8.3ms gil_wait=6.8ms | read=8.7(cpu7.23) conv=5.0 task=0.7(cpu0.59) disp=0.1(cpu0.11) none=0 | idle=2.0ms 自身cpu=0.34ms 未归因=0.6ms
+[02:26:39] [PERF] mainloop 115Hz body=0.71ms cpu=0.59ms gil_wait=0.12ms | wdt=0.07 coord=0.19 tick=0.18 touch=0.14 | 每秒 CPU 67ms
+[02:26:40] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:40] [PERF] vision 59.0Hz loop=17.0ms body=15.1ms cpu=8.5ms gil_wait=6.6ms | read=9.5(cpu7.45) conv=4.3 task=0.7(cpu0.65) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.30ms 未归因=0.5ms
+[02:26:40] [WDT] main feed #5400
+[02:26:40] [WDT] coord feed #5400
+[02:26:40] [MEM] user=99/128MB CMM=0/0MB
+[02:26:40] [PERF] mainloop 110Hz body=0.69ms cpu=0.58ms gil_wait=0.11ms | wdt=0.08 coord=0.23 tick=0.09 touch=0.17 | 每秒 CPU 64ms
+[02:26:41] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+WDT::feed()
+[02:26:41] [PERF] vision 58.8Hz loop=17.0ms body=15.2ms cpu=8.3ms gil_wait=6.8ms | read=9.5(cpu7.36) conv=4.4 task=0.6(cpu0.59) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.29ms 未归因=0.6ms
+[02:26:41] [PERF] mainloop 109Hz body=0.76ms cpu=0.60ms gil_wait=0.17ms | wdt=0.05 coord=0.23 tick=0.09 touch=0.14 | 每秒 CPU 65ms
+[02:26:42] [PERF] lcd show 1.0Hz avg=4.1ms (cpu 3.3ms) -> 每秒占墙上 4ms / CPU 3ms
+WDT::feed()
+[02:26:42] [PERF] vision 59.2Hz loop=16.9ms body=14.4ms cpu=8.2ms gil_wait=6.2ms | read=8.3(cpu7.12) conv=4.3 task=1.0(cpu0.63) disp=0.1(cpu0.11) none=0 | idle=2.4ms 自身cpu=0.33ms 未归因=0.7ms
+[02:26:42] [FPS] pipeline: 59.2
+[02:26:42] [PERF] mainloop 113Hz body=0.81ms cpu=0.62ms gil_wait=0.19ms | wdt=0.08 coord=0.24 tick=0.11 touch=0.25 | 每秒 CPU 70ms
+[02:26:43] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:43] [WDT] viz feed #3000
+[02:26:43] [PERF] vision 58.9Hz loop=17.0ms body=14.7ms cpu=8.2ms gil_wait=6.5ms | read=9.6(cpu7.26) conv=4.0 task=0.6(cpu0.54) disp=0.1(cpu0.09) none=0 | idle=2.3ms 自身cpu=0.29ms 未归因=0.4ms
+[02:26:43] [PERF] mainloop 115Hz body=0.62ms cpu=0.56ms gil_wait=0.05ms | wdt=0.05 coord=0.18 tick=0.12 touch=0.15 | 每秒 CPU 65ms
+[02:26:44] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:44] [PERF] vision 59.0Hz loop=17.0ms body=14.8ms cpu=8.2ms gil_wait=6.6ms | read=9.5(cpu7.25) conv=3.8 task=0.6(cpu0.57) disp=0.2(cpu0.10) none=0 | idle=2.1ms 自身cpu=0.29ms 未归因=0.7ms
+[02:26:44] [PERF] mainloop 118Hz body=0.73ms cpu=0.58ms gil_wait=0.16ms | wdt=0.05 coord=0.20 tick=0.09 touch=0.22 | 每秒 CPU 68ms
+[02:26:45] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:45] [PERF] vision 59.2Hz loop=16.9ms body=14.2ms cpu=8.0ms gil_wait=6.3ms | read=8.3(cpu6.99) conv=4.6 task=0.8(cpu0.56) disp=0.1(cpu0.11) none=0 | idle=2.7ms 自身cpu=0.30ms 未归因=0.5ms
+[02:26:45] [PERF] mainloop 111Hz body=0.72ms cpu=0.62ms gil_wait=0.10ms | wdt=0.06 coord=0.19 tick=0.09 touch=0.19 | 每秒 CPU 69ms
+[02:26:46] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:26:46] [WDT] main feed #6000
+[02:26:46] [WDT] coord feed #6000
+WDT::feed()
+[02:26:46] [PERF] vision 58.9Hz loop=17.0ms body=15.0ms cpu=8.5ms gil_wait=6.5ms | read=9.7(cpu7.49) conv=4.1 task=0.6(cpu0.60) disp=0.1(cpu0.10) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.4ms
+[02:26:46] [PERF] mainloop 117Hz body=0.63ms cpu=0.57ms gil_wait=0.05ms | wdt=0.05 coord=0.16 tick=0.09 touch=0.18 | 每秒 CPU 67ms
+[02:26:47] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:47] [PERF] vision 58.9Hz loop=17.0ms body=14.9ms cpu=8.0ms gil_wait=6.9ms | read=9.6(cpu6.98) conv=3.6 task=0.9(cpu0.67) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.30ms 未归因=0.7ms
+[02:26:47] [FPS] pipeline: 58.9
+[02:26:47] [PERF] mainloop 114Hz body=0.65ms cpu=0.58ms gil_wait=0.08ms | wdt=0.05 coord=0.17 tick=0.12 touch=0.20 | 每秒 CPU 66ms
+[02:26:48] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:26:48] [PERF] vision 59.1Hz loop=16.9ms body=15.3ms cpu=8.4ms gil_wait=6.9ms | read=8.8(cpu7.45) conv=5.0 task=0.9(cpu0.55) disp=0.1(cpu0.10) none=0 | idle=1.7ms 自身cpu=0.29ms 未归因=0.5ms
+[02:26:48] [MEM] user=99/128MB CMM=0/0MB
+[02:26:49] [PERF] mainloop 107Hz body=0.78ms cpu=0.59ms gil_wait=0.19ms | wdt=0.12 coord=0.23 tick=0.09 touch=0.18 | 每秒 CPU 63ms
+[02:26:49] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:49] [PERF] vision 58.9Hz loop=17.0ms body=13.9ms cpu=8.1ms gil_wait=5.8ms | read=8.4(cpu7.13) conv=3.8 task=0.7(cpu0.60) disp=0.1(cpu0.10) none=0 | idle=3.1ms 自身cpu=0.28ms 未归因=0.7ms
+[02:26:50] [PERF] mainloop 107Hz body=0.98ms cpu=0.59ms gil_wait=0.40ms | wdt=0.11 coord=0.28 tick=0.16 touch=0.26 | 每秒 CPU 63ms
+[02:26:50] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:50] [PERF] vision 59.1Hz loop=16.9ms body=14.8ms cpu=8.1ms gil_wait=6.8ms | read=8.8(cpu7.15) conv=4.7 task=0.5(cpu0.53) disp=0.2(cpu0.11) none=0 | idle=2.1ms 自身cpu=0.29ms 未归因=0.6ms
+[02:26:51] [PERF] mainloop 117Hz body=0.68ms cpu=0.57ms gil_wait=0.11ms | wdt=0.08 coord=0.15 tick=0.10 touch=0.20 | 每秒 CPU 66ms
+[02:26:51] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:26:51] [WDT] main feed #6600
+[02:26:51] [WDT] coord feed #6600
+[02:26:51] [PERF] vision 59.0Hz loop=17.0ms body=14.9ms cpu=8.2ms gil_wait=6.7ms | read=8.6(cpu7.31) conv=4.8 task=0.9(cpu0.55) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.6ms
+[02:26:52] [PERF] mainloop 115Hz body=0.78ms cpu=0.59ms gil_wait=0.19ms | wdt=0.05 coord=0.20 tick=0.12 touch=0.23 | 每秒 CPU 68ms
+[02:26:52] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:52] [PERF] vision 59.0Hz loop=16.9ms body=14.9ms cpu=8.2ms gil_wait=6.7ms | read=8.7(cpu7.29) conv=4.8 task=0.8(cpu0.55) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.28ms 未归因=0.4ms
+[02:26:52] [FPS] pipeline: 59.1
+[02:26:53] [PERF] mainloop 109Hz body=0.71ms cpu=0.62ms gil_wait=0.09ms | wdt=0.06 coord=0.21 tick=0.09 touch=0.17 | 每秒 CPU 68ms
+[02:26:53] [PERF] lcd show 1.0Hz avg=5.9ms (cpu 2.4ms) -> 每秒占墙上 6ms / CPU 2ms
+WDT::feed()
+[02:26:53] [PERF] vision 59.0Hz loop=17.0ms body=14.3ms cpu=8.1ms gil_wait=6.1ms | read=9.0(cpu7.21) conv=4.1 task=0.6(cpu0.54) disp=0.1(cpu0.11) none=0 | idle=2.7ms 自身cpu=0.28ms 未归因=0.4ms
+[02:26:53] [WDT] viz feed #3600
+[02:26:54] [PERF] mainloop 112Hz body=0.86ms cpu=0.58ms gil_wait=0.29ms | wdt=0.10 coord=0.33 tick=0.12 touch=0.20 | 每秒 CPU 65ms
+[02:26:54] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:54] [PERF] vision 58.3Hz loop=17.1ms body=15.2ms cpu=8.3ms gil_wait=6.9ms | read=8.2(cpu7.25) conv=5.4 task=0.9(cpu0.56) disp=0.1(cpu0.11) none=0 | idle=2.0ms 自身cpu=0.34ms 未归因=0.6ms
+[02:26:55] [PERF] mainloop 119Hz body=0.64ms cpu=0.57ms gil_wait=0.07ms | wdt=0.06 coord=0.15 tick=0.09 touch=0.18 | 每秒 CPU 68ms
+[02:26:55] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:26:55] [PERF] vision 59.3Hz loop=16.9ms body=15.1ms cpu=8.5ms gil_wait=6.6ms | read=8.7(cpu7.50) conv=4.5 task=1.0(cpu0.57) disp=0.2(cpu0.10) none=0 | idle=1.8ms 自身cpu=0.30ms 未归因=0.8ms
+[02:26:56] [PERF] mainloop 107Hz body=0.84ms cpu=0.64ms gil_wait=0.20ms | wdt=0.06 coord=0.28 tick=0.10 touch=0.23 | 每秒 CPU 68ms
+[02:26:56] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:56] [PERF] vision 59.1Hz loop=16.9ms body=15.1ms cpu=8.5ms gil_wait=6.6ms | read=8.3(cpu7.42) conv=5.0 task=1.0(cpu0.61) disp=0.2(cpu0.11) none=0 | idle=1.8ms 自身cpu=0.32ms 未归因=0.6ms
+[02:26:56] [WDT] main feed #7200
+[02:26:56] [WDT] coord feed #7200
+[02:26:56] [MEM] user=100/128MB CMM=0/0MB
+[02:26:57] [PERF] mainloop 114Hz body=0.72ms cpu=0.59ms gil_wait=0.13ms | wdt=0.05 coord=0.24 tick=0.13 touch=0.15 | 每秒 CPU 67ms
+[02:26:57] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:57] [PERF] vision 58.8Hz loop=17.0ms body=15.3ms cpu=8.3ms gil_wait=7.0ms | read=8.7(cpu7.28) conv=5.2 task=0.6(cpu0.58) disp=0.1(cpu0.09) none=0 | idle=1.7ms 自身cpu=0.33ms 未归因=0.6ms
+[02:26:57] [FPS] pipeline: 58.9
+[02:26:58] [PERF] mainloop 110Hz body=0.74ms cpu=0.58ms gil_wait=0.16ms | wdt=0.05 coord=0.26 tick=0.09 touch=0.18 | 每秒 CPU 64ms
+[02:26:58] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:58] [PERF] vision 58.9Hz loop=17.0ms body=15.4ms cpu=8.4ms gil_wait=7.0ms | read=9.5(cpu7.35) conv=4.6 task=0.6(cpu0.60) disp=0.1(cpu0.11) none=0 | idle=1.6ms 自身cpu=0.32ms 未归因=0.5ms
+[02:26:59] [PERF] mainloop 107Hz body=0.82ms cpu=0.59ms gil_wait=0.23ms | wdt=0.13 coord=0.20 tick=0.09 touch=0.24 | 每秒 CPU 63ms
+[02:26:59] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:26:59] [PERF] vision 59.2Hz loop=16.9ms body=14.9ms cpu=8.4ms gil_wait=6.5ms | read=8.8(cpu7.39) conv=4.9 task=0.6(cpu0.57) disp=0.1(cpu0.10) none=0 | idle=2.0ms 自身cpu=0.32ms 未归因=0.5ms
+[02:27:00] [PERF] mainloop 114Hz body=0.63ms cpu=0.59ms gil_wait=0.04ms | wdt=0.07 coord=0.17 tick=0.09 touch=0.18 | 每秒 CPU 67ms
+[02:27:00] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:27:00] [PERF] vision 58.9Hz loop=17.0ms body=15.0ms cpu=8.3ms gil_wait=6.6ms | read=9.1(cpu7.31) conv=4.7 task=0.6(cpu0.57) disp=0.1(cpu0.12) none=0 | idle=2.0ms 自身cpu=0.30ms 未归因=0.5ms
+[02:27:01] [PERF] mainloop 110Hz body=0.75ms cpu=0.60ms gil_wait=0.15ms | wdt=0.05 coord=0.23 tick=0.09 touch=0.21 | 每秒 CPU 66ms
+[02:27:01] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:27:01] [PERF] vision 58.8Hz loop=17.0ms body=14.8ms cpu=8.4ms gil_wait=6.4ms | read=9.3(cpu7.37) conv=4.2 task=0.7(cpu0.65) disp=0.1(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.29ms 未归因=0.5ms
+[02:27:02] [PERF] mainloop 114Hz body=0.69ms cpu=0.60ms gil_wait=0.09ms | wdt=0.05 coord=0.21 tick=0.09 touch=0.20 | 每秒 CPU 69ms
+[02:27:02] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:02] [WDT] main feed #7800
+[02:27:02] [WDT] coord feed #7800
+WDT::feed()
+[02:27:02] [PERF] vision 58.8Hz loop=17.0ms body=14.9ms cpu=8.4ms gil_wait=6.5ms | read=9.6(cpu7.48) conv=3.9 task=0.6(cpu0.56) disp=0.1(cpu0.10) none=0 | idle=2.1ms 自身cpu=0.28ms 未归因=0.6ms
+[02:27:02] [FPS] pipeline: 58.8
+[02:27:03] [PERF] mainloop 109Hz body=1.06ms cpu=0.64ms gil_wait=0.42ms | wdt=0.06 coord=0.23 tick=0.16 touch=0.37 | 每秒 CPU 69ms
+WDT::feed()
+[02:27:03] [PERF] lcd show 1.0Hz avg=3.9ms (cpu 3.3ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:27:03] [PERF] vision 59.1Hz loop=16.9ms body=14.4ms cpu=8.2ms gil_wait=6.2ms | read=8.6(cpu7.19) conv=4.3 task=0.7(cpu0.59) disp=0.1(cpu0.11) none=0 | idle=2.5ms 自身cpu=0.30ms 未归因=0.7ms
+[02:27:03] [WDT] viz feed #4200
+[02:27:04] [PERF] mainloop 119Hz body=0.79ms cpu=0.59ms gil_wait=0.19ms | wdt=0.06 coord=0.17 tick=0.13 touch=0.22 | 每秒 CPU 71ms
+WDT::feed()
+[02:27:04] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:27:04] [PERF] vision 59.0Hz loop=17.0ms body=14.4ms cpu=8.2ms gil_wait=6.2ms | read=8.7(cpu7.15) conv=4.2 task=0.7(cpu0.59) disp=0.1(cpu0.11) none=0 | idle=2.6ms 自身cpu=0.30ms 未归因=0.6ms
+[02:27:04] [MEM] user=99/128MB CMM=0/0MB
+[02:27:05] [PERF] mainloop 115Hz body=0.74ms cpu=0.61ms gil_wait=0.13ms | wdt=0.06 coord=0.17 tick=0.09 touch=0.17 | 每秒 CPU 70ms
+[02:27:05] [PERF] lcd show 1.0Hz avg=4.2ms (cpu 3.3ms) -> 每秒占墙上 4ms / CPU 3ms
+WDT::feed()
+[02:27:05] [PERF] vision 58.8Hz loop=17.0ms body=14.9ms cpu=8.2ms gil_wait=6.8ms | read=9.2(cpu7.20) conv=4.4 task=0.6(cpu0.55) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.32ms 未归因=0.6ms
+[02:27:06] [PERF] mainloop 109Hz body=0.66ms cpu=0.62ms gil_wait=0.04ms | wdt=0.06 coord=0.17 tick=0.11 touch=0.19 | 每秒 CPU 68ms
+[02:27:06] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:27:06] [PERF] vision 59.1Hz loop=16.9ms body=15.2ms cpu=8.4ms gil_wait=6.8ms | read=8.4(cpu7.37) conv=4.4 task=1.1(cpu0.59) disp=0.2(cpu0.10) none=0 | idle=1.8ms 自身cpu=0.30ms 未归因=0.9ms
+[02:27:07] [PERF] mainloop 116Hz body=0.58ms cpu=0.56ms gil_wait=0.03ms | wdt=0.05 coord=0.15 tick=0.09 touch=0.14 | 每秒 CPU 65ms
+WDT::feed()
+[02:27:07] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:27:07] [WDT] main feed #8400
+[02:27:07] [WDT] coord feed #8400
+[02:27:07] [PERF] vision 58.9Hz loop=17.0ms body=14.7ms cpu=8.2ms gil_wait=6.5ms | read=8.3(cpu7.27) conv=4.3 task=1.0(cpu0.55) disp=0.3(cpu0.10) none=0 | idle=2.3ms 自身cpu=0.30ms 未归因=0.8ms
+[02:27:07] [FPS] pipeline: 58.9
+[02:27:08] [PERF] mainloop 114Hz body=0.68ms cpu=0.59ms gil_wait=0.09ms | wdt=0.07 coord=0.19 tick=0.11 touch=0.18 | 每秒 CPU 67ms
+WDT::feed()
+[02:27:08] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:08] [PERF] vision 58.9Hz loop=17.0ms body=14.6ms cpu=8.2ms gil_wait=6.4ms | read=8.4(cpu7.20) conv=4.8 task=0.7(cpu0.63) disp=0.1(cpu0.09) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.7ms
+[02:27:09] [PERF] mainloop 108Hz body=1.04ms cpu=0.66ms gil_wait=0.38ms | wdt=0.08 coord=0.26 tick=0.23 touch=0.24 | 每秒 CPU 71ms
+WDT::feed()
+[02:27:09] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:09] [PERF] vision 58.3Hz loop=17.2ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=8.2(cpu7.22) conv=5.1 task=1.2(cpu0.65) disp=0.1(cpu0.10) none=0 | idle=2.0ms 自身cpu=0.32ms 未归因=0.5ms
+[02:27:10] [PERF] mainloop 118Hz body=0.71ms cpu=0.64ms gil_wait=0.07ms | wdt=0.09 coord=0.17 tick=0.13 touch=0.19 | 每秒 CPU 76ms
+WDT::feed()
+[02:27:10] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:10] [PERF] vision 58.9Hz loop=17.0ms body=14.8ms cpu=8.3ms gil_wait=6.5ms | read=9.6(cpu7.40) conv=4.1 task=0.6(cpu0.56) disp=0.1(cpu0.10) none=0 | idle=2.2ms 自身cpu=0.28ms 未归因=0.4ms
+[02:27:11] [PERF] mainloop 117Hz body=0.74ms cpu=0.56ms gil_wait=0.17ms | wdt=0.05 coord=0.20 tick=0.12 touch=0.14 | 每秒 CPU 66ms
+WDT::feed()
+[02:27:11] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:11] [PERF] vision 58.9Hz loop=17.0ms body=14.6ms cpu=8.1ms gil_wait=6.5ms | read=9.2(cpu7.16) conv=4.0 task=0.6(cpu0.55) disp=0.2(cpu0.09) none=0 | idle=2.3ms 自身cpu=0.30ms 未归因=0.7ms
+[02:27:12] [PERF] mainloop 113Hz body=0.74ms cpu=0.62ms gil_wait=0.11ms | wdt=0.08 coord=0.17 tick=0.14 touch=0.17 | 每秒 CPU 71ms
+WDT::feed()
+[02:27:12] [PERF] lcd show 1.0Hz avg=4.1ms (cpu 3.1ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:27:12] [FPS] pipeline: 59.1
+[02:27:12] [PERF] vision 58.9Hz loop=17.0ms body=14.8ms cpu=8.3ms gil_wait=6.4ms | read=8.7(cpu7.37) conv=4.2 task=1.1(cpu0.56) disp=0.2(cpu0.10) none=0 | idle=2.2ms 自身cpu=0.29ms 未归因=0.5ms
+[02:27:12] [WDT] main feed #9000
+[02:27:12] [WDT] coord feed #9000
+[02:27:12] [MEM] user=99/128MB CMM=0/0MB
+[02:27:13] [PERF] mainloop 116Hz body=0.61ms cpu=0.59ms gil_wait=0.01ms | wdt=0.06 coord=0.19 tick=0.10 touch=0.14 | 每秒 CPU 69ms
+WDT::feed()
+[02:27:13] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:13] [PERF] vision 58.3Hz loop=17.2ms body=15.3ms cpu=8.4ms gil_wait=6.9ms | read=10.1(cpu7.33) conv=3.8 task=0.7(cpu0.66) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.30ms 未归因=0.5ms
+[02:27:13] [WDT] viz feed #4800
+[02:27:14] [PERF] mainloop 118Hz body=0.73ms cpu=0.61ms gil_wait=0.12ms | wdt=0.07 coord=0.17 tick=0.11 touch=0.22 | 每秒 CPU 72ms
+WDT::feed()
+[02:27:14] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:14] [PERF] vision 58.8Hz loop=17.0ms body=14.7ms cpu=8.2ms gil_wait=6.5ms | read=9.3(cpu7.28) conv=4.1 task=0.8(cpu0.55) disp=0.1(cpu0.09) none=0 | idle=2.3ms 自身cpu=0.29ms 未归因=0.4ms
+[02:27:15] [PERF] mainloop 114Hz body=0.72ms cpu=0.64ms gil_wait=0.09ms | wdt=0.05 coord=0.17 tick=0.14 touch=0.20 | 每秒 CPU 73ms
+WDT::feed()
+[02:27:15] [PERF] lcd show 1.0Hz avg=6.4ms (cpu 2.3ms) -> 每秒占墙上 6ms / CPU 2ms
+[02:27:15] [PERF] vision 59.0Hz loop=17.0ms body=14.7ms cpu=8.1ms gil_wait=6.5ms | read=8.4(cpu7.18) conv=4.6 task=1.1(cpu0.56) disp=0.1(cpu0.09) none=0 | idle=2.3ms 自身cpu=0.30ms 未归因=0.5ms
+[02:27:16] [PERF] mainloop 110Hz body=0.91ms cpu=0.63ms gil_wait=0.28ms | wdt=0.08 coord=0.18 tick=0.19 touch=0.28 | 每秒 CPU 69ms
+WDT::feed()
+[02:27:16] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:16] [PERF] vision 58.7Hz loop=17.0ms body=14.9ms cpu=8.2ms gil_wait=6.7ms | read=8.1(cpu7.25) conv=4.6 task=1.1(cpu0.58) disp=0.2(cpu0.10) none=0 | idle=2.1ms 自身cpu=0.30ms 未归因=0.9ms
+[02:27:17] [PERF] mainloop 104Hz body=1.04ms cpu=0.65ms gil_wait=0.39ms | wdt=0.06 coord=0.29 tick=0.24 touch=0.23 | 每秒 CPU 67ms
+WDT::feed()
+[02:27:17] [PERF] lcd show 1.0Hz avg=7.3ms (cpu 2.2ms) -> 每秒占墙上 7ms / CPU 2ms
+[02:27:17] [FPS] pipeline: 58.7
+[02:27:17] [PERF] vision 58.9Hz loop=17.0ms body=15.4ms cpu=8.4ms gil_wait=7.0ms | read=8.1(cpu7.44) conv=6.1 task=0.6(cpu0.57) disp=0.1(cpu0.10) none=0 | idle=1.6ms 自身cpu=0.33ms 未归因=0.6ms
+[02:27:18] [WDT] main feed #9600
+[02:27:18] [WDT] coord feed #9600
+[02:27:18] [PERF] mainloop 111Hz body=0.66ms cpu=0.60ms gil_wait=0.06ms | wdt=0.05 coord=0.18 tick=0.09 touch=0.15 | 每秒 CPU 66ms
+WDT::feed()
+[02:27:18] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.0ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:18] [PERF] vision 58.8Hz loop=17.0ms body=14.8ms cpu=8.3ms gil_wait=6.6ms | read=9.2(cpu7.12) conv=4.3 task=0.8(cpu0.71) disp=0.1(cpu0.11) none=0 | idle=2.2ms 自身cpu=0.32ms 未归因=0.5ms
+[02:27:19] [PERF] mainloop 108Hz body=0.84ms cpu=0.63ms gil_wait=0.20ms | wdt=0.11 coord=0.17 tick=0.11 touch=0.29 | 每秒 CPU 68ms
+WDT::feed()
+[02:27:19] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:19] [PERF] vision 59.2Hz loop=16.9ms body=14.8ms cpu=8.4ms gil_wait=6.4ms | read=8.6(cpu7.46) conv=4.9 task=0.7(cpu0.56) disp=0.1(cpu0.11) none=0 | idle=2.1ms 自身cpu=0.29ms 未归因=0.6ms
+[02:27:20] [PERF] mainloop 113Hz body=0.76ms cpu=0.62ms gil_wait=0.15ms | wdt=0.10 coord=0.19 tick=0.13 touch=0.16 | 每秒 CPU 70ms
+WDT::feed()
+[02:27:20] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:20] [PERF] vision 58.8Hz loop=17.0ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=9.7(cpu7.24) conv=4.1 task=0.8(cpu0.70) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.30ms 未归因=0.4ms
+[02:27:20] [MEM] user=99/128MB CMM=0/0MB
+[02:27:21] [PERF] mainloop 109Hz body=1.03ms cpu=0.66ms gil_wait=0.38ms | wdt=0.06 coord=0.33 tick=0.21 touch=0.21 | 每秒 CPU 72ms
+WDT::feed()
+[02:27:21] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:21] [PERF] vision 59.0Hz loop=17.0ms body=14.3ms cpu=8.1ms gil_wait=6.3ms | read=8.8(cpu7.05) conv=4.0 task=1.0(cpu0.65) disp=0.1(cpu0.10) none=0 | idle=2.6ms 自身cpu=0.28ms 未归因=0.5ms
+[02:27:22] [PERF] mainloop 110Hz body=0.72ms cpu=0.67ms gil_wait=0.05ms | wdt=0.07 coord=0.24 tick=0.13 touch=0.17 | 每秒 CPU 74ms
+WDT::feed()
+[02:27:22] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:22] [FPS] pipeline: 59.0
+[02:27:22] [PERF] vision 59.1Hz loop=16.9ms body=14.9ms cpu=8.3ms gil_wait=6.6ms | read=9.1(cpu7.27) conv=4.6 task=0.6(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.33ms 未归因=0.5ms
+[02:27:23] [PERF] mainloop 104Hz body=0.90ms cpu=0.74ms gil_wait=0.16ms | wdt=0.09 coord=0.23 tick=0.13 touch=0.21 | 每秒 CPU 76ms
+WDT::feed()
+[02:27:23] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:23] [WDT] main feed #10200
+[02:27:23] [WDT] coord feed #10200
+[02:27:23] [PERF] vision 58.9Hz loop=17.0ms body=14.9ms cpu=8.1ms gil_wait=6.8ms | read=9.2(cpu7.15) conv=4.1 task=0.7(cpu0.58) disp=0.1(cpu0.10) none=0 | idle=2.1ms 自身cpu=0.31ms 未归因=0.8ms
+[02:27:24] [WDT] viz feed #5400
+[02:27:24] [PERF] mainloop 114Hz body=0.80ms cpu=0.67ms gil_wait=0.13ms | wdt=0.09 coord=0.21 tick=0.19 touch=0.19 | 每秒 CPU 77ms
+WDT::feed()
+[02:27:24] [PERF] lcd show 1.0Hz avg=4.0ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:27:24] [PERF] vision 58.8Hz loop=17.0ms body=14.6ms cpu=8.2ms gil_wait=6.4ms | read=9.2(cpu7.20) conv=4.1 task=0.6(cpu0.56) disp=0.1(cpu0.09) none=0 | idle=2.4ms 自身cpu=0.30ms 未归因=0.6ms
+[02:27:25] [PERF] mainloop 112Hz body=0.75ms cpu=0.69ms gil_wait=0.07ms | wdt=0.07 coord=0.21 tick=0.12 touch=0.19 | 每秒 CPU 77ms
+WDT::feed()
+[02:27:25] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:25] [PERF] vision 58.5Hz loop=17.1ms body=14.7ms cpu=8.2ms gil_wait=6.6ms | read=8.5(cpu7.11) conv=3.9 task=1.6(cpu0.69) disp=0.1(cpu0.09) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.7ms
+[02:27:26] [PERF] mainloop 110Hz body=0.96ms cpu=0.66ms gil_wait=0.30ms | wdt=0.06 coord=0.31 tick=0.14 touch=0.24 | 每秒 CPU 73ms
+WDT::feed()
+[02:27:26] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.3ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:26] [PERF] vision 59.0Hz loop=17.0ms body=15.0ms cpu=8.2ms gil_wait=6.8ms | read=8.4(cpu7.08) conv=4.2 task=1.4(cpu0.68) disp=0.3(cpu0.10) none=0 | idle=2.0ms 自身cpu=0.31ms 未归因=0.7ms
+[02:27:27] [PERF] mainloop 111Hz body=0.95ms cpu=0.64ms gil_wait=0.31ms | wdt=0.13 coord=0.27 tick=0.18 touch=0.16 | 每秒 CPU 71ms
+WDT::feed()
+[02:27:27] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:27] [FPS] pipeline: 59.3
+[02:27:27] [PERF] vision 59.4Hz loop=16.8ms body=14.3ms cpu=8.2ms gil_wait=6.1ms | read=8.9(cpu7.15) conv=4.3 task=0.7(cpu0.63) disp=0.1(cpu0.09) none=0 | idle=2.5ms 自身cpu=0.33ms 未归因=0.5ms
+[02:27:28] [PERF] mainloop 116Hz body=0.76ms cpu=0.60ms gil_wait=0.17ms | wdt=0.06 coord=0.20 tick=0.15 touch=0.20 | 每秒 CPU 69ms
+WDT::feed()
+[02:27:28] [PERF] lcd show 1.0Hz avg=3.6ms (cpu 3.1ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:27:28] [PERF] vision 59.1Hz loop=16.9ms body=15.3ms cpu=8.4ms gil_wait=6.9ms | read=8.5(cpu7.39) conv=4.9 task=1.1(cpu0.62) disp=0.1(cpu0.09) none=0 | idle=1.6ms 自身cpu=0.31ms 未归因=0.6ms
+[02:27:29] [WDT] main feed #10800
+[02:27:29] [WDT] coord feed #10800
+[02:27:29] [MEM] user=99/128MB CMM=0/0MB
+[02:27:29] [PERF] mainloop 110Hz body=0.84ms cpu=0.70ms gil_wait=0.13ms | wdt=0.08 coord=0.26 tick=0.13 touch=0.23 | 每秒 CPU 78ms
+WDT::feed()
+[02:27:29] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:29] [PERF] vision 59.0Hz loop=17.0ms body=14.4ms cpu=8.0ms gil_wait=6.4ms | read=9.1(cpu7.05) conv=3.7 task=0.7(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=2.5ms 自身cpu=0.31ms 未归因=0.8ms
+[02:27:30] [PERF] mainloop 121Hz body=0.61ms cpu=0.58ms gil_wait=0.04ms | wdt=0.06 coord=0.16 tick=0.10 touch=0.14 | 每秒 CPU 70ms
+WDT::feed()
+[02:27:30] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:30] [PERF] vision 59.0Hz loop=16.9ms body=15.2ms cpu=8.3ms gil_wait=6.9ms | read=8.8(cpu7.33) conv=5.0 task=0.9(cpu0.56) disp=0.1(cpu0.09) none=0 | idle=1.7ms 自身cpu=0.31ms 未归因=0.5ms
+[02:27:31] [PERF] mainloop 111Hz body=0.80ms cpu=0.68ms gil_wait=0.12ms | wdt=0.09 coord=0.24 tick=0.12 touch=0.19 | 每秒 CPU 75ms
+WDT::feed()
+[02:27:31] [PERF] lcd show 1.0Hz avg=3.1ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+[02:27:31] [PERF] vision 59.0Hz loop=17.0ms body=14.8ms cpu=8.1ms gil_wait=6.7ms | read=8.7(cpu7.19) conv=4.3 task=1.2(cpu0.58) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.28ms 未归因=0.6ms
+[02:27:32] [PERF] mainloop 117Hz body=0.72ms cpu=0.64ms gil_wait=0.08ms | wdt=0.10 coord=0.19 tick=0.10 touch=0.20 | 每秒 CPU 74ms
+WDT::feed()
+[02:27:32] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:32] [FPS] pipeline: 59.0
+[02:27:32] [PERF] vision 58.8Hz loop=17.0ms body=14.7ms cpu=8.2ms gil_wait=6.4ms | read=8.1(cpu7.25) conv=4.8 task=1.1(cpu0.61) disp=0.2(cpu0.09) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.6ms
+[02:27:33] [PERF] mainloop 111Hz body=0.86ms cpu=0.61ms gil_wait=0.25ms | wdt=0.08 coord=0.24 tick=0.19 touch=0.19 | 每秒 CPU 68ms
+WDT::feed()
+[02:27:33] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:33] [PERF] vision 59.3Hz loop=16.9ms body=14.8ms cpu=8.2ms gil_wait=6.6ms | read=8.7(cpu7.23) conv=5.0 task=0.7(cpu0.61) disp=0.1(cpu0.11) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.5ms
+[02:27:34] [WDT] main feed #11400
+[02:27:34] [WDT] coord feed #11400
+[02:27:34] [PERF] mainloop 109Hz body=0.83ms cpu=0.70ms gil_wait=0.13ms | wdt=0.09 coord=0.19 tick=0.18 touch=0.21 | 每秒 CPU 76ms
+[02:27:34] [WDT] viz feed #6000
+WDT::feed()
+[02:27:34] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:34] [PERF] vision 58.9Hz loop=17.0ms body=14.4ms cpu=7.9ms gil_wait=6.5ms | read=9.0(cpu6.93) conv=3.9 task=0.7(cpu0.55) disp=0.1(cpu0.09) none=0 | idle=2.6ms 自身cpu=0.29ms 未归因=0.6ms
+[02:27:35] [PERF] mainloop 119Hz body=0.76ms cpu=0.63ms gil_wait=0.14ms | wdt=0.06 coord=0.21 tick=0.13 touch=0.19 | 每秒 CPU 74ms
+WDT::feed()
+[02:27:35] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:35] [PERF] vision 59.1Hz loop=16.9ms body=15.2ms cpu=8.4ms gil_wait=6.8ms | read=8.6(cpu7.41) conv=4.8 task=0.9(cpu0.55) disp=0.1(cpu0.11) none=0 | idle=1.7ms 自身cpu=0.30ms 未归因=0.7ms
+[02:27:36] [PERF] mainloop 108Hz body=0.84ms cpu=0.63ms gil_wait=0.20ms | wdt=0.07 coord=0.18 tick=0.12 touch=0.24 | 每秒 CPU 69ms
+WDT::feed()
+[02:27:36] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:36] [PERF] vision 59.4Hz loop=16.8ms body=14.6ms cpu=8.0ms gil_wait=6.6ms | read=8.4(cpu7.04) conv=4.3 task=0.8(cpu0.54) disp=0.4(cpu0.10) none=0 | idle=2.2ms 自身cpu=0.31ms 未归因=0.7ms
+[02:27:36] [MEM] user=99/128MB CMM=0/0MB
+[02:27:37] [PERF] mainloop 111Hz body=0.88ms cpu=0.64ms gil_wait=0.24ms | wdt=0.10 coord=0.32 tick=0.12 touch=0.21 | 每秒 CPU 71ms
+WDT::feed()
+[02:27:37] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:37] [FPS] pipeline: 59.2
+[02:27:37] [PERF] vision 58.8Hz loop=17.0ms body=14.7ms cpu=8.3ms gil_wait=6.4ms | read=9.0(cpu7.14) conv=3.8 task=1.2(cpu0.72) disp=0.1(cpu0.09) none=0 | idle=2.3ms 自身cpu=0.32ms 未归因=0.6ms
+[02:27:38] [PERF] mainloop 117Hz body=0.72ms cpu=0.60ms gil_wait=0.11ms | wdt=0.08 coord=0.20 tick=0.12 touch=0.18 | 每秒 CPU 71ms
+WDT::feed()
+[02:27:38] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:38] [PERF] vision 59.1Hz loop=16.9ms body=14.3ms cpu=8.0ms gil_wait=6.3ms | read=8.9(cpu6.93) conv=3.8 task=0.7(cpu0.66) disp=0.2(cpu0.11) none=0 | idle=2.6ms 自身cpu=0.31ms 未归因=0.7ms
+[02:27:39] [PERF] mainloop 116Hz body=0.76ms cpu=0.63ms gil_wait=0.12ms | wdt=0.05 coord=0.18 tick=0.12 touch=0.18 | 每秒 CPU 73ms
+WDT::feed()
+[02:27:39] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:39] [WDT] main feed #12000
+[02:27:39] [WDT] coord feed #12000
+[02:27:39] [PERF] vision 59.2Hz loop=16.9ms body=14.7ms cpu=8.3ms gil_wait=6.4ms | read=8.8(cpu7.32) conv=4.6 task=0.6(cpu0.58) disp=0.1(cpu0.11) none=0 | idle=2.2ms 自身cpu=0.30ms 未归因=0.5ms
+[02:27:40] [PERF] mainloop 112Hz body=0.84ms cpu=0.63ms gil_wait=0.21ms | wdt=0.05 coord=0.27 tick=0.09 touch=0.26 | 每秒 CPU 71ms
+WDT::feed()
+[02:27:40] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:40] [PERF] vision 59.0Hz loop=17.0ms body=14.8ms cpu=8.2ms gil_wait=6.6ms | read=8.5(cpu7.23) conv=4.7 task=1.0(cpu0.62) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.31ms 未归因=0.5ms
+[02:27:41] [PERF] mainloop 112Hz body=0.76ms cpu=0.62ms gil_wait=0.15ms | wdt=0.05 coord=0.25 tick=0.10 touch=0.18 | 每秒 CPU 69ms
+WDT::feed()
+[02:27:41] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:41] [PERF] vision 58.9Hz loop=17.0ms body=14.9ms cpu=8.3ms gil_wait=6.6ms | read=9.5(cpu7.31) conv=4.2 task=0.7(cpu0.64) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.30ms 未归因=0.4ms
+[02:27:42] [PERF] mainloop 113Hz body=0.75ms cpu=0.63ms gil_wait=0.12ms | wdt=0.06 coord=0.17 tick=0.15 touch=0.22 | 每秒 CPU 72ms
+WDT::feed()
+[02:27:42] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:42] [FPS] pipeline: 59.0
+[02:27:42] [PERF] vision 59.0Hz loop=17.0ms body=14.8ms cpu=8.3ms gil_wait=6.5ms | read=9.2(cpu7.23) conv=4.2 task=0.7(cpu0.66) disp=0.1(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.30ms 未归因=0.5ms
+[02:27:43] [PERF] mainloop 113Hz body=0.67ms cpu=0.61ms gil_wait=0.06ms | wdt=0.07 coord=0.19 tick=0.11 touch=0.19 | 每秒 CPU 69ms
+WDT::feed()
+[02:27:43] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:27:43] [PERF] vision 59.2Hz loop=16.9ms body=14.9ms cpu=8.4ms gil_wait=6.5ms | read=9.3(cpu7.37) conv=4.5 task=0.6(cpu0.59) disp=0.1(cpu0.10) none=0 | idle=2.0ms 自身cpu=0.30ms 未归因=0.4ms
+[02:27:44] [PERF] mainloop 109Hz body=0.88ms cpu=0.69ms gil_wait=0.18ms | wdt=0.06 coord=0.27 tick=0.23 touch=0.16 | 每秒 CPU 75ms
+WDT::feed()
+[02:27:44] [WDT] viz feed #6600
+[02:27:44] [PERF] lcd show 1.0Hz avg=3.3ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+[02:27:44] [WDT] main feed #12600
+[02:27:44] [WDT] coord feed #12600
+[02:27:44] [MEM] user=99/128MB CMM=0/0MB
+[02:27:44] [PERF] vision 58.1Hz loop=17.2ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=9.7(cpu7.29) conv=4.1 task=0.8(cpu0.66) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.28ms 未归因=0.5ms
+[02:27:45] [PERF] mainloop 111Hz body=0.87ms cpu=0.74ms gil_wait=0.13ms | wdt=0.06 coord=0.28 tick=0.14 touch=0.22 | 每秒 CPU 82ms
+WDT::feed()
+[02:27:45] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:45] [PERF] vision 58.9Hz loop=17.0ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=8.8(cpu7.20) conv=5.0 task=0.7(cpu0.69) disp=0.1(cpu0.10) none=0 | idle=1.9ms 自身cpu=0.28ms 未归因=0.6ms
+[02:27:46] [PERF] mainloop 109Hz body=0.73ms cpu=0.63ms gil_wait=0.11ms | wdt=0.05 coord=0.20 tick=0.11 touch=0.24 | 每秒 CPU 68ms
+WDT::feed()
+[02:27:46] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:46] [PERF] vision 58.8Hz loop=17.0ms body=14.7ms cpu=8.3ms gil_wait=6.4ms | read=9.4(cpu7.10) conv=3.8 task=0.9(cpu0.80) disp=0.1(cpu0.11) none=0 | idle=2.3ms 自身cpu=0.33ms 未归因=0.6ms
+[02:27:47] [PERF] mainloop 112Hz body=0.79ms cpu=0.67ms gil_wait=0.12ms | wdt=0.07 coord=0.25 tick=0.13 touch=0.19 | 每秒 CPU 75ms
+WDT::feed()
+[02:27:47] [PERF] lcd show 1.0Hz avg=4.0ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:27:47] [FPS] pipeline: 58.7
+[02:27:47] [PERF] vision 59.1Hz loop=16.9ms body=14.9ms cpu=8.1ms gil_wait=6.8ms | read=8.7(cpu7.08) conv=4.9 task=0.7(cpu0.66) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.28ms 未归因=0.4ms
+WDT::feed()
+[02:27:48] [PERF] mainloop 113Hz body=0.66ms cpu=0.62ms gil_wait=0.04ms | wdt=0.06 coord=0.24 tick=0.10 touch=0.15 | 每秒 CPU 70ms
+[02:27:48] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:49] [PERF] vision 59.1Hz loop=16.9ms body=14.9ms cpu=8.3ms gil_wait=6.6ms | read=8.9(cpu7.33) conv=4.8 task=0.6(cpu0.55) disp=0.1(cpu0.11) none=0 | idle=2.0ms 自身cpu=0.30ms 未归因=0.5ms
+WDT::feed()
+[02:27:49] [PERF] mainloop 115Hz body=0.79ms cpu=0.63ms gil_wait=0.15ms | wdt=0.11 coord=0.20 tick=0.12 touch=0.20 | 每秒 CPU 73ms
+[02:27:49] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:50] [PERF] vision 58.9Hz loop=17.0ms body=14.6ms cpu=8.2ms gil_wait=6.5ms | read=9.3(cpu7.08) conv=4.1 task=0.8(cpu0.66) disp=0.1(cpu0.09) none=0 | idle=2.4ms 自身cpu=0.32ms 未归因=0.4ms
+[02:27:50] [WDT] main feed #13200
+[02:27:50] [WDT] coord feed #13200
+WDT::feed()
+[02:27:50] [PERF] mainloop 112Hz body=0.83ms cpu=0.63ms gil_wait=0.19ms | wdt=0.06 coord=0.23 tick=0.13 touch=0.16 | 每秒 CPU 71ms
+[02:27:50] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:27:51] [PERF] vision 58.9Hz loop=17.0ms body=15.0ms cpu=8.4ms gil_wait=6.6ms | read=9.3(cpu7.52) conv=4.7 task=0.6(cpu0.54) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:27:51] [PERF] mainloop 114Hz body=0.68ms cpu=0.59ms gil_wait=0.09ms | wdt=0.06 coord=0.20 tick=0.10 touch=0.18 | 每秒 CPU 67ms
+[02:27:51] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:52] [PERF] vision 59.2Hz loop=16.9ms body=14.3ms cpu=8.0ms gil_wait=6.3ms | read=8.7(cpu6.98) conv=3.9 task=1.0(cpu0.61) disp=0.1(cpu0.09) none=0 | idle=2.6ms 自身cpu=0.31ms 未归因=0.6ms
+WDT::feed()
+[02:27:52] [PERF] mainloop 122Hz body=0.61ms cpu=0.59ms gil_wait=0.02ms | wdt=0.05 coord=0.16 tick=0.10 touch=0.15 | 每秒 CPU 72ms
+[02:27:52] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:52] [FPS] pipeline: 59.3
+[02:27:52] [MEM] user=99/128MB CMM=0/0MB
+[02:27:53] [PERF] vision 58.9Hz loop=17.0ms body=14.8ms cpu=8.3ms gil_wait=6.6ms | read=9.5(cpu7.29) conv=3.9 task=0.8(cpu0.62) disp=0.1(cpu0.10) none=0 | idle=2.1ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:27:53] [PERF] mainloop 114Hz body=0.82ms cpu=0.68ms gil_wait=0.14ms | wdt=0.06 coord=0.23 tick=0.15 touch=0.24 | 每秒 CPU 77ms
+[02:27:53] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:27:54] [PERF] vision 59.0Hz loop=16.9ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=9.5(cpu7.37) conv=4.4 task=0.7(cpu0.55) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:27:54] [PERF] mainloop 114Hz body=0.66ms cpu=0.65ms gil_wait=0.02ms | wdt=0.05 coord=0.21 tick=0.09 touch=0.16 | 每秒 CPU 73ms
+[02:27:54] [PERF] lcd show 1.0Hz avg=2.1ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:54] [WDT] viz feed #7200
+[02:27:55] [PERF] vision 59.1Hz loop=16.9ms body=14.7ms cpu=8.1ms gil_wait=6.6ms | read=9.4(cpu6.99) conv=3.7 task=0.8(cpu0.65) disp=0.1(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.37ms 未归因=0.7ms
+WDT::feed()
+[02:27:55] [PERF] mainloop 108Hz body=0.71ms cpu=0.62ms gil_wait=0.09ms | wdt=0.09 coord=0.19 tick=0.09 touch=0.21 | 每秒 CPU 66ms
+[02:27:55] [WDT] main feed #13800
+[02:27:55] [WDT] coord feed #13800
+[02:27:55] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:56] [PERF] vision 58.7Hz loop=17.0ms body=14.8ms cpu=8.3ms gil_wait=6.5ms | read=9.4(cpu7.32) conv=4.2 task=0.6(cpu0.56) disp=0.1(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.28ms 未归因=0.5ms
+WDT::feed()
+[02:27:56] [PERF] mainloop 116Hz body=0.66ms cpu=0.59ms gil_wait=0.06ms | wdt=0.05 coord=0.17 tick=0.12 touch=0.18 | 每秒 CPU 69ms
+[02:27:56] [PERF] lcd show 1.0Hz avg=3.9ms (cpu 3.1ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:27:57] [PERF] vision 59.3Hz loop=16.9ms body=14.9ms cpu=8.3ms gil_wait=6.6ms | read=8.1(cpu7.16) conv=4.4 task=1.5(cpu0.74) disp=0.2(cpu0.10) none=0 | idle=2.0ms 自身cpu=0.31ms 未归因=0.7ms
+WDT::feed()
+[02:27:57] [PERF] mainloop 117Hz body=0.67ms cpu=0.60ms gil_wait=0.06ms | wdt=0.06 coord=0.19 tick=0.10 touch=0.16 | 每秒 CPU 70ms
+[02:27:57] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:57] [FPS] pipeline: 59.3
+[02:27:58] [PERF] vision 59.0Hz loop=16.9ms body=14.8ms cpu=8.4ms gil_wait=6.4ms | read=9.0(cpu7.26) conv=3.9 task=0.8(cpu0.69) disp=0.2(cpu0.10) none=0 | idle=2.2ms 自身cpu=0.31ms 未归因=0.8ms
+WDT::feed()
+[02:27:58] [PERF] mainloop 117Hz body=0.61ms cpu=0.58ms gil_wait=0.03ms | wdt=0.06 coord=0.17 tick=0.09 touch=0.14 | 每秒 CPU 68ms
+[02:27:58] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:27:59] [PERF] vision 59.1Hz loop=16.9ms body=14.6ms cpu=8.3ms gil_wait=6.3ms | read=9.0(cpu7.23) conv=4.2 task=0.6(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=2.3ms 自身cpu=0.38ms 未归因=0.6ms
+WDT::feed()
+[02:27:59] [PERF] mainloop 110Hz body=0.67ms cpu=0.61ms gil_wait=0.06ms | wdt=0.08 coord=0.20 tick=0.09 touch=0.18 | 每秒 CPU 67ms
+[02:27:59] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:00] [PERF] vision 58.9Hz loop=17.0ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=8.9(cpu7.29) conv=4.5 task=0.7(cpu0.60) disp=0.2(cpu0.10) none=0 | idle=1.9ms 自身cpu=0.31ms 未归因=0.7ms
+WDT::feed()
+[02:28:00] [PERF] mainloop 110Hz body=0.79ms cpu=0.62ms gil_wait=0.16ms | wdt=0.05 coord=0.20 tick=0.16 touch=0.16 | 每秒 CPU 68ms
+[02:28:00] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:00] [WDT] main feed #14400
+[02:28:00] [WDT] coord feed #14400
+[02:28:00] [MEM] user=99/128MB CMM=0/0MB
+[02:28:01] [PERF] vision 58.7Hz loop=17.0ms body=14.2ms cpu=8.1ms gil_wait=6.1ms | read=9.0(cpu7.15) conv=3.6 task=0.8(cpu0.60) disp=0.2(cpu0.09) none=0 | idle=2.8ms 自身cpu=0.29ms 未归因=0.6ms
+WDT::feed()
+[02:28:01] [PERF] mainloop 115Hz body=0.81ms cpu=0.61ms gil_wait=0.20ms | wdt=0.05 coord=0.19 tick=0.17 touch=0.17 | 每秒 CPU 71ms
+[02:28:01] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:02] [PERF] vision 58.8Hz loop=17.0ms body=14.6ms cpu=8.2ms gil_wait=6.5ms | read=7.9(cpu7.15) conv=4.7 task=0.9(cpu0.64) disp=0.3(cpu0.10) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.8ms
+WDT::feed()
+[02:28:02] [PERF] mainloop 113Hz body=0.90ms cpu=0.61ms gil_wait=0.29ms | wdt=0.08 coord=0.29 tick=0.12 touch=0.21 | 每秒 CPU 69ms
+[02:28:02] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:02] [FPS] pipeline: 58.7
+[02:28:03] [PERF] vision 59.3Hz loop=16.9ms body=14.7ms cpu=8.1ms gil_wait=6.6ms | read=8.9(cpu7.20) conv=4.7 task=0.6(cpu0.55) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.30ms 未归因=0.4ms
+WDT::feed()
+[02:28:03] [PERF] mainloop 117Hz body=0.75ms cpu=0.63ms gil_wait=0.12ms | wdt=0.11 coord=0.23 tick=0.09 touch=0.16 | 每秒 CPU 74ms
+[02:28:03] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:28:04] [PERF] vision 59.0Hz loop=17.0ms body=14.7ms cpu=8.1ms gil_wait=6.6ms | read=8.8(cpu7.17) conv=4.1 task=1.1(cpu0.56) disp=0.1(cpu0.10) none=0 | idle=2.3ms 自身cpu=0.30ms 未归因=0.6ms
+WDT::feed()
+[02:28:04] [PERF] mainloop 113Hz body=0.68ms cpu=0.63ms gil_wait=0.05ms | wdt=0.06 coord=0.18 tick=0.16 touch=0.15 | 每秒 CPU 71ms
+[02:28:04] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:04] [WDT] viz feed #7800
+[02:28:05] [PERF] vision 59.1Hz loop=16.9ms body=14.9ms cpu=8.1ms gil_wait=6.8ms | read=8.7(cpu7.20) conv=4.7 task=0.9(cpu0.55) disp=0.1(cpu0.10) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.6ms
+WDT::feed()
+[02:28:05] [PERF] mainloop 112Hz body=0.85ms cpu=0.68ms gil_wait=0.17ms | wdt=0.05 coord=0.22 tick=0.13 touch=0.22 | 每秒 CPU 77ms
+[02:28:05] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:06] [WDT] main feed #15000
+[02:28:06] [WDT] coord feed #15000
+[02:28:06] [PERF] vision 58.9Hz loop=17.0ms body=15.1ms cpu=8.2ms gil_wait=6.9ms | read=8.7(cpu7.20) conv=4.4 task=1.1(cpu0.56) disp=0.2(cpu0.10) none=0 | idle=1.9ms 自身cpu=0.30ms 未归因=0.8ms
+WDT::feed()
+[02:28:06] [PERF] mainloop 115Hz body=0.72ms cpu=0.65ms gil_wait=0.07ms | wdt=0.07 coord=0.23 tick=0.14 touch=0.14 | 每秒 CPU 75ms
+[02:28:06] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:07] [PERF] vision 59.1Hz loop=16.9ms body=15.1ms cpu=8.2ms gil_wait=6.9ms | read=8.9(cpu7.25) conv=4.9 task=0.7(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.32ms 未归因=0.4ms
+WDT::feed()
+[02:28:07] [PERF] mainloop 115Hz body=0.84ms cpu=0.68ms gil_wait=0.16ms | wdt=0.09 coord=0.21 tick=0.12 touch=0.24 | 每秒 CPU 77ms
+[02:28:07] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:28:07] [FPS] pipeline: 59.0
+[02:28:08] [PERF] vision 59.1Hz loop=16.9ms body=15.0ms cpu=8.4ms gil_wait=6.6ms | read=8.2(cpu7.44) conv=5.0 task=1.0(cpu0.56) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.31ms 未归因=0.7ms
+WDT::feed()
+[02:28:08] [PERF] mainloop 115Hz body=0.68ms cpu=0.57ms gil_wait=0.11ms | wdt=0.05 coord=0.20 tick=0.09 touch=0.20 | 每秒 CPU 65ms
+[02:28:08] [MEM] user=99/128MB CMM=0/0MB
+[02:28:08] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:09] [PERF] vision 59.0Hz loop=17.0ms body=14.7ms cpu=8.3ms gil_wait=6.4ms | read=9.1(cpu7.32) conv=4.4 task=0.7(cpu0.55) disp=0.1(cpu0.10) none=0 | idle=2.3ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:28:09] [PERF] mainloop 112Hz body=0.87ms cpu=0.62ms gil_wait=0.25ms | wdt=0.06 coord=0.23 tick=0.24 touch=0.17 | 每秒 CPU 70ms
+[02:28:09] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:10] [PERF] vision 59.2Hz loop=16.9ms body=14.5ms cpu=8.1ms gil_wait=6.4ms | read=8.4(cpu6.99) conv=4.0 task=1.4(cpu0.76) disp=0.2(cpu0.10) none=0 | idle=2.4ms 自身cpu=0.30ms 未归因=0.6ms
+WDT::feed()
+[02:28:10] [PERF] mainloop 111Hz body=0.77ms cpu=0.69ms gil_wait=0.08ms | wdt=0.08 coord=0.21 tick=0.12 touch=0.18 | 每秒 CPU 76ms
+[02:28:10] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:11] [PERF] vision 58.3Hz loop=17.1ms body=14.7ms cpu=8.1ms gil_wait=6.7ms | read=8.6(cpu7.08) conv=3.5 task=1.5(cpu0.56) disp=0.2(cpu0.10) none=0 | idle=2.4ms 自身cpu=0.32ms 未归因=0.9ms
+[02:28:11] [WDT] main feed #15600
+[02:28:11] [WDT] coord feed #15600
+WDT::feed()
+[02:28:11] [PERF] mainloop 113Hz body=0.65ms cpu=0.61ms gil_wait=0.04ms | wdt=0.05 coord=0.18 tick=0.11 touch=0.15 | 每秒 CPU 68ms
+[02:28:11] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:12] [PERF] vision 58.6Hz loop=17.1ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=9.1(cpu7.36) conv=4.2 task=1.1(cpu0.59) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.29ms 未归因=0.6ms
+WDT::feed()
+[02:28:12] [PERF] mainloop 113Hz body=0.73ms cpu=0.67ms gil_wait=0.06ms | wdt=0.07 coord=0.22 tick=0.11 touch=0.20 | 每秒 CPU 76ms
+[02:28:12] [FPS] pipeline: 58.5
+[02:28:12] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:13] [PERF] vision 59.0Hz loop=17.0ms body=15.2ms cpu=8.3ms gil_wait=6.8ms | read=9.5(cpu7.38) conv=4.2 task=1.0(cpu0.56) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:28:13] [PERF] mainloop 117Hz body=0.68ms cpu=0.64ms gil_wait=0.04ms | wdt=0.06 coord=0.21 tick=0.11 touch=0.16 | 每秒 CPU 75ms
+[02:28:13] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:14] [PERF] vision 59.1Hz loop=16.9ms body=14.5ms cpu=8.1ms gil_wait=6.4ms | read=9.4(cpu6.94) conv=3.6 task=0.8(cpu0.77) disp=0.1(cpu0.10) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:28:14] [PERF] mainloop 118Hz body=0.79ms cpu=0.58ms gil_wait=0.21ms | wdt=0.08 coord=0.20 tick=0.13 touch=0.22 | 每秒 CPU 69ms
+[02:28:14] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:15] [WDT] viz feed #8400
+[02:28:15] [PERF] vision 59.0Hz loop=17.0ms body=15.0ms cpu=8.3ms gil_wait=6.7ms | read=9.4(cpu7.27) conv=4.0 task=0.8(cpu0.61) disp=0.1(cpu0.10) none=0 | idle=2.0ms 自身cpu=0.30ms 未归因=0.7ms
+WDT::feed()
+[02:28:15] [PERF] mainloop 113Hz body=0.76ms cpu=0.61ms gil_wait=0.15ms | wdt=0.10 coord=0.23 tick=0.09 touch=0.15 | 每秒 CPU 69ms
+[02:28:15] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:16] [PERF] vision 59.1Hz loop=16.9ms body=14.9ms cpu=8.2ms gil_wait=6.6ms | read=8.6(cpu7.20) conv=4.3 task=1.2(cpu0.61) disp=0.2(cpu0.10) none=0 | idle=2.1ms 自身cpu=0.33ms 未归因=0.6ms
+WDT::feed()
+[02:28:16] [PERF] mainloop 116Hz body=0.68ms cpu=0.62ms gil_wait=0.07ms | wdt=0.07 coord=0.19 tick=0.10 touch=0.16 | 每秒 CPU 72ms
+[02:28:16] [WDT] main feed #16200
+[02:28:16] [WDT] coord feed #16200
+[02:28:16] [MEM] user=98/128MB CMM=0/0MB
+[02:28:16] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:17] [PERF] vision 58.4Hz loop=17.1ms body=14.4ms cpu=8.1ms gil_wait=6.3ms | read=9.0(cpu7.14) conv=3.8 task=0.7(cpu0.60) disp=0.2(cpu0.10) none=0 | idle=2.7ms 自身cpu=0.31ms 未归因=0.7ms
+WDT::feed()
+[02:28:17] [PERF] mainloop 107Hz body=0.75ms cpu=0.62ms gil_wait=0.13ms | wdt=0.08 coord=0.21 tick=0.11 touch=0.19 | 每秒 CPU 66ms
+[02:28:17] [FPS] pipeline: 58.5
+[02:28:17] [PERF] lcd show 1.0Hz avg=2.1ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:18] [PERF] vision 58.7Hz loop=17.0ms body=14.9ms cpu=8.2ms gil_wait=6.7ms | read=8.5(cpu7.23) conv=5.2 task=0.6(cpu0.54) disp=0.1(cpu0.11) none=0 | idle=2.1ms 自身cpu=0.32ms 未归因=0.5ms
+WDT::feed()
+[02:28:18] [PERF] mainloop 118Hz body=0.75ms cpu=0.63ms gil_wait=0.11ms | wdt=0.06 coord=0.24 tick=0.15 touch=0.17 | 每秒 CPU 75ms
+[02:28:18] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:19] [PERF] vision 59.1Hz loop=16.9ms body=15.1ms cpu=8.5ms gil_wait=6.7ms | read=8.9(cpu7.38) conv=5.0 task=0.8(cpu0.70) disp=0.1(cpu0.10) none=0 | idle=1.8ms 自身cpu=0.28ms 未归因=0.4ms
+WDT::feed()
+[02:28:19] [PERF] mainloop 108Hz body=0.55ms cpu=0.55ms gil_wait=0.00ms | wdt=0.05 coord=0.15 tick=0.09 touch=0.14 | 每秒 CPU 59ms
+[02:28:19] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:28:20] [PERF] vision 58.9Hz loop=17.0ms body=15.1ms cpu=8.5ms gil_wait=6.7ms | read=8.9(cpu7.37) conv=4.8 task=0.8(cpu0.70) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.31ms 未归因=0.5ms
+WDT::feed()
+[02:28:20] [PERF] mainloop 111Hz body=0.64ms cpu=0.58ms gil_wait=0.06ms | wdt=0.05 coord=0.19 tick=0.10 touch=0.15 | 每秒 CPU 65ms
+[02:28:20] [PERF] lcd show 1.0Hz avg=5.4ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:28:21] [PERF] vision 59.1Hz loop=16.9ms body=15.0ms cpu=8.5ms gil_wait=6.5ms | read=8.7(cpu7.39) conv=5.0 task=0.8(cpu0.70) disp=0.1(cpu0.11) none=0 | idle=1.9ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:28:21] [PERF] mainloop 113Hz body=0.64ms cpu=0.60ms gil_wait=0.04ms | wdt=0.05 coord=0.17 tick=0.10 touch=0.18 | 每秒 CPU 68ms
+[02:28:21] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:21] [WDT] main feed #16800
+[02:28:21] [WDT] coord feed #16800
+[02:28:22] [PERF] vision 58.9Hz loop=17.0ms body=14.8ms cpu=8.2ms gil_wait=6.5ms | read=8.7(cpu7.18) conv=4.8 task=0.7(cpu0.68) disp=0.2(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.28ms 未归因=0.4ms
+WDT::feed()
+[02:28:22] [PERF] mainloop 116Hz body=0.74ms cpu=0.62ms gil_wait=0.11ms | wdt=0.08 coord=0.18 tick=0.15 touch=0.19 | 每秒 CPU 72ms
+[02:28:22] [FPS] pipeline: 59.0
+[02:28:22] [PERF] lcd show 1.0Hz avg=2.6ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+[02:28:23] [PERF] vision 59.0Hz loop=17.0ms body=15.0ms cpu=8.3ms gil_wait=6.7ms | read=8.8(cpu7.31) conv=5.0 task=0.6(cpu0.61) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.31ms 未归因=0.5ms
+WDT::feed()
+[02:28:23] [PERF] mainloop 111Hz body=0.76ms cpu=0.64ms gil_wait=0.12ms | wdt=0.07 coord=0.22 tick=0.10 touch=0.18 | 每秒 CPU 72ms
+[02:28:23] [PERF] lcd show 1.0Hz avg=6.4ms (cpu 2.4ms) -> 每秒占墙上 6ms / CPU 2ms
+[02:28:24] [PERF] vision 59.2Hz loop=16.9ms body=14.7ms cpu=8.4ms gil_wait=6.3ms | read=8.7(cpu7.25) conv=3.9 task=1.1(cpu0.69) disp=0.3(cpu0.12) none=0 | idle=2.2ms 自身cpu=0.31ms 未归因=0.6ms
+WDT::feed()
+[02:28:24] [PERF] mainloop 111Hz body=0.85ms cpu=0.62ms gil_wait=0.23ms | wdt=0.10 coord=0.21 tick=0.15 touch=0.15 | 每秒 CPU 68ms
+[02:28:24] [MEM] user=99/128MB CMM=0/0MB
+[02:28:24] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:25] [WDT] viz feed #9000
+[02:28:25] [PERF] vision 59.0Hz loop=16.9ms body=14.9ms cpu=8.2ms gil_wait=6.7ms | read=8.3(cpu7.02) conv=4.3 task=1.3(cpu0.73) disp=0.1(cpu0.11) none=0 | idle=2.1ms 自身cpu=0.33ms 未归因=0.8ms
+WDT::feed()
+[02:28:25] [PERF] mainloop 113Hz body=0.70ms cpu=0.60ms gil_wait=0.10ms | wdt=0.05 coord=0.17 tick=0.09 touch=0.21 | 每秒 CPU 68ms
+[02:28:25] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:26] [PERF] vision 58.9Hz loop=17.0ms body=15.1ms cpu=8.4ms gil_wait=6.7ms | read=8.5(cpu7.40) conv=5.4 task=0.6(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.30ms 未归因=0.5ms
+WDT::feed()
+[02:28:26] [PERF] mainloop 114Hz body=0.68ms cpu=0.65ms gil_wait=0.03ms | wdt=0.05 coord=0.20 tick=0.09 touch=0.19 | 每秒 CPU 74ms
+[02:28:26] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:28:27] [WDT] main feed #17400
+[02:28:27] [WDT] coord feed #17400
+[02:28:27] [PERF] vision 58.5Hz loop=17.1ms body=15.1ms cpu=8.4ms gil_wait=6.7ms | read=9.3(cpu7.50) conv=4.6 task=0.7(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.28ms 未归因=0.5ms
+WDT::feed()
+[02:28:27] [PERF] mainloop 111Hz body=0.75ms cpu=0.58ms gil_wait=0.17ms | wdt=0.09 coord=0.16 tick=0.12 touch=0.18 | 每秒 CPU 64ms
+[02:28:27] [FPS] pipeline: 58.6
+[02:28:27] [PERF] lcd show 1.0Hz avg=3.6ms (cpu 2.1ms) -> 每秒占墙上 4ms / CPU 2ms
+[02:28:28] [PERF] vision 59.2Hz loop=16.9ms body=14.5ms cpu=8.2ms gil_wait=6.3ms | read=9.0(cpu7.17) conv=4.1 task=0.8(cpu0.65) disp=0.2(cpu0.10) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:28:28] [PERF] mainloop 113Hz body=0.69ms cpu=0.64ms gil_wait=0.05ms | wdt=0.06 coord=0.17 tick=0.15 touch=0.19 | 每秒 CPU 72ms
+[02:28:28] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:29] [PERF] vision 59.1Hz loop=16.9ms body=14.5ms cpu=8.2ms gil_wait=6.4ms | read=9.4(cpu7.04) conv=3.7 task=0.8(cpu0.74) disp=0.2(cpu0.10) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:28:29] [PERF] mainloop 117Hz body=0.78ms cpu=0.59ms gil_wait=0.20ms | wdt=0.08 coord=0.19 tick=0.15 touch=0.19 | 每秒 CPU 69ms
+[02:28:29] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:30] [PERF] vision 59.0Hz loop=17.0ms body=14.7ms cpu=8.3ms gil_wait=6.4ms | read=9.3(cpu7.14) conv=3.7 task=0.9(cpu0.73) disp=0.1(cpu0.10) none=0 | idle=2.3ms 自身cpu=0.30ms 未归因=0.7ms
+WDT::feed()
+[02:28:30] [PERF] mainloop 118Hz body=0.71ms cpu=0.58ms gil_wait=0.13ms | wdt=0.08 coord=0.15 tick=0.10 touch=0.19 | 每秒 CPU 68ms
+[02:28:30] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:31] [PERF] vision 59.2Hz loop=16.9ms body=14.7ms cpu=8.2ms gil_wait=6.5ms | read=9.2(cpu7.27) conv=4.4 task=0.6(cpu0.58) disp=0.1(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.30ms 未归因=0.5ms
+WDT::feed()
+[02:28:31] [PERF] mainloop 104Hz body=0.82ms cpu=0.60ms gil_wait=0.23ms | wdt=0.05 coord=0.28 tick=0.15 touch=0.21 | 每秒 CPU 62ms
+[02:28:31] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:32] [PERF] vision 58.8Hz loop=17.0ms body=14.8ms cpu=8.3ms gil_wait=6.5ms | read=9.4(cpu7.24) conv=4.1 task=0.8(cpu0.67) disp=0.1(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.30ms 未归因=0.5ms
+WDT::feed()
+[02:28:32] [WDT] main feed #18000
+[02:28:32] [WDT] coord feed #18000
+[02:28:32] [MEM] user=99/128MB CMM=0/0MB
+[02:28:32] [PERF] mainloop 108Hz body=0.86ms cpu=0.69ms gil_wait=0.17ms | wdt=0.08 coord=0.31 tick=0.09 touch=0.21 | 每秒 CPU 74ms
+[02:28:32] [FPS] pipeline: 59.0
+[02:28:32] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:33] [PERF] vision 58.3Hz loop=17.2ms body=14.9ms cpu=8.2ms gil_wait=6.7ms | read=9.1(cpu7.25) conv=4.0 task=1.0(cpu0.55) disp=0.3(cpu0.12) none=0 | idle=2.2ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:28:33] [PERF] mainloop 116Hz body=0.79ms cpu=0.65ms gil_wait=0.14ms | wdt=0.09 coord=0.21 tick=0.09 touch=0.18 | 每秒 CPU 75ms
+[02:28:33] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:34] [PERF] vision 59.5Hz loop=16.8ms body=15.0ms cpu=8.3ms gil_wait=6.7ms | read=9.3(cpu7.35) conv=4.5 task=0.7(cpu0.58) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.28ms 未归因=0.5ms
+WDT::feed()
+[02:28:34] [PERF] mainloop 109Hz body=0.68ms cpu=0.63ms gil_wait=0.05ms | wdt=0.06 coord=0.21 tick=0.10 touch=0.17 | 每秒 CPU 68ms
+[02:28:34] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:35] [WDT] viz feed #9600
+[02:28:35] [PERF] vision 59.2Hz loop=16.9ms body=15.1ms cpu=8.2ms gil_wait=6.9ms | read=8.6(cpu7.16) conv=4.8 task=0.9(cpu0.65) disp=0.2(cpu0.10) none=0 | idle=1.8ms 自身cpu=0.31ms 未归因=0.7ms
+WDT::feed()
+[02:28:35] [PERF] mainloop 110Hz body=0.74ms cpu=0.62ms gil_wait=0.11ms | wdt=0.08 coord=0.17 tick=0.14 touch=0.19 | 每秒 CPU 69ms
+[02:28:35] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:28:36] [PERF] vision 59.2Hz loop=16.9ms body=15.0ms cpu=8.2ms gil_wait=6.8ms | read=9.1(cpu7.23) conv=4.7 task=0.6(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.30ms 未归因=0.5ms
+WDT::feed()
+[02:28:36] [PERF] mainloop 106Hz body=0.95ms cpu=0.71ms gil_wait=0.24ms | wdt=0.06 coord=0.31 tick=0.11 touch=0.26 | 每秒 CPU 76ms
+[02:28:36] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:28:37] [PERF] vision 59.0Hz loop=16.9ms body=15.0ms cpu=8.3ms gil_wait=6.7ms | read=9.1(cpu7.30) conv=4.7 task=0.6(cpu0.57) disp=0.1(cpu0.11) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:28:37] [PERF] mainloop 107Hz body=0.85ms cpu=0.68ms gil_wait=0.18ms | wdt=0.07 coord=0.25 tick=0.13 touch=0.22 | 每秒 CPU 73ms
+[02:28:37] [FPS] pipeline: 59.0
+[02:28:37] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:38] [WDT] main feed #18600
+[02:28:38] [WDT] coord feed #18600
+[02:28:38] [PERF] vision 58.8Hz loop=17.0ms body=14.8ms cpu=8.4ms gil_wait=6.4ms | read=9.0(cpu7.11) conv=4.2 task=1.0(cpu0.86) disp=0.1(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.35ms 未归因=0.6ms
+WDT::feed()
+[02:28:38] [PERF] mainloop 117Hz body=0.66ms cpu=0.62ms gil_wait=0.04ms | wdt=0.05 coord=0.20 tick=0.10 touch=0.15 | 每秒 CPU 73ms
+[02:28:38] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:39] [PERF] vision 59.2Hz loop=16.9ms body=15.1ms cpu=8.3ms gil_wait=6.7ms | read=8.8(cpu7.39) conv=5.1 task=0.6(cpu0.55) disp=0.1(cpu0.10) none=0 | idle=1.8ms 自身cpu=0.31ms 未归因=0.5ms
+WDT::feed()
+[02:28:39] [PERF] mainloop 110Hz body=0.70ms cpu=0.60ms gil_wait=0.10ms | wdt=0.05 coord=0.20 tick=0.09 touch=0.17 | 每秒 CPU 66ms
+[02:28:40] [PERF] lcd show 1.0Hz avg=8.2ms (cpu 2.2ms) -> 每秒占墙上 8ms / CPU 2ms
+[02:28:40] [PERF] vision 58.9Hz loop=17.0ms body=15.0ms cpu=8.4ms gil_wait=6.5ms | read=9.1(cpu7.44) conv=4.7 task=0.7(cpu0.61) disp=0.1(cpu0.11) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:28:40] [PERF] mainloop 111Hz body=0.75ms cpu=0.60ms gil_wait=0.16ms | wdt=0.05 coord=0.23 tick=0.10 touch=0.14 | 每秒 CPU 66ms
+[02:28:40] [MEM] user=99/128MB CMM=0/0MB
+[02:28:41] [PERF] lcd show 1.0Hz avg=2.6ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+[02:28:41] [PERF] vision 58.7Hz loop=17.0ms body=14.4ms cpu=8.2ms gil_wait=6.2ms | read=9.3(cpu7.18) conv=3.8 task=0.8(cpu0.69) disp=0.1(cpu0.09) none=0 | idle=2.6ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:28:41] [PERF] mainloop 112Hz body=1.00ms cpu=0.66ms gil_wait=0.34ms | wdt=0.06 coord=0.28 tick=0.13 touch=0.31 | 每秒 CPU 74ms
+[02:28:42] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:42] [PERF] vision 59.1Hz loop=16.9ms body=15.0ms cpu=8.2ms gil_wait=6.9ms | read=8.9(cpu7.11) conv=3.7 task=1.4(cpu0.66) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.29ms 未归因=0.8ms
+WDT::feed()
+[02:28:42] [PERF] mainloop 115Hz body=0.73ms cpu=0.61ms gil_wait=0.13ms | wdt=0.09 coord=0.19 tick=0.16 touch=0.18 | 每秒 CPU 69ms
+[02:28:42] [FPS] pipeline: 59.2
+[02:28:43] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:43] [WDT] main feed #19200
+[02:28:43] [WDT] coord feed #19200
+[02:28:43] [PERF] vision 58.8Hz loop=17.0ms body=14.5ms cpu=8.2ms gil_wait=6.3ms | read=8.7(cpu7.06) conv=3.9 task=0.7(cpu0.69) disp=0.3(cpu0.10) none=0 | idle=2.5ms 自身cpu=0.30ms 未归因=0.8ms
+WDT::feed()
+[02:28:43] [PERF] mainloop 117Hz body=0.69ms cpu=0.58ms gil_wait=0.11ms | wdt=0.06 coord=0.16 tick=0.18 touch=0.17 | 每秒 CPU 68ms
+[02:28:44] [PERF] lcd show 1.0Hz avg=4.0ms (cpu 3.3ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:28:44] [PERF] vision 59.1Hz loop=16.9ms body=15.1ms cpu=8.4ms gil_wait=6.7ms | read=8.7(cpu7.52) conv=5.3 task=0.6(cpu0.55) disp=0.1(cpu0.10) none=0 | idle=1.8ms 自身cpu=0.28ms 未归因=0.4ms
+WDT::feed()
+[02:28:44] [PERF] mainloop 108Hz body=0.86ms cpu=0.61ms gil_wait=0.25ms | wdt=0.06 coord=0.16 tick=0.12 touch=0.32 | 每秒 CPU 66ms
+[02:28:45] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:28:45] [PERF] vision 59.1Hz loop=16.9ms body=14.9ms cpu=8.3ms gil_wait=6.6ms | read=8.9(cpu7.25) conv=4.5 task=0.7(cpu0.63) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.30ms 未归因=0.5ms
+[02:28:45] [WDT] viz feed #10200
+WDT::feed()
+[02:28:45] [PERF] mainloop 118Hz body=0.70ms cpu=0.61ms gil_wait=0.09ms | wdt=0.08 coord=0.18 tick=0.12 touch=0.16 | 每秒 CPU 72ms
+[02:28:46] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:46] [PERF] vision 59.2Hz loop=16.9ms body=14.9ms cpu=8.1ms gil_wait=6.8ms | read=8.5(cpu7.14) conv=4.7 task=0.6(cpu0.54) disp=0.2(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.34ms 未归因=0.9ms
+WDT::feed()
+[02:28:46] [PERF] mainloop 105Hz body=0.76ms cpu=0.60ms gil_wait=0.16ms | wdt=0.05 coord=0.18 tick=0.12 touch=0.19 | 每秒 CPU 63ms
+[02:28:47] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:47] [PERF] vision 59.1Hz loop=16.9ms body=15.2ms cpu=8.3ms gil_wait=6.9ms | read=9.1(cpu7.38) conv=5.1 task=0.6(cpu0.54) disp=0.1(cpu0.10) none=0 | idle=1.7ms 自身cpu=0.28ms 未归因=0.4ms
+WDT::feed()
+[02:28:47] [PERF] mainloop 109Hz body=0.69ms cpu=0.66ms gil_wait=0.02ms | wdt=0.05 coord=0.22 tick=0.13 touch=0.16 | 每秒 CPU 73ms
+[02:28:47] [FPS] pipeline: 59.0
+[02:28:48] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:48] [PERF] vision 58.7Hz loop=17.0ms body=14.5ms cpu=8.3ms gil_wait=6.1ms | read=9.4(cpu7.19) conv=3.7 task=0.9(cpu0.77) disp=0.1(cpu0.09) none=0 | idle=2.6ms 自身cpu=0.30ms 未归因=0.4ms
+WDT::feed()
+[02:28:48] [WDT] main feed #19800
+[02:28:48] [WDT] coord feed #19800
+[02:28:48] [MEM] user=98/128MB CMM=0/0MB
+[02:28:48] [PERF] mainloop 120Hz body=0.78ms cpu=0.64ms gil_wait=0.14ms | wdt=0.08 coord=0.23 tick=0.15 touch=0.16 | 每秒 CPU 77ms
+[02:28:49] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:49] [PERF] vision 58.5Hz loop=17.1ms body=14.6ms cpu=8.1ms gil_wait=6.4ms | read=8.6(cpu7.21) conv=4.1 task=1.0(cpu0.54) disp=0.3(cpu0.10) none=0 | idle=2.5ms 自身cpu=0.30ms 未归因=0.6ms
+WDT::feed()
+[02:28:49] [PERF] mainloop 120Hz body=0.74ms cpu=0.58ms gil_wait=0.16ms | wdt=0.05 coord=0.18 tick=0.09 touch=0.18 | 每秒 CPU 69ms
+[02:28:50] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:50] [PERF] vision 59.0Hz loop=16.9ms body=14.6ms cpu=8.2ms gil_wait=6.4ms | read=8.2(cpu7.11) conv=4.2 task=1.2(cpu0.72) disp=0.3(cpu0.10) none=0 | idle=2.3ms 自身cpu=0.31ms 未归因=0.6ms
+WDT::feed()
+[02:28:50] [PERF] mainloop 118Hz body=0.62ms cpu=0.57ms gil_wait=0.05ms | wdt=0.09 coord=0.15 tick=0.09 touch=0.17 | 每秒 CPU 67ms
+[02:28:51] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:51] [PERF] vision 58.9Hz loop=17.0ms body=14.6ms cpu=8.2ms gil_wait=6.4ms | read=8.2(cpu7.29) conv=4.5 task=1.1(cpu0.56) disp=0.2(cpu0.10) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.6ms
+WDT::feed()
+[02:28:51] [PERF] mainloop 116Hz body=0.73ms cpu=0.61ms gil_wait=0.13ms | wdt=0.09 coord=0.15 tick=0.09 touch=0.15 | 每秒 CPU 70ms
+[02:28:52] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:52] [PERF] vision 59.0Hz loop=16.9ms body=14.6ms cpu=8.2ms gil_wait=6.4ms | read=8.6(cpu7.18) conv=4.1 task=1.1(cpu0.63) disp=0.2(cpu0.10) none=0 | idle=2.4ms 自身cpu=0.29ms 未归因=0.6ms
+WDT::feed()
+[02:28:52] [FPS] pipeline: 59.0
+[02:28:52] [PERF] mainloop 114Hz body=0.67ms cpu=0.58ms gil_wait=0.08ms | wdt=0.10 coord=0.17 tick=0.09 touch=0.17 | 每秒 CPU 67ms
+[02:28:53] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:53] [PERF] vision 59.0Hz loop=17.0ms body=15.0ms cpu=8.4ms gil_wait=6.7ms | read=8.5(cpu7.28) conv=5.1 task=0.9(cpu0.73) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.28ms 未归因=0.4ms
+WDT::feed()
+[02:28:53] [PERF] mainloop 118Hz body=0.62ms cpu=0.58ms gil_wait=0.04ms | wdt=0.05 coord=0.20 tick=0.11 touch=0.14 | 每秒 CPU 68ms
+[02:28:53] [WDT] main feed #20400
+[02:28:53] [WDT] coord feed #20400
+[02:28:54] [PERF] lcd show 1.0Hz avg=6.3ms (cpu 2.2ms) -> 每秒占墙上 6ms / CPU 2ms
+[02:28:54] [PERF] vision 58.8Hz loop=17.0ms body=15.1ms cpu=8.3ms gil_wait=6.7ms | read=9.5(cpu7.14) conv=4.0 task=0.9(cpu0.79) disp=0.1(cpu0.11) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.6ms
+WDT::feed()
+[02:28:54] [PERF] mainloop 112Hz body=0.73ms cpu=0.68ms gil_wait=0.05ms | wdt=0.09 coord=0.22 tick=0.15 touch=0.15 | 每秒 CPU 76ms
+[02:28:55] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:55] [PERF] vision 59.0Hz loop=16.9ms body=14.7ms cpu=8.3ms gil_wait=6.4ms | read=9.2(cpu7.22) conv=4.2 task=0.8(cpu0.68) disp=0.1(cpu0.11) none=0 | idle=2.2ms 自身cpu=0.28ms 未归因=0.5ms
+WDT::feed()
+[02:28:55] [WDT] viz feed #10800
+[02:28:55] [PERF] mainloop 108Hz body=0.78ms cpu=0.63ms gil_wait=0.15ms | wdt=0.05 coord=0.22 tick=0.13 touch=0.22 | 每秒 CPU 68ms
+[02:28:56] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:56] [PERF] vision 59.0Hz loop=16.9ms body=14.9ms cpu=8.2ms gil_wait=6.7ms | read=9.4(cpu7.15) conv=4.2 task=0.7(cpu0.68) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.32ms 未归因=0.5ms
+WDT::feed()
+[02:28:56] [MEM] user=99/128MB CMM=0/0MB
+[02:28:56] [PERF] mainloop 113Hz body=0.83ms cpu=0.71ms gil_wait=0.12ms | wdt=0.07 coord=0.26 tick=0.14 touch=0.19 | 每秒 CPU 80ms
+[02:28:57] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:28:57] [PERF] vision 58.3Hz loop=17.2ms body=15.2ms cpu=8.6ms gil_wait=6.6ms | read=8.4(cpu7.59) conv=5.5 task=0.6(cpu0.61) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:28:57] [FPS] pipeline: 58.4
+[02:28:57] [PERF] mainloop 112Hz body=0.70ms cpu=0.61ms gil_wait=0.09ms | wdt=0.05 coord=0.21 tick=0.10 touch=0.20 | 每秒 CPU 69ms
+[02:28:58] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:58] [PERF] vision 59.4Hz loop=16.8ms body=14.8ms cpu=8.3ms gil_wait=6.4ms | read=9.3(cpu7.19) conv=4.1 task=0.8(cpu0.73) disp=0.1(cpu0.10) none=0 | idle=2.1ms 自身cpu=0.31ms 未归因=0.5ms
+WDT::feed()
+[02:28:58] [PERF] mainloop 113Hz body=0.62ms cpu=0.58ms gil_wait=0.03ms | wdt=0.06 coord=0.17 tick=0.09 touch=0.14 | 每秒 CPU 66ms
+[02:28:59] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:28:59] [WDT] main feed #21000
+[02:28:59] [WDT] coord feed #21000
+WDT::feed()
+[02:28:59] [PERF] vision 58.6Hz loop=17.1ms body=15.2ms cpu=8.4ms gil_wait=6.8ms | read=8.4(cpu7.44) conv=5.6 task=0.6(cpu0.55) disp=0.1(cpu0.11) none=0 | idle=1.9ms 自身cpu=0.28ms 未归因=0.4ms
+[02:28:59] [PERF] mainloop 107Hz body=0.80ms cpu=0.63ms gil_wait=0.17ms | wdt=0.10 coord=0.21 tick=0.16 touch=0.14 | 每秒 CPU 68ms
+[02:29:00] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:29:00] [PERF] vision 59.0Hz loop=16.9ms body=15.0ms cpu=8.6ms gil_wait=6.4ms | read=8.5(cpu7.57) conv=5.3 task=0.7(cpu0.62) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.31ms 未归因=0.4ms
+[02:29:00] [PERF] mainloop 109Hz body=0.73ms cpu=0.62ms gil_wait=0.11ms | wdt=0.07 coord=0.17 tick=0.17 touch=0.16 | 每秒 CPU 68ms
+[02:29:01] [PERF] lcd show 1.0Hz avg=7.9ms (cpu 2.3ms) -> 每秒占墙上 8ms / CPU 2ms
+WDT::feed()
+[02:29:01] [PERF] vision 59.0Hz loop=17.0ms body=15.2ms cpu=8.4ms gil_wait=6.8ms | read=8.6(cpu7.42) conv=4.8 task=1.0(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.31ms 未归因=0.7ms
+[02:29:01] [PERF] mainloop 115Hz body=0.75ms cpu=0.60ms gil_wait=0.15ms | wdt=0.05 coord=0.19 tick=0.14 touch=0.18 | 每秒 CPU 69ms
+[02:29:02] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:02] [PERF] vision 59.4Hz loop=16.8ms body=14.3ms cpu=8.1ms gil_wait=6.2ms | read=8.8(cpu7.14) conv=4.2 task=0.6(cpu0.57) disp=0.1(cpu0.09) none=0 | idle=2.6ms 自身cpu=0.28ms 未归因=0.5ms
+[02:29:02] [FPS] pipeline: 59.3
+[02:29:02] [PERF] mainloop 113Hz body=0.72ms cpu=0.58ms gil_wait=0.15ms | wdt=0.06 coord=0.21 tick=0.12 touch=0.18 | 每秒 CPU 65ms
+[02:29:03] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:03] [PERF] vision 58.7Hz loop=17.0ms body=14.5ms cpu=8.2ms gil_wait=6.3ms | read=8.8(cpu7.26) conv=4.2 task=0.5(cpu0.53) disp=0.3(cpu0.10) none=0 | idle=2.6ms 自身cpu=0.29ms 未归因=0.6ms
+[02:29:03] [PERF] mainloop 116Hz body=0.72ms cpu=0.58ms gil_wait=0.14ms | wdt=0.08 coord=0.18 tick=0.09 touch=0.18 | 每秒 CPU 67ms
+[02:29:04] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:04] [WDT] main feed #21600
+[02:29:04] [WDT] coord feed #21600
+[02:29:04] [MEM] user=99/128MB CMM=0/0MB
+WDT::feed()
+[02:29:04] [PERF] vision 58.6Hz loop=17.1ms body=15.1ms cpu=8.3ms gil_wait=6.8ms | read=8.5(cpu7.36) conv=4.4 task=1.3(cpu0.56) disp=0.3(cpu0.10) none=0 | idle=1.9ms 自身cpu=0.31ms 未归因=0.6ms
+[02:29:04] [PERF] mainloop 116Hz body=0.58ms cpu=0.58ms gil_wait=0.00ms | wdt=0.05 coord=0.16 tick=0.09 touch=0.16 | 每秒 CPU 67ms
+[02:29:05] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+WDT::feed()
+[02:29:05] [PERF] vision 59.0Hz loop=17.0ms body=14.2ms cpu=8.1ms gil_wait=6.1ms | read=9.2(cpu7.07) conv=3.7 task=0.7(cpu0.65) disp=0.1(cpu0.09) none=0 | idle=2.8ms 自身cpu=0.30ms 未归因=0.5ms
+[02:29:05] [PERF] mainloop 118Hz body=0.82ms cpu=0.62ms gil_wait=0.20ms | wdt=0.06 coord=0.20 tick=0.14 touch=0.24 | 每秒 CPU 74ms
+[02:29:05] [WDT] viz feed #11400
+[02:29:06] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:06] [PERF] vision 59.0Hz loop=17.0ms body=14.5ms cpu=8.2ms gil_wait=6.3ms | read=9.5(cpu7.21) conv=3.9 task=0.7(cpu0.62) disp=0.1(cpu0.09) none=0 | idle=2.4ms 自身cpu=0.32ms 未归因=0.4ms
+[02:29:06] [PERF] mainloop 118Hz body=0.63ms cpu=0.57ms gil_wait=0.06ms | wdt=0.08 coord=0.16 tick=0.09 touch=0.17 | 每秒 CPU 68ms
+[02:29:07] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:07] [PERF] vision 59.3Hz loop=16.9ms body=14.7ms cpu=8.3ms gil_wait=6.5ms | read=8.4(cpu7.33) conv=5.0 task=0.6(cpu0.54) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.32ms 未归因=0.6ms
+[02:29:07] [FPS] pipeline: 59.3
+[02:29:07] [PERF] mainloop 111Hz body=0.71ms cpu=0.60ms gil_wait=0.11ms | wdt=0.05 coord=0.24 tick=0.10 touch=0.19 | 每秒 CPU 67ms
+[02:29:08] [PERF] lcd show 1.0Hz avg=2.6ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+WDT::feed()
+[02:29:08] [PERF] vision 58.7Hz loop=17.0ms body=14.9ms cpu=8.2ms gil_wait=6.7ms | read=9.8(cpu7.17) conv=3.9 task=0.6(cpu0.61) disp=0.1(cpu0.10) none=0 | idle=2.1ms 自身cpu=0.29ms 未归因=0.5ms
+[02:29:08] [PERF] mainloop 115Hz body=0.67ms cpu=0.64ms gil_wait=0.03ms | wdt=0.05 coord=0.20 tick=0.09 touch=0.16 | 每秒 CPU 73ms
+[02:29:09] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:09] [PERF] vision 58.9Hz loop=17.0ms body=14.7ms cpu=8.2ms gil_wait=6.6ms | read=9.1(cpu7.20) conv=3.9 task=0.7(cpu0.56) disp=0.2(cpu0.10) none=0 | idle=2.3ms 自身cpu=0.30ms 未归因=0.8ms
+[02:29:09] [WDT] main feed #22200
+[02:29:09] [WDT] coord feed #22200
+[02:29:09] [PERF] mainloop 114Hz body=0.70ms cpu=0.58ms gil_wait=0.12ms | wdt=0.11 coord=0.16 tick=0.13 touch=0.18 | 每秒 CPU 66ms
+[02:29:10] [PERF] lcd show 1.0Hz avg=5.8ms (cpu 2.3ms) -> 每秒占墙上 6ms / CPU 2ms
+WDT::feed()
+[02:29:10] [PERF] vision 59.0Hz loop=17.0ms body=15.5ms cpu=8.4ms gil_wait=7.1ms | read=8.7(cpu7.47) conv=4.7 task=1.0(cpu0.55) disp=0.1(cpu0.10) none=0 | idle=1.5ms 自身cpu=0.30ms 未归因=0.9ms
+[02:29:10] [PERF] mainloop 117Hz body=0.61ms cpu=0.56ms gil_wait=0.05ms | wdt=0.05 coord=0.15 tick=0.12 touch=0.16 | 每秒 CPU 65ms
+[02:29:11] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:11] [PERF] vision 59.2Hz loop=16.9ms body=14.7ms cpu=8.2ms gil_wait=6.5ms | read=8.6(cpu7.16) conv=4.3 task=0.8(cpu0.58) disp=0.5(cpu0.12) none=0 | idle=2.2ms 自身cpu=0.32ms 未归因=0.6ms
+[02:29:11] [PERF] mainloop 108Hz body=0.93ms cpu=0.60ms gil_wait=0.32ms | wdt=0.05 coord=0.31 tick=0.10 touch=0.27 | 每秒 CPU 65ms
+[02:29:12] [PERF] lcd show 1.0Hz avg=5.7ms (cpu 2.3ms) -> 每秒占墙上 6ms / CPU 2ms
+[02:29:12] [MEM] user=99/128MB CMM=0/0MB
+[02:29:12] [UART RX] CMD_REQUEST type=EXPLOSIVE interval=50ms codes=[3, 2, 1] payload=0132030201
+[02:29:12] [UART TX] CMD_ACK type=EXPLOSIVE freq=60Hz size=10B interval=50ms codes=[3, 2, 1] (换任务码)
+[02:29:12] [GKS] explosive LAB slots: C1=red[1, 54, 20, 65, 9, 47]  C2=green[22, 73, -39, -10, 25, 55]  C3=blue[3, 77, -17, 40, -71, -25]
+[02:29:12] [UART ACTION] gate=EXPLOSIVE codes=[3, 2, 1] has_codes=1 latch=cleared(换任务/换码/STOP后重订阅) (任务首���启用)
+[02:29:12] [GKS] blob scan engine = maix(C++ find_blobs)
+WDT::feed()
+[02:29:12] [PERF] vision 48.8Hz loop=20.5ms body=18.8ms cpu=9.6ms gil_wait=9.2ms | read=9.0(cpu7.55) conv=5.3 task=3.9(cpu1.66) disp=0.1(cpu0.09) none=0 | idle=1.7ms 自身cpu=0.29ms 未归因=0.5ms
+[02:29:12] [FPS] pipeline: 50.1
+[02:29:12] [PERF] mainloop 90Hz body=0.86ms cpu=0.71ms gil_wait=0.15ms | wdt=0.05 coord=0.31 tick=0.18 touch=0.15 | 每秒 CPU 64ms
+[02:29:13] [PERF] lcd show 0.9Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:29:13] [UART TX] DATA_STREAM 22.3Hz seq=22 type=EXPLOSIVE mode=EXPLOSIVE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:29:13] [PERF] vision 11.2Hz loop=89.6ms body=88.0ms cpu=58.8ms gil_wait=29.2ms | read=5.0(cpu6.93) conv=6.9 task=75.7(cpu51.53) disp=0.1(cpu0.09) none=0 | idle=1.5ms 自身cpu=0.28ms 未归因=0.4ms
+[02:29:13] [PERF] mainloop 54Hz body=1.21ms cpu=1.01ms gil_wait=0.21ms | wdt=0.06 coord=0.69 tick=0.15 touch=0.14 | 每秒 CPU 54ms
+[02:29:14] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:14] [UART TX] DATA_STREAM 22.9Hz seq=45 type=EXPLOSIVE mode=EXPLOSIVE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:29:14] [PERF] vision 11.5Hz loop=86.8ms body=85.8ms cpu=57.6ms gil_wait=28.2ms | read=5.5(cpu6.66) conv=6.9 task=72.9(cpu50.59) disp=0.1(cpu0.09) none=0 | idle=1.0ms 自身cpu=0.28ms 未归因=0.4ms
+[02:29:15] [PERF] mainloop 53Hz body=1.41ms cpu=1.04ms gil_wait=0.37ms | wdt=0.08 coord=0.72 tick=0.19 touch=0.24 | 每秒 CPU 55ms
+[02:29:15] [GKS] seen += 3 -> [3]
+[02:29:15] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:15] [UART TX] DATA_STREAM 22.6Hz seq=68 type=EXPLOSIVE mode=EXPLOSIVE cx=323 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:29:15] [PERF] vision 11.5Hz loop=86.8ms body=84.7ms cpu=56.8ms gil_wait=27.9ms | read=5.3(cpu7.06) conv=6.8 task=72.0(cpu49.24) disp=0.1(cpu0.09) none=0 | idle=2.1ms 自身cpu=0.37ms 未归因=0.5ms
+[02:29:15] [GKS] seen += 2 -> [3, 2]
+[02:29:16] [PERF] mainloop 57Hz body=1.29ms cpu=0.98ms gil_wait=0.31ms | wdt=0.05 coord=0.72 tick=0.17 touch=0.22 | 每秒 CPU 56ms
+[02:29:16] [GKS] latch pit=1 seen=[3, 2] ordered=[3, 2, 1] codes=[3, 2, 1] inferred=True
+[02:29:16] [UART RX] CMD_STOP payload=
+[02:29:16] [UART RX] CMD_STOP -> idle (no ACK: Brain 不消费)
+[02:29:16] [UART ACTION] gate=IDLE latch=kept(是否清理由下次订阅判定) (任务已停用)
+[02:29:16] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:16] [UART RX] CMD_REQUEST type=EXPLOSIVE interval=50ms codes=[3, 2, 1] payload=0132030201
+[02:29:16] [UART TX] CMD_ACK type=EXPLOSIVE freq=60Hz size=10B interval=50ms codes=[3, 2, 1] (换任务码)
+[02:29:16] [UART ACTION] gate=EXPLOSIVE codes=[3, 2, 1] has_codes=1 latch=cleared(换任务/换码/STOP后重订阅) (任务首���启用)
+[02:29:17] [PERF] vision 30.0Hz loop=33.4ms body=29.7ms cpu=18.7ms gil_wait=10.9ms | read=8.6(cpu6.74) conv=3.8 task=16.7(cpu11.56) disp=0.1(cpu0.09) none=0 | idle=3.7ms 自身cpu=0.31ms 未归因=0.4ms
+[02:29:17] [PERF] mainloop 82Hz body=1.20ms cpu=0.75ms gil_wait=0.45ms | wdt=0.05 coord=0.49 tick=0.14 touch=0.36 | 每秒 CPU 62ms
+[02:29:17] [PERF] lcd show 1.0Hz avg=3.6ms (cpu 3.1ms) -> 每秒占墙上 3ms / CPU 3ms
+[02:29:17] [WDT] main feed #22800
+[02:29:17] [WDT] coord feed #22800
+WDT::feed()
+[02:29:17] [FPS] pipeline: 30.0
+[02:29:17] [UART TX] DATA_STREAM 23.1Hz seq=23 type=EXPLOSIVE mode=EXPLOSIVE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:18] [PERF] mainloop 50Hz body=1.05ms cpu=0.98ms gil_wait=0.07ms | wdt=0.06 coord=0.62 tick=0.11 touch=0.15 | 每秒 CPU 49ms
+[02:29:18] [PERF] vision 11.5Hz loop=86.8ms body=85.7ms cpu=57.1ms gil_wait=28.7ms | read=7.5(cpu7.01) conv=5.6 task=72.1(cpu49.70) disp=0.1(cpu0.09) none=0 | idle=1.1ms 自身cpu=0.29ms 未归因=0.4ms
+[02:29:18] [GKS] seen += 3 -> [3]
+[02:29:18] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:18] [UART TX] DATA_STREAM 23.6Hz seq=47 type=EXPLOSIVE mode=EXPLOSIVE cx=232 pit=0 pos=0 err=+0 found=0
+[02:29:19] [PERF] mainloop 59Hz body=1.08ms cpu=0.96ms gil_wait=0.13ms | wdt=0.05 coord=0.50 tick=0.12 touch=0.23 | 每秒 CPU 56ms
+[02:29:19] [PERF] vision 11.7Hz loop=85.2ms body=82.0ms cpu=56.2ms gil_wait=25.8ms | read=5.5(cpu6.82) conv=5.3 task=70.8(cpu49.01) disp=0.1(cpu0.09) none=0 | idle=3.2ms 自身cpu=0.28ms 未归因=0.4ms
+[02:29:19] [PERF] lcd show 1.0Hz avg=5.4ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:29:20] [UART TX] DATA_STREAM 23.2Hz seq=71 type=EXPLOSIVE mode=EXPLOSIVE cx=309 pit=0 pos=0 err=+0 found=0
+[02:29:20] [PERF] mainloop 56Hz body=1.29ms cpu=0.99ms gil_wait=0.30ms | wdt=0.05 coord=0.82 tick=0.13 touch=0.17 | 每秒 CPU 56ms
+[02:29:20] [PERF] vision 11.5Hz loop=86.8ms body=85.0ms cpu=56.8ms gil_wait=28.3ms | read=5.0(cpu6.80) conv=7.0 task=72.3(cpu49.49) disp=0.1(cpu0.09) none=0 | idle=1.7ms 自身cpu=0.38ms 未归因=0.6ms
+[02:29:20] [PERF] lcd show 0.9Hz avg=5.3ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+WDT::feed()
+[02:29:21] [UART TX] DATA_STREAM 22.4Hz seq=95 type=EXPLOSIVE mode=EXPLOSIVE cx=309 pit=0 pos=0 err=+0 found=0
+[02:29:21] [PERF] mainloop 53Hz body=1.34ms cpu=1.01ms gil_wait=0.32ms | wdt=0.05 coord=0.67 tick=0.15 touch=0.28 | 每秒 CPU 53ms
+[02:29:21] [PERF] vision 11.2Hz loop=89.1ms body=87.5ms cpu=60.2ms gil_wait=27.3ms | read=5.0(cpu6.82) conv=7.2 task=74.7(cpu52.83) disp=0.2(cpu0.18) none=0 | idle=1.6ms 自身cpu=0.38ms 未归因=0.4ms
+[02:29:21] [PERF] lcd show 0.9Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:22] [PERF] mainloop 57Hz body=0.98ms cpu=0.91ms gil_wait=0.07ms | wdt=0.05 coord=0.47 tick=0.20 touch=0.14 | 每秒 CPU 52ms
+[02:29:22] [UART TX] DATA_STREAM 22.9Hz seq=119 type=EXPLOSIVE mode=EXPLOSIVE cx=310 pit=0 pos=0 err=+0 found=0
+[02:29:22] [PERF] vision 11.2Hz loop=89.5ms body=86.5ms cpu=59.7ms gil_wait=26.8ms | read=5.6(cpu6.89) conv=5.2 task=75.3(cpu52.38) disp=0.1(cpu0.10) none=0 | idle=3.0ms 自身cpu=0.38ms 未归因=0.4ms
+[02:29:22] [PERF] lcd show 0.9Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+WDT::feed()
+[02:29:22] [FPS] pipeline: 11.2
+[02:29:23] [PERF] mainloop 53Hz body=1.34ms cpu=0.99ms gil_wait=0.35ms | wdt=0.05 coord=0.89 tick=0.10 touch=0.17 | 每秒 CPU 53ms
+[02:29:23] [UART TX] DATA_STREAM 22.8Hz seq=142 type=EXPLOSIVE mode=EXPLOSIVE cx=309 pit=0 pos=0 err=+0 found=0
+[02:29:23] [PERF] vision 11.4Hz loop=87.7ms body=86.2ms cpu=57.1ms gil_wait=29.1ms | read=7.1(cpu6.67) conv=5.6 task=72.7(cpu50.07) disp=0.4(cpu0.10) none=0 | idle=1.5ms 自身cpu=0.28ms 未归因=0.4ms
+WDT::feed()
+[02:29:23] [PERF] lcd show 0.9Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:24] [PERF] mainloop 56Hz body=1.07ms cpu=0.94ms gil_wait=0.13ms | wdt=0.05 coord=0.58 tick=0.11 touch=0.20 | 每秒 CPU 52ms
+[02:29:24] [UART TX] DATA_STREAM 22.6Hz seq=165 type=EXPLOSIVE mode=EXPLOSIVE cx=309 pit=0 pos=0 err=+0 found=0
+[02:29:24] [PERF] vision 11.4Hz loop=87.5ms body=86.0ms cpu=57.8ms gil_wait=28.2ms | read=4.6(cpu6.58) conv=8.2 task=72.4(cpu50.55) disp=0.3(cpu0.27) none=0 | idle=1.5ms 自身cpu=0.37ms 未归因=0.5ms
+WDT::feed()
+[02:29:24] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:25] [PERF] mainloop 57Hz body=1.07ms cpu=0.97ms gil_wait=0.09ms | wdt=0.05 coord=0.65 tick=0.11 touch=0.14 | 每秒 CPU 56ms
+[02:29:25] [UART TX] DATA_STREAM 23.7Hz seq=189 type=EXPLOSIVE mode=EXPLOSIVE cx=307 pit=0 pos=0 err=+0 found=0
+[02:29:25] [PERF] vision 11.9Hz loop=83.9ms body=81.9ms cpu=55.8ms gil_wait=26.2ms | read=4.9(cpu6.74) conv=6.7 task=69.7(cpu48.56) disp=0.1(cpu0.19) none=0 | idle=1.9ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:29:25] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:26] [PERF] mainloop 53Hz body=1.19ms cpu=0.95ms gil_wait=0.24ms | wdt=0.05 coord=0.63 tick=0.13 touch=0.26 | 每秒 CPU 51ms
+[02:29:26] [UART TX] DATA_STREAM 23.7Hz seq=213 type=EXPLOSIVE mode=EXPLOSIVE cx=307 pit=0 pos=0 err=+0 found=0
+[02:29:26] [PERF] vision 12.2Hz loop=82.1ms body=81.1ms cpu=54.3ms gil_wait=26.8ms | read=4.8(cpu7.05) conv=6.9 task=68.6(cpu46.88) disp=0.1(cpu0.09) none=0 | idle=1.0ms 自身cpu=0.29ms 未归因=0.6ms
+[02:29:26] [UART RX] CMD_REQUEST type=TARGET interval=50ms codes=[3, 2, 1] payload=0232030201
+[02:29:26] [UART TX] CMD_ACK type=TARGET freq=60Hz size=10B interval=50ms codes=[3, 2, 1] (换任务码)
+[02:29:26] [GKS] target LAB slot: code=2(green) [13, 78, -66, -23, -3, 45]
+[02:29:26] [UART ACTION] gate=TARGET codes=[3, 2, 1] has_codes=1 latch=cleared(换任务/换码/STOP后重订阅) (任务已启���)
+[02:29:26] [GKS] target 跟踪窄窗未命中 x1 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次��窗）; 频繁出现请调大 target.track_roi_px
+WDT::feed()
+[02:29:26] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:27] [PERF] mainloop 74Hz body=1.26ms cpu=1.01ms gil_wait=0.25ms | wdt=0.09 coord=0.73 tick=0.11 touch=0.14 | 每秒 CPU 74ms
+[02:29:27] [UART TX] DATA_STREAM 30.0Hz seq=21 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:27] [GKS] target 跟踪窄窗未命中 x21 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次���窗）; 频繁出现请调大 target.track_roi_px
+[02:29:27] [PERF] vision 29.7Hz loop=33.7ms body=32.4ms cpu=19.8ms gil_wait=12.6ms | read=4.9(cpu6.85) conv=6.6 task=20.1(cpu12.43) disp=0.1(cpu0.09) none=0 | idle=1.3ms 自身cpu=0.47ms 未归因=0.7ms
+[02:29:27] [WDT] viz feed #12000
+[02:29:27] [WDT] main feed #23400
+[02:29:27] [WDT] coord feed #23400
+[02:29:27] [MEM] user=99/128MB CMM=0/0MB
+[02:29:27] [GKS] target 跟踪窄窗未命中 x41 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次���窗）; 频繁出现请调大 target.track_roi_px
+WDT::feed()
+[02:29:27] [FPS] pipeline: 29.7
+[02:29:27] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:28] [PERF] mainloop 91Hz body=1.15ms cpu=0.96ms gil_wait=0.19ms | wdt=0.10 coord=0.59 tick=0.11 touch=0.20 | 每秒 CPU 87ms
+[02:29:28] [UART TX] DATA_STREAM 34.2Hz seq=56 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:28] [GKS] target 跟踪窄窗未命中 x61 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次���窗）; 频繁出现请调大 target.track_roi_px
+[02:29:28] [PERF] vision 34.4Hz loop=29.1ms body=27.5ms cpu=17.2ms gil_wait=10.3ms | read=5.5(cpu6.90) conv=6.0 task=15.3(cpu9.82) disp=0.1(cpu0.12) none=0 | idle=1.6ms 自身cpu=0.32ms 未归因=0.5ms
+WDT::feed()
+[02:29:28] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:28] [GKS] target 跟踪窄窗未命中 x81 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次���窗）; 频繁出现请调大 target.track_roi_px
+[02:29:29] [PERF] mainloop 97Hz body=1.08ms cpu=0.89ms gil_wait=0.19ms | wdt=0.05 coord=0.63 tick=0.13 touch=0.14 | 每秒 CPU 86ms
+[02:29:29] [UART TX] DATA_STREAM 34.7Hz seq=91 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:29] [GKS] target 跟踪窄窗命中 x1 (win=75x197px, 命中时省下全 ROI 扫描)
+[02:29:29] [PERF] vision 36.7Hz loop=27.3ms body=26.0ms cpu=16.3ms gil_wait=9.7ms | read=5.2(cpu6.75) conv=6.0 task=14.2(cpu9.13) disp=0.2(cpu0.09) none=0 | idle=1.3ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:29:29] [PERF] lcd show 1.0Hz avg=5.5ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:29:30] [PERF] mainloop 106Hz body=1.01ms cpu=0.97ms gil_wait=0.04ms | wdt=0.05 coord=0.57 tick=0.13 touch=0.14 | 每秒 CPU 103ms
+[02:29:30] [UART TX] DATA_STREAM 45.9Hz seq=137 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+7475 found=1
+[02:29:30] [PERF] vision 46.7Hz loop=21.4ms body=19.4ms cpu=12.2ms gil_wait=7.2ms | read=5.7(cpu6.91) conv=5.7 task=7.4(cpu4.91) disp=0.1(cpu0.09) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:29:31] [PERF] mainloop 105Hz body=1.37ms cpu=1.02ms gil_wait=0.34ms | wdt=0.05 coord=0.83 tick=0.15 touch=0.20 | 每秒 CPU 107ms
+[02:29:31] [UART TX] DATA_STREAM 46.8Hz seq=184 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+4133 found=1
+[02:29:31] [PERF] vision 46.5Hz loop=21.5ms body=19.1ms cpu=12.2ms gil_wait=6.8ms | read=5.2(cpu6.79) conv=5.6 task=7.3(cpu5.03) disp=0.2(cpu0.10) none=0 | idle=2.4ms 自身cpu=0.33ms 未归因=0.7ms
+WDT::feed()
+[02:29:31] [PERF] lcd show 1.0Hz avg=3.5ms (cpu 2.8ms) -> 每秒占墙上 3ms / CPU 3ms
+[02:29:32] [PERF] mainloop 106Hz body=1.27ms cpu=0.98ms gil_wait=0.28ms | wdt=0.09 coord=0.68 tick=0.16 touch=0.17 | 每秒 CPU 105ms
+[02:29:32] [UART TX] DATA_STREAM 46.1Hz seq=231 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+742 found=1
+[02:29:32] [PERF] vision 46.7Hz loop=21.4ms body=18.9ms cpu=12.3ms gil_wait=6.5ms | read=4.7(cpu6.80) conv=6.1 task=7.1(cpu5.08) disp=0.1(cpu0.10) none=0 | idle=2.6ms 自身cpu=0.36ms 未归因=0.8ms
+[02:29:32] [UART RX] CMD_REQUEST type=TARGET interval=50ms codes=[3, 2, 1] payload=0232030201
+[02:29:32] [UART TX] CMD_ACK type=TARGET freq=60Hz size=10B interval=50ms codes=[3, 2, 1] (换任务码)
+[02:29:32] [UART ACTION] gate=TARGET codes=[3, 2, 1] has_codes=1 latch=kept(幂等重订阅) (任务已启用)
+WDT::feed()
+[02:29:32] [FPS] pipeline: 46.7
+[02:29:32] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:33] [PERF] mainloop 105Hz body=1.28ms cpu=1.05ms gil_wait=0.23ms | wdt=0.05 coord=0.69 tick=0.19 touch=0.19 | 每秒 CPU 110ms
+[02:29:33] [UART TX] DATA_STREAM 46.6Hz seq=35 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=-208 found=1
+[02:29:33] [PERF] vision 45.4Hz loop=22.0ms body=19.2ms cpu=12.4ms gil_wait=6.9ms | read=5.1(cpu6.80) conv=5.5 task=7.7(cpu5.18) disp=0.2(cpu0.10) none=0 | idle=2.8ms 自身cpu=0.31ms 未归因=0.8ms
+[02:29:33] [WDT] main feed #24000
+[02:29:33] [WDT] coord feed #24000
+[02:29:33] [GKS] target 跟踪窄窗命中 x201 (win=128x197px, 命中时省下全 ROI 扫描)
+WDT::feed()
+[02:29:33] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:29:34] [PERF] mainloop 109Hz body=1.13ms cpu=0.95ms gil_wait=0.18ms | wdt=0.05 coord=0.56 tick=0.15 touch=0.24 | 每秒 CPU 104ms
+[02:29:34] [UART TX] DATA_STREAM 45.8Hz seq=81 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=-211 found=1
+[02:29:34] [PERF] vision 45.4Hz loop=22.0ms body=19.6ms cpu=12.4ms gil_wait=7.2ms | read=5.6(cpu6.80) conv=5.5 task=7.7(cpu5.16) disp=0.1(cpu0.09) none=0 | idle=2.5ms 自身cpu=0.33ms 未归因=0.7ms
+WDT::feed()
+[02:29:34] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:35] [PERF] mainloop 105Hz body=1.11ms cpu=0.97ms gil_wait=0.14ms | wdt=0.05 coord=0.62 tick=0.12 touch=0.18 | 每秒 CPU 103ms
+[02:29:35] [UART TX] DATA_STREAM 46.6Hz seq=128 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=-205 found=1
+[02:29:35] [PERF] vision 46.3Hz loop=21.6ms body=19.1ms cpu=12.4ms gil_wait=6.7ms | read=5.1(cpu6.78) conv=5.5 task=7.6(cpu5.18) disp=0.2(cpu0.09) none=0 | idle=2.5ms 自身cpu=0.34ms 未归因=0.7ms
+WDT::feed()
+[02:29:35] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:36] [PERF] mainloop 104Hz body=1.24ms cpu=0.98ms gil_wait=0.26ms | wdt=0.10 coord=0.75 tick=0.13 touch=0.14 | 每秒 CPU 102ms
+[02:29:36] [UART TX] DATA_STREAM 46.5Hz seq=175 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=-2555 found=1
+[02:29:36] [MEM] user=100/128MB CMM=0/0MB
+[02:29:36] [PERF] vision 46.5Hz loop=21.5ms body=19.0ms cpu=12.4ms gil_wait=6.6ms | read=4.8(cpu6.82) conv=6.2 task=7.1(cpu5.19) disp=0.1(cpu0.09) none=0 | idle=2.5ms 自身cpu=0.32ms 未归因=0.7ms
+WDT::feed()
+[02:29:36] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:37] [PERF] mainloop 103Hz body=1.18ms cpu=0.99ms gil_wait=0.19ms | wdt=0.05 coord=0.65 tick=0.16 touch=0.19 | 每秒 CPU 102ms
+[02:29:37] [GKS] target 跟踪窄窗未命中 x101 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次窄窗）; 频繁出现请调大 target.track_roi_px
+[02:29:37] [UART TX] DATA_STREAM 43.4Hz seq=219 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:37] [PERF] vision 41.3Hz loop=24.2ms body=22.6ms cpu=14.4ms gil_wait=8.2ms | read=5.3(cpu6.86) conv=6.0 task=10.7(cpu7.11) disp=0.1(cpu0.09) none=0 | idle=1.6ms 自身cpu=0.31ms 未归因=0.6ms
+[02:29:37] [GKS] target 跟踪窄窗未命中 x121 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次窄窗）; 频繁出现请调大 target.track_roi_px
+[02:29:37] [FPS] pipeline: 41.2
+WDT::feed()
+[02:29:38] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:29:38] [PERF] mainloop 86Hz body=1.12ms cpu=0.98ms gil_wait=0.15ms | wdt=0.15 coord=0.57 tick=0.12 touch=0.14 | 每秒 CPU 84ms
+[02:29:38] [UART TX] DATA_STREAM 35.0Hz seq=254 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:38] [GKS] target 跟踪窄窗未命中 x141 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次窄窗）; 频繁出现请调大 target.track_roi_px
+[02:29:38] [UART RX] CMD_REQUEST type=RESCUE interval=50ms codes=[3, 2, 1] payload=0332030201
+[02:29:38] [UART TX] CMD_ACK type=RESCUE freq=60Hz size=10B interval=50ms codes=[3, 2, 1] (换任务码)
+[02:29:38] [UART ACTION] gate=RESCUE codes=[3, 2, 1] has_codes=1 latch=cleared(换任务/换码/STOP后重订阅) (任务已启���)
+[02:29:38] [PERF] vision 33.9Hz loop=29.5ms body=28.5ms cpu=17.0ms gil_wait=11.4ms | read=5.0(cpu6.84) conv=7.3 task=15.4(cpu9.70) disp=0.1(cpu0.10) none=0 | idle=1.0ms 自身cpu=0.37ms 未归因=0.6ms
+WDT::feed()
+[02:29:39] [PERF] lcd show 1.0Hz avg=3.9ms (cpu 2.1ms) -> 每秒占墙上 4ms / CPU 2ms
+[02:29:39] [PERF] mainloop 78Hz body=1.08ms cpu=0.94ms gil_wait=0.14ms | wdt=0.05 coord=0.54 tick=0.12 touch=0.21 | 每秒 CPU 73ms
+[02:29:39] [UART TX] DATA_STREAM 27.7Hz seq=21 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:39] [PERF] vision 26.2Hz loop=38.2ms body=36.7ms cpu=17.5ms gil_wait=19.1ms | read=4.1(cpu6.66) conv=7.2 task=24.4(cpu10.35) disp=0.3(cpu0.13) none=0 | idle=1.5ms 自身cpu=0.41ms 未归因=0.7ms
+WDT::feed()
+[02:29:39] [WDT] main feed #24600
+[02:29:39] [WDT] coord feed #24600
+[02:29:40] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 2.2ms) -> 每秒占墙上 4ms / CPU 2ms
+[02:29:40] [PERF] mainloop 71Hz body=1.18ms cpu=0.89ms gil_wait=0.29ms | wdt=0.06 coord=0.58 tick=0.18 touch=0.24 | 每秒 CPU 63ms
+[02:29:40] [UART TX] DATA_STREAM 26.0Hz seq=48 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:40] [PERF] vision 26.0Hz loop=38.5ms body=37.1ms cpu=17.3ms gil_wait=19.8ms | read=4.7(cpu6.72) conv=7.3 task=24.2(cpu10.07) disp=0.1(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.37ms 未归因=0.7ms
+WDT::feed()
+[02:29:41] [PERF] lcd show 1.0Hz avg=5.5ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:29:41] [GKS] latch pos2=[3, 1, 2] seen=[3, 1] order_by=first_seen codes=[3, 2, 1] inferred=True
+[02:29:41] [PERF] mainloop 82Hz body=1.14ms cpu=0.92ms gil_wait=0.22ms | wdt=0.05 coord=0.57 tick=0.10 touch=0.21 | 每秒 CPU 75ms
+[02:29:41] [UART TX] DATA_STREAM 25.3Hz seq=74 type=RESCUE mode=RESCUE cx=0 pit=0 pos=2 err=+0 found=1
+[02:29:41] [UART RX] CMD_STOP payload=
+[02:29:41] [UART RX] CMD_STOP -> idle (no ACK: Brain 不消费)
+[02:29:41] [UART ACTION] gate=IDLE latch=kept(是否清理由下次订阅判定) (任务已停用)
+[02:29:41] [PERF] vision 24.5Hz loop=40.8ms body=38.1ms cpu=18.0ms gil_wait=20.2ms | read=5.1(cpu6.71) conv=6.5 task=26.1(cpu10.87) disp=0.1(cpu0.09) none=0 | idle=2.7ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:29:42] [PERF] lcd show 1.0Hz avg=4.4ms (cpu 3.4ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:29:42] [UART RX] CMD_REQUEST type=RESCUE interval=50ms codes=[3, 2, 1] payload=0332030201
+[02:29:42] [UART TX] CMD_ACK type=RESCUE freq=60Hz size=10B interval=50ms codes=[3, 2, 1] (换任务码)
+[02:29:42] [UART ACTION] gate=RESCUE codes=[3, 2, 1] has_codes=1 latch=cleared(换任务/换码/STOP后重订阅) (任务首次���用)
+[02:29:42] [PERF] mainloop 99Hz body=0.88ms cpu=0.73ms gil_wait=0.15ms | wdt=0.05 coord=0.36 tick=0.11 touch=0.16 | 每秒 CPU 72ms
+[02:29:42] [PERF] vision 40.8Hz loop=24.5ms body=22.7ms cpu=11.3ms gil_wait=11.3ms | read=7.1(cpu7.13) conv=5.2 task=9.5(cpu3.82) disp=0.1(cpu0.10) none=0 | idle=1.9ms 自身cpu=0.29ms 未归因=0.8ms
+[02:29:42] [WDT] viz feed #12600
+[02:29:42] [FPS] pipeline: 40.8
+WDT::feed()
+[02:29:43] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.1ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:29:43] [UART TX] DATA_STREAM 26.1Hz seq=26 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:43] [PERF] mainloop 87Hz body=0.99ms cpu=0.88ms gil_wait=0.10ms | wdt=0.05 coord=0.44 tick=0.19 touch=0.18 | 每秒 CPU 77ms
+[02:29:43] [PERF] vision 24.9Hz loop=40.1ms body=37.6ms cpu=17.7ms gil_wait=19.9ms | read=5.4(cpu6.63) conv=5.6 task=25.6(cpu10.58) disp=0.1(cpu0.14) none=0 | idle=2.6ms 自身cpu=0.35ms 未归因=0.9ms
+WDT::feed()
+[02:29:44] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:44] [UART TX] DATA_STREAM 25.4Hz seq=52 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:44] [PERF] mainloop 78Hz body=1.10ms cpu=0.90ms gil_wait=0.20ms | wdt=0.07 coord=0.53 tick=0.10 touch=0.26 | 每秒 CPU 70ms
+[02:29:44] [PERF] vision 26.1Hz loop=38.3ms body=36.9ms cpu=17.1ms gil_wait=19.8ms | read=5.2(cpu6.69) conv=6.5 task=24.5(cpu9.94) disp=0.1(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.34ms 未归因=0.6ms
+WDT::feed()
+[02:29:45] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:45] [UART TX] DATA_STREAM 26.6Hz seq=79 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:45] [PERF] mainloop 72Hz body=1.27ms cpu=0.97ms gil_wait=0.31ms | wdt=0.05 coord=0.52 tick=0.13 touch=0.26 | 每秒 CPU 69ms
+[02:29:45] [PERF] vision 26.4Hz loop=37.9ms body=36.7ms cpu=17.3ms gil_wait=19.3ms | read=4.9(cpu6.74) conv=7.0 task=23.8(cpu10.20) disp=0.1(cpu0.09) none=0 | idle=1.2ms 自身cpu=0.29ms 未归因=0.8ms
+WDT::feed()
+[02:29:46] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:29:46] [UART TX] DATA_STREAM 26.1Hz seq=106 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:46] [PERF] mainloop 74Hz body=1.16ms cpu=0.90ms gil_wait=0.26ms | wdt=0.09 coord=0.58 tick=0.17 touch=0.16 | 每秒 CPU 67ms
+[02:29:46] [PERF] vision 26.3Hz loop=38.0ms body=36.4ms cpu=17.2ms gil_wait=19.2ms | read=4.5(cpu6.75) conv=6.9 task=24.0(cpu9.98) disp=0.1(cpu0.09) none=0 | idle=1.6ms 自身cpu=0.34ms 未归因=0.8ms
+WDT::feed()
+[02:29:47] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.1ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:29:47] [UART TX] DATA_STREAM 26.6Hz seq=133 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:47] [PERF] mainloop 73Hz body=1.21ms cpu=0.92ms gil_wait=0.29ms | wdt=0.05 coord=0.53 tick=0.15 touch=0.34 | 每秒 CPU 67ms
+[02:29:47] [WDT] main feed #25200
+[02:29:47] [WDT] coord feed #25200
+[02:29:47] [MEM] user=100/128MB CMM=0/0MB
+[02:29:47] [PERF] vision 26.4Hz loop=37.8ms body=36.6ms cpu=17.0ms gil_wait=19.7ms | read=4.9(cpu6.71) conv=7.1 task=24.1(cpu9.83) disp=0.1(cpu0.13) none=0 | idle=1.2ms 自身cpu=0.29ms 未归因=0.4ms
+[02:29:47] [FPS] pipeline: 26.4
+WDT::feed()
+[02:29:48] [PERF] lcd show 1.0Hz avg=3.6ms (cpu 3.0ms) -> 每秒占墙上 3ms / CPU 3ms
+[02:29:48] [UART TX] DATA_STREAM 26.0Hz seq=159 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:48] [PERF] mainloop 74Hz body=1.12ms cpu=0.92ms gil_wait=0.20ms | wdt=0.10 coord=0.60 tick=0.12 touch=0.17 | 每秒 CPU 68ms
+[02:29:48] [PERF] vision 26.5Hz loop=37.7ms body=36.6ms cpu=17.2ms gil_wait=19.4ms | read=4.5(cpu6.79) conv=7.1 task=24.3(cpu9.96) disp=0.1(cpu0.13) none=0 | idle=1.1ms 自身cpu=0.33ms 未归因=0.6ms
+WDT::feed()
+[02:29:49] [PERF] lcd show 1.0Hz avg=2.6ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+[02:29:49] [UART TX] DATA_STREAM 26.6Hz seq=186 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:49] [PERF] mainloop 73Hz body=1.12ms cpu=0.87ms gil_wait=0.25ms | wdt=0.05 coord=0.52 tick=0.10 touch=0.20 | 每秒 CPU 64ms
+[02:29:49] [PERF] vision 26.2Hz loop=38.2ms body=36.7ms cpu=17.3ms gil_wait=19.4ms | read=5.0(cpu6.72) conv=6.2 task=24.3(cpu10.12) disp=0.3(cpu0.09) none=0 | idle=1.5ms 自身cpu=0.37ms 未归因=0.9ms
+WDT::feed()
+[02:29:50] [UART TX] DATA_STREAM 26.2Hz seq=213 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:50] [PERF] mainloop 77Hz body=1.12ms cpu=0.88ms gil_wait=0.24ms | wdt=0.11 coord=0.49 tick=0.10 touch=0.26 | 每秒 CPU 68ms
+[02:29:50] [PERF] vision 26.5Hz loop=37.8ms body=36.3ms cpu=17.1ms gil_wait=19.2ms | read=4.6(cpu6.72) conv=6.7 task=23.9(cpu10.00) disp=0.1(cpu0.13) none=0 | idle=1.4ms 自身cpu=0.29ms 未归因=1.0ms
+WDT::feed()
+[02:29:51] [PERF] lcd show 1.0Hz avg=3.2ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+[02:29:51] [UART TX] DATA_STREAM 26.8Hz seq=240 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:51] [PERF] mainloop 78Hz body=0.99ms cpu=0.84ms gil_wait=0.15ms | wdt=0.05 coord=0.51 tick=0.11 touch=0.20 | 每秒 CPU 65ms
+[02:29:51] [PERF] vision 26.6Hz loop=37.5ms body=35.6ms cpu=17.2ms gil_wait=18.4ms | read=4.5(cpu6.74) conv=6.4 task=23.9(cpu10.06) disp=0.1(cpu0.09) none=0 | idle=1.9ms 自身cpu=0.33ms 未归因=0.7ms
+WDT::feed()
+[02:29:52] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:52] [UART TX] DATA_STREAM 26.7Hz seq=11 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:52] [PERF] mainloop 72Hz body=1.34ms cpu=0.91ms gil_wait=0.43ms | wdt=0.15 coord=0.72 tick=0.14 touch=0.21 | 每秒 CPU 65ms
+[02:29:52] [PERF] vision 26.8Hz loop=37.3ms body=36.0ms cpu=17.1ms gil_wait=18.9ms | read=4.6(cpu6.54) conv=6.5 task=24.1(cpu10.06) disp=0.3(cpu0.14) none=0 | idle=1.2ms 自身cpu=0.36ms 未归因=0.5ms
+[02:29:52] [FPS] pipeline: 26.8
+WDT::feed()
+[02:29:53] [PERF] lcd show 1.0Hz avg=3.9ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:29:53] [UART TX] DATA_STREAM 26.5Hz seq=38 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:53] [PERF] mainloop 71Hz body=1.21ms cpu=0.88ms gil_wait=0.33ms | wdt=0.10 coord=0.60 tick=0.16 touch=0.23 | 每秒 CPU 63ms
+[02:29:53] [PERF] vision 26.5Hz loop=37.8ms body=36.6ms cpu=17.1ms gil_wait=19.6ms | read=4.5(cpu6.59) conv=7.2 task=24.0(cpu9.99) disp=0.1(cpu0.09) none=0 | idle=1.1ms 自身cpu=0.40ms 未归因=0.7ms
+WDT::feed()
+[02:29:54] [PERF] lcd show 1.0Hz avg=3.8ms (cpu 3.1ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:29:54] [UART TX] DATA_STREAM 26.6Hz seq=65 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:54] [PERF] mainloop 78Hz body=1.01ms cpu=0.86ms gil_wait=0.15ms | wdt=0.05 coord=0.55 tick=0.14 touch=0.14 | 每秒 CPU 66ms
+[02:29:54] [PERF] vision 26.5Hz loop=37.8ms body=36.3ms cpu=17.1ms gil_wait=19.2ms | read=4.7(cpu6.60) conv=6.5 task=24.2(cpu10.05) disp=0.3(cpu0.14) none=0 | idle=1.5ms 自身cpu=0.30ms 未归因=0.6ms
+WDT::feed()
+[02:29:55] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:55] [UART TX] DATA_STREAM 26.5Hz seq=92 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:55] [PERF] mainloop 76Hz body=1.04ms cpu=0.88ms gil_wait=0.16ms | wdt=0.06 coord=0.55 tick=0.14 touch=0.18 | 每秒 CPU 67ms
+[02:29:55] [WDT] main feed #25800
+[02:29:55] [WDT] coord feed #25800
+[02:29:55] [PERF] vision 26.5Hz loop=37.7ms body=36.6ms cpu=16.9ms gil_wait=19.7ms | read=5.0(cpu6.72) conv=7.0 task=23.9(cpu9.74) disp=0.1(cpu0.09) none=0 | idle=1.1ms 自身cpu=0.36ms 未归因=0.6ms
+WDT::feed()
+[02:29:56] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.1ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:29:56] [UART TX] DATA_STREAM 26.6Hz seq=119 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:56] [PERF] mainloop 73Hz body=1.24ms cpu=0.95ms gil_wait=0.29ms | wdt=0.09 coord=0.64 tick=0.11 touch=0.24 | 每秒 CPU 69ms
+[02:29:56] [PERF] vision 26.9Hz loop=37.2ms body=36.1ms cpu=17.2ms gil_wait=18.9ms | read=4.7(cpu6.52) conv=6.7 task=23.8(cpu10.20) disp=0.1(cpu0.13) none=0 | idle=1.1ms 自身cpu=0.33ms 未归因=0.7ms
+WDT::feed()
+[02:29:57] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.3ms) -> 每秒占墙上 3ms / CPU 2ms
+[02:29:57] [UART TX] DATA_STREAM 26.6Hz seq=146 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:57] [PERF] mainloop 73Hz body=1.11ms cpu=0.87ms gil_wait=0.24ms | wdt=0.05 coord=0.58 tick=0.21 touch=0.14 | 每秒 CPU 63ms
+[02:29:57] [FPS] pipeline: 26.9
+[02:29:57] [PERF] vision 26.5Hz loop=37.7ms body=36.1ms cpu=17.1ms gil_wait=19.0ms | read=4.7(cpu6.75) conv=6.8 task=23.9(cpu9.97) disp=0.2(cpu0.10) none=0 | idle=1.5ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:29:58] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:58] [UART TX] DATA_STREAM 27.0Hz seq=173 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:58] [PERF] mainloop 69Hz body=1.30ms cpu=0.92ms gil_wait=0.38ms | wdt=0.05 coord=0.80 tick=0.10 touch=0.14 | 每秒 CPU 64ms
+[02:29:58] [PERF] vision 26.9Hz loop=37.1ms body=36.0ms cpu=17.2ms gil_wait=18.8ms | read=5.1(cpu6.64) conv=6.5 task=23.7(cpu10.09) disp=0.1(cpu0.17) none=0 | idle=1.1ms 自身cpu=0.32ms 未归因=0.5ms
+WDT::feed()
+[02:29:59] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:29:59] [UART TX] DATA_STREAM 26.8Hz seq=200 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:29:59] [PERF] mainloop 76Hz body=1.03ms cpu=0.89ms gil_wait=0.14ms | wdt=0.05 coord=0.58 tick=0.12 touch=0.14 | 每秒 CPU 68ms
+[02:29:59] [MEM] user=100/128MB CMM=0/0MB
+[02:29:59] [PERF] vision 26.5Hz loop=37.8ms body=35.6ms cpu=17.2ms gil_wait=18.5ms | read=4.3(cpu6.74) conv=7.0 task=23.7(cpu9.91) disp=0.1(cpu0.09) none=0 | idle=2.2ms 自身cpu=0.40ms 未归因=0.5ms
+WDT::feed()
+[02:30:00] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:00] [UART TX] DATA_STREAM 26.3Hz seq=227 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:00] [PERF] mainloop 80Hz body=1.16ms cpu=0.90ms gil_wait=0.26ms | wdt=0.10 coord=0.65 tick=0.11 touch=0.18 | 每秒 CPU 72ms
+[02:30:00] [PERF] vision 26.8Hz loop=37.3ms body=35.9ms cpu=17.1ms gil_wait=18.8ms | read=4.7(cpu6.62) conv=7.0 task=23.6(cpu10.10) disp=0.1(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.32ms 未归因=0.6ms
+WDT::feed()
+[02:30:01] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:01] [UART TX] DATA_STREAM 27.0Hz seq=254 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:01] [PERF] mainloop 75Hz body=1.06ms cpu=0.89ms gil_wait=0.17ms | wdt=0.05 coord=0.51 tick=0.21 touch=0.16 | 每秒 CPU 67ms
+[02:30:02] [PERF] vision 26.7Hz loop=37.5ms body=36.0ms cpu=17.0ms gil_wait=18.9ms | read=4.8(cpu6.66) conv=6.8 task=23.7(cpu9.91) disp=0.1(cpu0.09) none=0 | idle=1.5ms 自身cpu=0.37ms 未归因=0.6ms
+WDT::feed()
+[02:30:02] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:02] [UART TX] DATA_STREAM 26.6Hz seq=25 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:02] [PERF] mainloop 74Hz body=1.05ms cpu=0.88ms gil_wait=0.17ms | wdt=0.05 coord=0.59 tick=0.11 touch=0.19 | 每秒 CPU 65ms
+[02:30:02] [FPS] pipeline: 26.7
+[02:30:03] [PERF] vision 26.5Hz loop=37.7ms body=36.3ms cpu=17.0ms gil_wait=19.3ms | read=4.6(cpu6.75) conv=7.0 task=23.9(cpu9.83) disp=0.1(cpu0.13) none=0 | idle=1.5ms 自身cpu=0.28ms 未归因=0.6ms
+WDT::feed()
+[02:30:03] [PERF] lcd show 1.0Hz avg=2.1ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:03] [UART TX] DATA_STREAM 26.5Hz seq=52 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:03] [PERF] mainloop 69Hz body=1.30ms cpu=0.90ms gil_wait=0.40ms | wdt=0.10 coord=0.53 tick=0.15 touch=0.36 | 每秒 CPU 62ms
+[02:30:03] [WDT] main feed #26400
+[02:30:03] [WDT] coord feed #26400
+[02:30:04] [PERF] vision 26.7Hz loop=37.4ms body=36.2ms cpu=17.0ms gil_wait=19.2ms | read=5.1(cpu6.64) conv=6.7 task=23.7(cpu9.90) disp=0.2(cpu0.17) none=0 | idle=1.2ms 自身cpu=0.29ms 未归因=0.4ms
+WDT::feed()
+[02:30:04] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:04] [UART TX] DATA_STREAM 26.7Hz seq=79 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:04] [PERF] mainloop 72Hz body=1.09ms cpu=0.90ms gil_wait=0.19ms | wdt=0.06 coord=0.60 tick=0.11 touch=0.18 | 每秒 CPU 65ms
+[02:30:05] [PERF] vision 26.9Hz loop=37.2ms body=36.3ms cpu=17.1ms gil_wait=19.2ms | read=4.3(cpu6.85) conv=7.4 task=23.7(cpu9.83) disp=0.1(cpu0.09) none=0 | idle=0.9ms 自身cpu=0.36ms 未归因=0.8ms
+WDT::feed()
+[02:30:05] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.1ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:05] [UART TX] DATA_STREAM 26.7Hz seq=106 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:05] [WDT] viz feed #13200
+[02:30:05] [PERF] mainloop 76Hz body=1.07ms cpu=0.89ms gil_wait=0.18ms | wdt=0.06 coord=0.54 tick=0.10 touch=0.25 | 每秒 CPU 67ms
+[02:30:06] [PERF] vision 26.3Hz loop=38.0ms body=36.6ms cpu=17.4ms gil_wait=19.2ms | read=4.8(cpu6.68) conv=6.5 task=24.5(cpu10.26) disp=0.1(cpu0.10) none=0 | idle=1.4ms 自身cpu=0.33ms 未归因=0.8ms
+WDT::feed()
+[02:30:06] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.3ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:30:06] [UART TX] DATA_STREAM 26.6Hz seq=133 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:06] [PERF] mainloop 74Hz body=1.17ms cpu=0.91ms gil_wait=0.26ms | wdt=0.07 coord=0.58 tick=0.19 touch=0.16 | 每秒 CPU 67ms
+[02:30:07] [PERF] vision 26.7Hz loop=37.5ms body=36.2ms cpu=17.1ms gil_wait=19.1ms | read=4.7(cpu6.70) conv=6.9 task=23.7(cpu10.01) disp=0.2(cpu0.10) none=0 | idle=1.3ms 自身cpu=0.33ms 未归因=0.7ms
+WDT::feed()
+[02:30:07] [PERF] lcd show 1.0Hz avg=5.5ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:30:07] [UART TX] DATA_STREAM 26.6Hz seq=160 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:07] [PERF] mainloop 77Hz body=1.03ms cpu=0.85ms gil_wait=0.18ms | wdt=0.05 coord=0.48 tick=0.14 touch=0.14 | 每秒 CPU 66ms
+[02:30:07] [FPS] pipeline: 26.7
+[02:30:08] [PERF] vision 26.4Hz loop=37.8ms body=36.3ms cpu=17.2ms gil_wait=19.1ms | read=5.0(cpu6.77) conv=6.6 task=23.9(cpu9.95) disp=0.1(cpu0.13) none=0 | idle=1.6ms 自身cpu=0.33ms 未归因=0.7ms
+WDT::feed()
+[02:30:08] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:08] [PERF] mainloop 71Hz body=1.08ms cpu=0.89ms gil_wait=0.19ms | wdt=0.05 coord=0.56 tick=0.10 touch=0.21 | 每秒 CPU 63ms
+[02:30:08] [UART TX] DATA_STREAM 26.3Hz seq=187 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:09] [PERF] vision 26.8Hz loop=37.4ms body=36.2ms cpu=17.2ms gil_wait=18.9ms | read=4.3(cpu6.80) conv=7.6 task=23.5(cpu9.97) disp=0.1(cpu0.14) none=0 | idle=1.2ms 自身cpu=0.34ms 未归因=0.7ms
+WDT::feed()
+[02:30:09] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:30:09] [PERF] mainloop 71Hz body=1.22ms cpu=0.90ms gil_wait=0.32ms | wdt=0.05 coord=0.69 tick=0.11 touch=0.23 | 每秒 CPU 64ms
+[02:30:09] [UART TX] DATA_STREAM 26.6Hz seq=214 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:10] [PERF] vision 26.4Hz loop=37.9ms body=36.4ms cpu=17.0ms gil_wait=19.4ms | read=4.6(cpu6.80) conv=6.8 task=24.3(cpu9.76) disp=0.1(cpu0.13) none=0 | idle=1.5ms 自身cpu=0.33ms 未归因=0.6ms
+WDT::feed()
+[02:30:10] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:10] [PERF] mainloop 72Hz body=1.10ms cpu=0.87ms gil_wait=0.23ms | wdt=0.09 coord=0.53 tick=0.15 touch=0.15 | 每秒 CPU 62ms
+[02:30:10] [UART TX] DATA_STREAM 26.5Hz seq=241 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:11] [PERF] vision 26.4Hz loop=37.8ms body=36.4ms cpu=17.2ms gil_wait=19.2ms | read=4.7(cpu6.75) conv=6.8 task=24.4(cpu10.08) disp=0.1(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.28ms 未归因=0.4ms
+WDT::feed()
+[02:30:11] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:11] [PERF] mainloop 76Hz body=1.21ms cpu=0.90ms gil_wait=0.31ms | wdt=0.05 coord=0.64 tick=0.12 touch=0.26 | 每秒 CPU 69ms
+[02:30:11] [UART TX] DATA_STREAM 26.3Hz seq=12 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:11] [WDT] main feed #27000
+[02:30:11] [WDT] coord feed #27000
+[02:30:11] [MEM] user=101/128MB CMM=0/0MB
+[02:30:12] [PERF] vision 26.2Hz loop=38.2ms body=36.9ms cpu=17.1ms gil_wait=19.8ms | read=5.3(cpu6.63) conv=6.9 task=24.0(cpu10.06) disp=0.3(cpu0.09) none=0 | idle=1.3ms 自身cpu=0.29ms 未归因=0.5ms
+WDT::feed()
+[02:30:12] [PERF] lcd show 1.0Hz avg=3.8ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:12] [PERF] mainloop 74Hz body=1.36ms cpu=0.94ms gil_wait=0.42ms | wdt=0.09 coord=0.71 tick=0.26 touch=0.15 | 每秒 CPU 70ms
+[02:30:12] [UART TX] DATA_STREAM 26.2Hz seq=39 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:12] [FPS] pipeline: 26.2
+[02:30:13] [PERF] vision 26.4Hz loop=37.9ms body=36.4ms cpu=17.2ms gil_wait=19.2ms | read=4.5(cpu6.79) conv=7.2 task=23.9(cpu9.97) disp=0.1(cpu0.13) none=0 | idle=1.5ms 自身cpu=0.29ms 未归因=0.7ms
+WDT::feed()
+[02:30:13] [PERF] lcd show 1.0Hz avg=2.3ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:13] [PERF] mainloop 71Hz body=1.35ms cpu=0.96ms gil_wait=0.39ms | wdt=0.08 coord=0.76 tick=0.12 touch=0.20 | 每秒 CPU 68ms
+[02:30:13] [UART TX] DATA_STREAM 26.5Hz seq=66 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:14] [PERF] vision 26.5Hz loop=37.8ms body=36.4ms cpu=17.1ms gil_wait=19.3ms | read=5.1(cpu6.82) conv=6.6 task=24.0(cpu9.88) disp=0.1(cpu0.09) none=0 | idle=1.3ms 自身cpu=0.33ms 未归因=0.6ms
+[02:30:14] [PERF] lcd show 1.0Hz avg=3.1ms (cpu 2.2ms) -> 每秒占墙上 3ms / CPU 2ms
+[02:30:14] [PERF] mainloop 80Hz body=1.19ms cpu=0.87ms gil_wait=0.32ms | wdt=0.09 coord=0.62 tick=0.14 touch=0.22 | 每秒 CPU 69ms
+[02:30:14] [UART TX] DATA_STREAM 26.4Hz seq=93 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:15] [PERF] vision 26.4Hz loop=37.9ms body=36.6ms cpu=17.1ms gil_wait=19.5ms | read=5.4(cpu6.71) conv=6.5 task=24.2(cpu10.01) disp=0.1(cpu0.09) none=0 | idle=1.3ms 自身cpu=0.29ms 未归因=0.4ms
+[02:30:15] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:15] [PERF] mainloop 75Hz body=1.26ms cpu=0.91ms gil_wait=0.35ms | wdt=0.10 coord=0.59 tick=0.10 touch=0.27 | 每秒 CPU 68ms
+[02:30:15] [UART TX] DATA_STREAM 26.5Hz seq=120 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:16] [PERF] vision 26.8Hz loop=37.3ms body=35.8ms cpu=17.2ms gil_wait=18.6ms | read=4.8(cpu6.73) conv=6.8 task=23.7(cpu10.04) disp=0.1(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.34ms 未归因=0.5ms
+[02:30:16] [PERF] lcd show 1.0Hz avg=5.2ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:30:16] [PERF] mainloop 70Hz body=1.19ms cpu=0.90ms gil_wait=0.30ms | wdt=0.05 coord=0.62 tick=0.14 touch=0.16 | 每秒 CPU 63ms
+[02:30:16] [UART TX] DATA_STREAM 27.0Hz seq=147 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:17] [PERF] vision 26.7Hz loop=37.5ms body=36.2ms cpu=17.3ms gil_wait=18.9ms | read=4.8(cpu6.80) conv=6.6 task=24.2(cpu10.04) disp=0.1(cpu0.13) none=0 | idle=1.3ms 自身cpu=0.33ms 未归因=0.5ms
+[02:30:17] [PERF] lcd show 1.0Hz avg=2.2ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:17] [PERF] mainloop 75Hz body=1.30ms cpu=0.88ms gil_wait=0.43ms | wdt=0.05 coord=0.64 tick=0.19 touch=0.26 | 每秒 CPU 66ms
+[02:30:17] [UART TX] DATA_STREAM 26.3Hz seq=174 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:17] [FPS] pipeline: 26.7
+WDT::feed()
+[02:30:18] [PERF] vision 26.2Hz loop=38.2ms body=37.0ms cpu=17.1ms gil_wait=19.9ms | read=5.0(cpu6.80) conv=6.5 task=24.8(cpu9.95) disp=0.1(cpu0.09) none=0 | idle=1.2ms 自身cpu=0.29ms 未归因=0.6ms
+[02:30:18] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:18] [PERF] mainloop 77Hz body=1.30ms cpu=0.92ms gil_wait=0.38ms | wdt=0.11 coord=0.55 tick=0.25 touch=0.21 | 每秒 CPU 71ms
+[02:30:18] [UART TX] DATA_STREAM 26.7Hz seq=201 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:19] [PERF] vision 26.8Hz loop=37.4ms body=36.0ms cpu=17.2ms gil_wait=18.8ms | read=4.9(cpu6.69) conv=6.4 task=24.0(cpu10.14) disp=0.1(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.29ms 未归因=0.6ms
+[02:30:19] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:19] [PERF] mainloop 73Hz body=1.44ms cpu=0.90ms gil_wait=0.54ms | wdt=0.09 coord=0.75 tick=0.18 touch=0.22 | 每秒 CPU 66ms
+[02:30:19] [UART TX] DATA_STREAM 26.5Hz seq=228 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:19] [WDT] main feed #27600
+[02:30:19] [WDT] coord feed #27600
+WDT::feed()
+[02:30:20] [PERF] vision 26.2Hz loop=38.2ms body=36.5ms cpu=17.3ms gil_wait=19.2ms | read=4.9(cpu6.91) conv=6.9 task=24.2(cpu10.03) disp=0.1(cpu0.09) none=0 | idle=1.8ms 自身cpu=0.29ms 未归因=0.4ms
+[02:30:20] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:20] [PERF] mainloop 75Hz body=1.18ms cpu=0.91ms gil_wait=0.27ms | wdt=0.13 coord=0.60 tick=0.11 touch=0.23 | 每秒 CPU 68ms
+[02:30:20] [UART TX] DATA_STREAM 25.3Hz seq=254 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:21] [PERF] vision 25.6Hz loop=39.0ms body=37.8ms cpu=17.3ms gil_wait=20.5ms | read=4.8(cpu6.84) conv=6.9 task=25.2(cpu10.00) disp=0.1(cpu0.09) none=0 | idle=1.2ms 自身cpu=0.34ms 未归因=0.8ms
+[02:30:21] [PERF] lcd show 1.0Hz avg=4.2ms (cpu 3.4ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:21] [PERF] mainloop 70Hz body=1.36ms cpu=0.92ms gil_wait=0.44ms | wdt=0.15 coord=0.58 tick=0.17 touch=0.30 | 每秒 CPU 65ms
+[02:30:21] [UART TX] DATA_STREAM 26.2Hz seq=25 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:22] [PERF] vision 26.1Hz loop=38.3ms body=36.7ms cpu=17.3ms gil_wait=19.4ms | read=4.4(cpu6.78) conv=7.0 task=24.5(cpu10.10) disp=0.1(cpu0.09) none=0 | idle=1.6ms 自身cpu=0.29ms 未归因=0.6ms
+[02:30:22] [PERF] lcd show 1.0Hz avg=3.9ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:22] [PERF] mainloop 74Hz body=1.14ms cpu=0.88ms gil_wait=0.26ms | wdt=0.05 coord=0.57 tick=0.12 touch=0.27 | 每秒 CPU 65ms
+[02:30:22] [UART TX] DATA_STREAM 26.1Hz seq=52 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:22] [FPS] pipeline: 26.1
+WDT::feed()
+[02:30:23] [PERF] vision 25.9Hz loop=38.5ms body=37.1ms cpu=17.3ms gil_wait=19.7ms | read=4.6(cpu6.81) conv=6.9 task=24.6(cpu10.07) disp=0.2(cpu0.09) none=0 | idle=1.5ms 自身cpu=0.37ms 未归因=0.7ms
+[02:30:23] [PERF] mainloop 71Hz body=1.38ms cpu=0.94ms gil_wait=0.44ms | wdt=0.05 coord=0.60 tick=0.28 touch=0.33 | 每秒 CPU 67ms
+[02:30:23] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:23] [UART TX] DATA_STREAM 26.0Hz seq=78 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:24] [MEM] user=100/128MB CMM=0/0MB
+WDT::feed()
+[02:30:24] [PERF] vision 26.0Hz loop=38.5ms body=37.4ms cpu=17.3ms gil_wait=20.1ms | read=4.5(cpu6.73) conv=7.3 task=24.9(cpu10.14) disp=0.1(cpu0.09) none=0 | idle=1.1ms 自身cpu=0.33ms 未归因=0.6ms
+[02:30:24] [PERF] mainloop 71Hz body=1.23ms cpu=0.91ms gil_wait=0.32ms | wdt=0.05 coord=0.57 tick=0.15 touch=0.24 | 每秒 CPU 64ms
+[02:30:24] [PERF] lcd show 1.0Hz avg=2.1ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:24] [UART TX] DATA_STREAM 26.0Hz seq=104 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:25] [PERF] vision 26.0Hz loop=38.5ms body=37.0ms cpu=17.4ms gil_wait=19.6ms | read=5.2(cpu6.79) conv=6.7 task=24.3(cpu10.14) disp=0.1(cpu0.09) none=0 | idle=1.5ms 自身cpu=0.34ms 未归因=0.6ms
+[02:30:25] [PERF] mainloop 72Hz body=1.22ms cpu=0.90ms gil_wait=0.32ms | wdt=0.05 coord=0.56 tick=0.22 touch=0.24 | 每秒 CPU 64ms
+[02:30:25] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:25] [UART TX] DATA_STREAM 26.1Hz seq=131 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:26] [PERF] vision 26.1Hz loop=38.3ms body=36.7ms cpu=17.3ms gil_wait=19.4ms | read=4.4(cpu6.68) conv=7.2 task=24.1(cpu10.22) disp=0.1(cpu0.09) none=0 | idle=1.5ms 自身cpu=0.33ms 未归因=0.9ms
+[02:30:26] [PERF] mainloop 77Hz body=1.02ms cpu=0.89ms gil_wait=0.13ms | wdt=0.05 coord=0.53 tick=0.18 touch=0.14 | 每秒 CPU 69ms
+[02:30:26] [PERF] lcd show 1.0Hz avg=2.6ms (cpu 2.3ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:26] [UART TX] DATA_STREAM 26.1Hz seq=158 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:27] [PERF] vision 26.6Hz loop=37.6ms body=36.5ms cpu=17.2ms gil_wait=19.2ms | read=4.8(cpu6.82) conv=7.1 task=24.0(cpu9.98) disp=0.2(cpu0.09) none=0 | idle=1.1ms 自身cpu=0.33ms 未归因=0.5ms
+[02:30:27] [PERF] mainloop 69Hz body=1.10ms cpu=0.92ms gil_wait=0.18ms | wdt=0.05 coord=0.60 tick=0.10 touch=0.18 | 每秒 CPU 64ms
+[02:30:27] [PERF] lcd show 1.0Hz avg=2.5ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:27] [FPS] pipeline: 26.6
+[02:30:27] [UART TX] DATA_STREAM 26.5Hz seq=185 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:28] [WDT] main feed #28200
+[02:30:28] [WDT] coord feed #28200
+WDT::feed()
+[02:30:28] [WDT] viz feed #13800
+[02:30:28] [PERF] vision 25.7Hz loop=38.9ms body=36.9ms cpu=17.1ms gil_wait=19.8ms | read=4.8(cpu6.71) conv=7.0 task=24.4(cpu9.99) disp=0.2(cpu0.10) none=0 | idle=2.0ms 自身cpu=0.29ms 未归因=0.6ms
+[02:30:28] [PERF] mainloop 82Hz body=1.02ms cpu=0.88ms gil_wait=0.14ms | wdt=0.06 coord=0.51 tick=0.10 touch=0.19 | 每秒 CPU 72ms
+[02:30:28] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.1ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:28] [UART TX] DATA_STREAM 25.7Hz seq=211 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:29] [PERF] vision 26.5Hz loop=37.7ms body=36.6ms cpu=17.1ms gil_wait=19.5ms | read=4.6(cpu6.65) conv=7.1 task=23.9(cpu10.06) disp=0.1(cpu0.13) none=0 | idle=1.1ms 自身cpu=0.30ms 未归因=0.9ms
+[02:30:29] [PERF] mainloop 71Hz body=1.22ms cpu=0.94ms gil_wait=0.28ms | wdt=0.05 coord=0.67 tick=0.12 touch=0.24 | 每秒 CPU 67ms
+[02:30:29] [PERF] lcd show 1.0Hz avg=3.9ms (cpu 2.2ms) -> 每秒占墙上 4ms / CPU 2ms
+[02:30:29] [UART TX] DATA_STREAM 26.9Hz seq=238 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:30] [PERF] vision 26.7Hz loop=37.4ms body=36.1ms cpu=17.3ms gil_wait=18.8ms | read=4.6(cpu6.50) conv=6.9 task=23.6(cpu10.28) disp=0.4(cpu0.10) none=0 | idle=1.3ms 自身cpu=0.38ms 未归因=0.6ms
+[02:30:30] [PERF] mainloop 76Hz body=1.02ms cpu=0.92ms gil_wait=0.10ms | wdt=0.07 coord=0.51 tick=0.10 touch=0.20 | 每秒 CPU 70ms
+[02:30:30] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:30] [UART TX] DATA_STREAM 26.5Hz seq=9 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:31] [PERF] vision 26.5Hz loop=37.8ms body=36.5ms cpu=16.9ms gil_wait=19.5ms | read=4.7(cpu6.70) conv=6.9 task=24.1(cpu9.86) disp=0.2(cpu0.09) none=0 | idle=1.3ms 自身cpu=0.29ms 未归因=0.6ms
+[02:30:31] [PERF] mainloop 77Hz body=1.16ms cpu=0.93ms gil_wait=0.23ms | wdt=0.08 coord=0.61 tick=0.12 touch=0.22 | 每秒 CPU 72ms
+[02:30:31] [PERF] lcd show 1.0Hz avg=3.6ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:32] [UART TX] DATA_STREAM 26.5Hz seq=36 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:32] [PERF] vision 26.9Hz loop=37.2ms body=36.1ms cpu=17.1ms gil_wait=19.0ms | read=5.0(cpu6.65) conv=6.8 task=23.7(cpu10.03) disp=0.1(cpu0.09) none=0 | idle=1.0ms 自身cpu=0.33ms 未归因=0.6ms
+[02:30:32] [PERF] mainloop 72Hz body=1.29ms cpu=0.91ms gil_wait=0.38ms | wdt=0.05 coord=0.66 tick=0.14 touch=0.27 | 每秒 CPU 65ms
+[02:30:32] [PERF] lcd show 1.0Hz avg=5.3ms (cpu 2.2ms) -> 每秒占墙上 5ms / CPU 2ms
+[02:30:32] [FPS] pipeline: 26.9
+[02:30:33] [UART TX] DATA_STREAM 26.3Hz seq=63 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:33] [PERF] vision 26.2Hz loop=38.2ms body=36.8ms cpu=17.1ms gil_wait=19.7ms | read=5.0(cpu6.76) conv=6.6 task=24.4(cpu9.95) disp=0.3(cpu0.14) none=0 | idle=1.3ms 自身cpu=0.29ms 未归因=0.6ms
+[02:30:33] [PERF] mainloop 72Hz body=1.11ms cpu=0.94ms gil_wait=0.18ms | wdt=0.05 coord=0.57 tick=0.14 touch=0.19 | 每秒 CPU 67ms
+[02:30:33] [PERF] lcd show 1.0Hz avg=3.7ms (cpu 3.1ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:34] [UART TX] DATA_STREAM 26.8Hz seq=90 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:34] [PERF] vision 26.6Hz loop=37.7ms body=36.2ms cpu=17.0ms gil_wait=19.2ms | read=4.7(cpu6.76) conv=6.9 task=24.0(cpu9.85) disp=0.1(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.29ms 未归因=0.5ms
+[02:30:34] [PERF] mainloop 76Hz body=1.07ms cpu=0.92ms gil_wait=0.15ms | wdt=0.05 coord=0.51 tick=0.16 touch=0.22 | 每秒 CPU 70ms
+[02:30:34] [PERF] lcd show 1.0Hz avg=3.8ms (cpu 3.2ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:35] [UART TX] DATA_STREAM 26.6Hz seq=117 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:35] [PERF] vision 26.6Hz loop=37.7ms body=36.2ms cpu=17.1ms gil_wait=19.1ms | read=4.7(cpu6.54) conv=6.6 task=24.1(cpu10.08) disp=0.3(cpu0.13) none=0 | idle=1.5ms 自身cpu=0.33ms 未归因=0.5ms
+[02:30:35] [PERF] mainloop 77Hz body=1.11ms cpu=0.93ms gil_wait=0.18ms | wdt=0.05 coord=0.58 tick=0.16 touch=0.16 | 每秒 CPU 71ms
+[02:30:35] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:36] [UART TX] DATA_STREAM 26.5Hz seq=144 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+[02:30:36] [WDT] main feed #28800
+[02:30:36] [WDT] coord feed #28800
+[02:30:36] [MEM] user=100/128MB CMM=0/0MB
+WDT::feed()
+[02:30:36] [PERF] vision 26.7Hz loop=37.5ms body=36.1ms cpu=17.1ms gil_wait=19.0ms | read=4.3(cpu6.77) conv=6.8 task=24.3(cpu9.85) disp=0.1(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.40ms 未归因=0.6ms
+[02:30:36] [PERF] mainloop 66Hz body=1.35ms cpu=1.00ms gil_wait=0.34ms | wdt=0.08 coord=0.68 tick=0.23 touch=0.23 | 每秒 CPU 66ms
+[02:30:36] [PERF] lcd show 1.0Hz avg=4.1ms (cpu 3.3ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:37] [UART TX] DATA_STREAM 26.5Hz seq=171 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:37] [PERF] vision 26.4Hz loop=37.8ms body=36.4ms cpu=17.1ms gil_wait=19.4ms | read=4.4(cpu6.74) conv=7.0 task=24.0(cpu9.95) disp=0.2(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.30ms 未归因=0.8ms
+[02:30:37] [PERF] mainloop 77Hz body=1.03ms cpu=0.86ms gil_wait=0.16ms | wdt=0.05 coord=0.47 tick=0.14 touch=0.20 | 每秒 CPU 67ms
+[02:30:37] [PERF] lcd show 1.0Hz avg=3.6ms (cpu 3.1ms) -> 每秒占墙上 3ms / CPU 3ms
+[02:30:37] [FPS] pipeline: 26.4
+[02:30:38] [UART TX] DATA_STREAM 26.2Hz seq=198 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:38] [PERF] vision 26.2Hz loop=38.1ms body=36.7ms cpu=17.1ms gil_wait=19.6ms | read=4.5(cpu6.64) conv=7.3 task=24.3(cpu10.03) disp=0.1(cpu0.09) none=0 | idle=1.4ms 自身cpu=0.31ms 未归因=0.5ms
+[02:30:38] [PERF] mainloop 79Hz body=0.98ms cpu=0.85ms gil_wait=0.13ms | wdt=0.05 coord=0.47 tick=0.10 touch=0.24 | 每秒 CPU 67ms
+[02:30:39] [UART TX] DATA_STREAM 26.5Hz seq=225 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:39] [PERF] vision 26.6Hz loop=37.7ms body=36.5ms cpu=17.1ms gil_wait=19.4ms | read=4.8(cpu6.54) conv=6.5 task=24.1(cpu10.05) disp=0.2(cpu0.10) none=0 | idle=1.2ms 自身cpu=0.39ms 未归因=0.8ms
+[02:30:39] [PERF] mainloop 77Hz body=1.12ms cpu=0.90ms gil_wait=0.22ms | wdt=0.05 coord=0.50 tick=0.18 touch=0.20 | 每秒 CPU 69ms
+[02:30:39] [PERF] lcd show 1.0Hz avg=4.4ms (cpu 2.6ms) -> 每秒占墙上 4ms / CPU 3ms
+[02:30:40] [UART TX] DATA_STREAM 26.5Hz seq=252 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:40] [PERF] vision 26.7Hz loop=37.4ms body=36.2ms cpu=16.9ms gil_wait=19.3ms | read=4.3(cpu6.55) conv=7.0 task=24.0(cpu9.86) disp=0.1(cpu0.09) none=0 | idle=1.2ms 自身cpu=0.41ms 未归因=0.8ms
+[02:30:40] [PERF] mainloop 70Hz body=1.32ms cpu=0.91ms gil_wait=0.41ms | wdt=0.07 coord=0.72 tick=0.19 touch=0.23 | 每秒 CPU 64ms
+[02:30:40] [PERF] lcd show 1.0Hz avg=2.4ms (cpu 2.2ms) -> 每秒占墙上 2ms / CPU 2ms
+[02:30:41] [UART TX] DATA_STREAM 26.6Hz seq=23 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+[02:30:41] [PERF] vision 26.4Hz loop=37.9ms body=36.4ms cpu=16.9ms gil_wait=19.5ms | read=4.5(cpu6.66) conv=6.6 task=24.4(cpu9.78) disp=0.2(cpu0.09) none=0 | idle=1.5ms 自身cpu=0.33ms 未归因=0.6ms
+[02:30:41] [PERF] mainloop 73Hz body=1.17ms cpu=0.95ms gil_wait=0.21ms | wdt=0.11 coord=0.63 tick=0.10 touch=0.19 | 每秒 CPU 70ms
+[02:30:42] [PERF] lcd show 1.0Hz avg=6.4ms (cpu 2.2ms) -> 每秒占墙上 6ms / CPU 2ms
+[02:30:42] [UART TX] DATA_STREAM 26.5Hz seq=50 type=RESCUE mode=RESCUE cx=0 pit=0 pos=0 err=+0 found=0
+WDT::feed()
+-- [I] read key thread exit
+-- [I] powerkey thread exit
+maix multi-media driver released.
+ISP Vipipe(0) Free pa(0x8a52c000) va(0x0x3fde3ad000)
+
+program exited
+

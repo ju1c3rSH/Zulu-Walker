@@ -15,6 +15,7 @@ from modules.zw_uart_module.protocol import (
     build_cmd_ack_frame,
     build_cmd_nack_frame,
     build_cmd_stop_frame,
+    build_cmd_laser_frame,
     build_data_stream_frame,
     build_explosive_sub_payload,
     build_target_sub_payload,
@@ -252,3 +253,24 @@ def test_crc_error_callback_receives_body():
     # body = Type + CRC16(2B), STOP 帧长 3
     assert len(seen) == 1
     assert len(seen[0]) == 3 and seen[0][0] == 0x23
+
+
+# =========================================================================
+# v2.3 附录 0x25 CMD_LASER (从→主, Brain 写 PA4, 无应答)
+# =========================================================================
+
+def test_laser_frame_gold_vectors():
+    # 向量同 docs/competition/gks_laser_ctrl_addendum_v2.3.md §测试向量
+    assert hexs(build_cmd_laser_frame(True)) == \
+        "AA 55 0B 25 01 00 00 00 00 00 00 00 8F 91"
+    assert hexs(build_cmd_laser_frame(False)) == \
+        "AA 55 0B 25 00 00 00 00 00 00 00 00 C8 42"
+
+
+def test_laser_frame_payload_layout():
+    # payload 恒 8B: [on_off, rsv x7]; Brain 侧只读 offset 0
+    for on in (True, False):
+        frame = build_cmd_laser_frame(on)
+        parsed = parse_frame(frame)
+        assert parsed is not None and parsed.frame_type == 0x25
+        assert parsed.payload == bytes([1 if on else 0]) + b"\x00" * 7

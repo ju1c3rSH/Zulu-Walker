@@ -64,9 +64,9 @@ def test_page_cycle_order_with_camera_gate():
     pages = AppPageState(CycleVM())
     pages.set_camera_gate(lambda: True)
     order = []
-    for _ in range(4):
+    for _ in range(5):
         order.append(pages.cycle())
-    assert order == ["EXPLOSIVE", "TARGET", "RESCUE", STATE_MAIN]
+    assert order == ["EXPLOSIVE", "TARGET", "RESCUE", "LASER", STATE_MAIN]
     assert pages.name == STATE_MAIN
 
 
