@@ -15,9 +15,9 @@ task1_explosive / task2_target / task3_rescue（锁存/去抖/映射语义不变
   - CAM1 分支: nn.YOLOv5 + .cvimodel（CVITEK），走 MaixCam1AI
   两者 mud 键名不同（`model_npu` vs `model`），模型文件互不通用。
 - 像素常量全部入 eod_config.yaml `gks:` 段；`/my-threshold/my_64threshold.txt`
-  （脱机调阈值工具产出）作运行时覆盖，mtime 变化自动重载、不清锁存。
+  （脱机调阈值工具产出）作运行时覆盖，内容变化自动重载、不清锁存。
 - 人质参数文件 `/my-threshold/my_rescue_params.txt`（调参页 SAVE 产出, conf_th/
-  iou_th/x_crop_px）同 mtime 热重载语义, 详见 `_reload_rescue_params`。
+  iou_th/x_crop_px）同内容签名热重载语义, 详见 `_reload_rescue_params`。
 - 人质检出日志"变化才打"（`_log_rescue_dets`）: 形状集合变化或分数跳变 >0.1
   才打一行汇总, 防 log_print 逐行落盘被逐帧检出刷爆。
 - 排爆扫描可降采样: `explosive.scan_scale`（0.5 = 320x240 扫描）—— 全帧三色串行
@@ -39,6 +39,7 @@ task1_explosive / task2_target / task3_rescue（锁存/去抖/映射语义不变
 
 纯 cv2/numpy + 注入时钟 — 设备与 PC(pytest) 双端可运行。
 """
+import hashlib
 import os
 import time
 from typing import Optional, Tuple
@@ -60,13 +61,13 @@ _ALL_MODES = (MODE_EXPLOSIVE, MODE_TARGET, MODE_RESCUE)
 # 色号 -> (名称, 配置键)
 COLOR_KEYS = {1: ("red", "red"), 2: ("green", "green"), 3: ("blue", "blue")}
 
-# 人质调参页 SAVE 落盘文件（逐行 key=value）。mtime 变化热重载, 语义同
+# 人质调参页 SAVE 落盘文件（逐行 key=value）。内容变化热重载, 语义同
 # thresholds_file（/my-threshold/my_64threshold.txt）; 文件缺失 = 保持 yaml 值。
 RESCUE_PARAMS_FILE = "/my-threshold/my_rescue_params.txt"
 # 可被该文件覆盖的键（与调参页滑条一一对应）及类型。
 _RESCUE_PARAM_KEYS = {"conf_th": float, "iou_th": float, "x_crop_px": int}
 
-# 激光校准页 SAVE 落盘文件（laser_cx + 红点检测参数）。mtime 热重载语义同上。
+# 激光校准页 SAVE 落盘文件（laser_cx + 红点检测参数）。内容签名热重载语义同上。
 LASER_CALIB_FILE = "/my-threshold/my_laser_calib.txt"
 # 文件键 -> (cfg 段, 键, 类型)。
 _LASER_CALIB_KEYS = {
@@ -76,6 +77,26 @@ _LASER_CALIB_KEYS = {
     "min_area": ("laser", "min_area", int),
     "max_area": ("laser", "max_area", int),
 }
+
+
+def file_signature(path: str):
+    """文件内容签名: (size, sha1-of-bytes)。用于热重载变化判定。
+
+    ⚠ 不能用 mtime 判变化: 同一文件系统 tick 内二次写入 mtime 不变
+    (实测连续写 300 次有 57% 相同), 调参页连按两次 SAVE 会漏掉第二次。
+    mtime_ns 也不行(56% 漏检); 只有内容哈希能 100% 检出同长改值。
+    先 stat 再读: stat 失败/文件不存在时零 IO 返回, 内容只读几十字节。
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    return (st.st_size, hashlib.sha1(data).hexdigest())
 
 
 def load_rescue_params_file(path: str) -> dict:
@@ -390,22 +411,22 @@ class GksTaskProcessor(Processor):
         self._mode: Optional[str] = None
         self._codes: Tuple[int, int, int] = (0, 0, 0)
 
-        # 阈值文件运行时覆盖（mtime 变化自动重载）
+        # 阈值文件运行时覆盖（内容变化自动重载, 见 file_signature）
         self._thresholds_file = str(self._cfg.get("thresholds_file") or "")
-        self._thresholds_mtime: Optional[float] = None
+        self._thresholds_sig = None
         self._thresholds_poll_ts: float = 0.0
         self._explosive_lab: dict = {}
         self._target_lab: dict = {}
         self._reload_thresholds(force=True)
         # 人质调参页 SAVE 的参数文件（conf_th/iou_th/x_crop_px）,
-        # mtime 热重载语义同阈值文件（轮询共用 _maybe_reload_thresholds 的 2Hz 闸门）。
+        # 内容签名热重载语义同阈值文件（轮询共用 _maybe_reload_thresholds 的 2Hz 闸门）。
         self._rescue_params_file = str(self._cfg.get("rescue_params_file") or "")
-        self._rescue_params_mtime: Optional[float] = None
+        self._rescue_params_sig = None
         self._reload_rescue_params(force=True)
-        # 激光校准文件（laser_cx + 红点检测参数）, mtime 热重载语义同上。
+        # 激光校准文件（laser_cx + 红点检测参数）, 内容签名热重载语义同上。
         self._laser_calib_file = str(
             self._cfg.get("laser", {}).get("calib_file") or "")
-        self._laser_calib_mtime: Optional[float] = None
+        self._laser_calib_sig = None
         self._reload_laser_calib(force=True)
 
         self._reset_latch()
@@ -562,26 +583,23 @@ class GksTaskProcessor(Processor):
         exp_lab = {k: list(v) for k, v in self._cfg["explosive"]["lab"].items()}
         tgt_lab = {k: list(v) for k, v in self._cfg["target"]["lab"].items()}
         if self._thresholds_file:
-            try:
-                mtime = os.stat(self._thresholds_file).st_mtime
-            except OSError:
-                mtime = None
-            if mtime is not None and (force or mtime != self._thresholds_mtime):
+            sig = file_signature(self._thresholds_file)
+            if sig is not None and (force or sig != self._thresholds_sig):
                 groups = load_threshold_file(self._thresholds_file)
                 if len(groups) >= 6:
                     names = ("red", "green", "blue")
                     for i, n in enumerate(names):
                         exp_lab[n] = groups[i]
                         tgt_lab[n] = groups[3 + i]
-                self._thresholds_mtime = mtime
+                self._thresholds_sig = sig
         self._explosive_lab = exp_lab
         self._target_lab = tgt_lab
 
-    # 阈值文件 mtime 轮询周期（秒）。见 _maybe_reload_thresholds。
+    # 阈值文件轮询周期（秒）。见 _maybe_reload_thresholds。
     _THRESHOLD_POLL_INTERVAL_S = 0.5
 
     def _maybe_reload_thresholds(self) -> None:
-        """每帧检查阈值文件 mtime —— 但**限频到 2Hz**。
+        """每帧检查阈值文件内容签名 —— 但**限频到 2Hz**。
 
         台架真机实测（2026-10-08, 未订阅/画面无目标）: `[PERF] vision ... task=1.1ms`。
         那个状态下 `process()` 只跑 `_maybe_reload_thresholds()` + 拼结果 dict，
@@ -605,11 +623,8 @@ class GksTaskProcessor(Processor):
             return
         self._thresholds_poll_ts = now
         if self._thresholds_file:
-            try:
-                mtime = os.stat(self._thresholds_file).st_mtime
-            except OSError:
-                mtime = None
-            if mtime is not None and mtime != self._thresholds_mtime:
+            sig = file_signature(self._thresholds_file)
+            if sig is not None and sig != self._thresholds_sig:
                 self._reload_thresholds()
         self._reload_rescue_params()
         self._reload_laser_calib()
@@ -618,19 +633,18 @@ class GksTaskProcessor(Processor):
         """人质参数文件（调参页 SAVE 产物）加载/热重载。
 
         文件缺失/不可读 = 保持当前 cfg 不动（PC 端无 /my-threshold 安全 no-op）;
-        文件存在但解析后为空（如全是注释）同样不覆盖。mtime 只在 stat 成功时
+        文件存在但解析后为空（如全是注释）同样不覆盖。签名只在读取成功时
         缓存 —— 首次 SAVE 创建文件后必然触发一次重载。只 merge 文件里出现的
         键, 未写的键保持 yaml 值; **不清锁存**（conf 改动只影响后续检出）。
         """
         if not self._rescue_params_file:
             return
-        try:
-            mtime = os.stat(self._rescue_params_file).st_mtime
-        except OSError:
+        sig = file_signature(self._rescue_params_file)
+        if sig is None:
             return
-        if not force and mtime == self._rescue_params_mtime:
+        if not force and sig == self._rescue_params_sig:
             return
-        self._rescue_params_mtime = mtime
+        self._rescue_params_sig = sig
         params = load_rescue_params_file(self._rescue_params_file)
         if params:
             self._cfg["rescue"].update(params)
@@ -642,13 +656,12 @@ class GksTaskProcessor(Processor):
         """激光校准文件（LASER 页 SAVE 产物）加载/热重载。语义同 _reload_rescue_params。"""
         if not self._laser_calib_file:
             return
-        try:
-            mtime = os.stat(self._laser_calib_file).st_mtime
-        except OSError:
+        sig = file_signature(self._laser_calib_file)
+        if sig is None:
             return
-        if not force and mtime == self._laser_calib_mtime:
+        if not force and sig == self._laser_calib_sig:
             return
-        self._laser_calib_mtime = mtime
+        self._laser_calib_sig = sig
         params = load_laser_calib_file(self._laser_calib_file)
         if params:
             for key, value in params.items():
