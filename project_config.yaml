@@ -151,7 +151,7 @@ streaming:
 #    （见 MaixPy faq）。所以默认关闭; 要看预览时开它, 并确保 MaixVision 预览窗口已关。
 # 关闭时**完全不创建** http.JpegStreamer, 因而不占用任何 VENC 资源。
 stream:
-  enabled: false      # 默认关; 需要浏览器预览时改 true
+  enabled: true      # 默认关; 需要浏览器预览时改 true
   fps: 5              # 推流频率, 与 LCD 刷新频率解耦（编码很贵）
   quality: 80
   max_width: 320      # 编码前降采样到该宽度, 0 = 不降
