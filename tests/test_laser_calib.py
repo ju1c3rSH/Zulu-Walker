@@ -537,3 +537,32 @@ def test_tuner_toggle_tx_fail_keeps_state_off():
     tuner._toggle_laser()
     assert not tuner.laser_is_on()
     assert tuner._toast.startswith("LASER TX FAIL")
+
+
+# ---------- 5. 手动校零参考线（Line 按钮, 竖线 @ 画面中心 x） ----------
+
+def test_guide_line_toggle_and_begin_reset():
+    """点击翻转, 进页(begin)复位; 与激光开关相互独立。"""
+    tuner = lt.GksLaserCalibTuner(
+        get_processor=lambda: None, send_laser=lambda on: True)
+    assert tuner._guide_on is False
+    tuner._toggle_guide()
+    assert tuner._guide_on is True
+    tuner._toggle_guide()
+    assert tuner._guide_on is False
+    tuner._toggle_guide()                  # 开着离开, 下次进页应复位
+    tuner.begin()
+    assert tuner._guide_on is False
+    assert tuner.laser_is_on() is False    # 参考线不碰激光状态
+
+
+def test_guide_toggle_has_no_hardware_side_effect():
+    """参考线是纯显示状态: 切换不发任何 0x25 帧。"""
+    sent = []
+    tuner = lt.GksLaserCalibTuner(
+        get_processor=lambda: None,
+        send_laser=lambda on: sent.append(on) or True)
+    tuner._toggle_guide()
+    assert sent == [] and tuner._guide_on is True
+    tuner.on_leave()                       # 兜底关激光只由 laser_is_on 决定
+    assert sent == []

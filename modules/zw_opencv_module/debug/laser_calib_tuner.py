@@ -6,6 +6,8 @@
 命中画十字+实时坐标;
 CALIB 把当前点 x 存为 TARGET err 零点(laser_cx, 立即生效), RESET 回画面中心,
 SAVE 落盘 /my-threshold/my_laser_calib.txt(主程序 mtime 热重载)。
+Line 按钮切换手动校零竖线(画面中心 x): 检测失效时物理调整设备使光斑压线,
+默认零点(center)即正确 —— 纯显示画布叠加, 不进检测帧、无硬件副作用。
 
 检测分层(每层堵上一层的失效模式, 依据 laser 点成像调研):
   1. 候选提取: R>=lum_min 且 R-max(G,B)>=dom_min(红环满足, 白核三通道同饱和被排除);
@@ -49,6 +51,7 @@ from modules.zw_opencv_module.processors.gks_task_processor import (
 _UI_TOPBAR_H = 30
 _UI_BTN_W = 70
 _UI_LASER_BTN = (12, 60, 130, 54)   # Laser 开关按钮 (x, y, w, h)
+_UI_GUIDE_BTN = (12, 122, 130, 54)  # 手动校零参考线开关(竖线 @ 画面中心 x)
 
 
 def _pack(rgb) -> int:
@@ -65,6 +68,7 @@ class GksLaserCalibTuner:
         self._laser_on = False
         self._dot = None            # (lx, ly, area) | None
         self._last_stats = None     # 检出块的标定读数 {area, dom, core} | None
+        self._guide_on = False      # 手动校零参考线(纯显示状态, 见 _draw_guide)
         self._stop = False
         self._pressed_last = False
         self._toast = ""
@@ -94,6 +98,7 @@ class GksLaserCalibTuner:
             "yellow": self._mk_color((255, 255, 0), "COLOR_YELLOW"),
             "gray": self._mk_color((120, 120, 120), "COLOR_GRAY"),
             "cyan": self._mk_color((0, 255, 255), "COLOR_CYAN"),
+            "blue": self._mk_color((80, 80, 255)),
             "amber": self._mk_color((240, 160, 40)),
         }
 
@@ -358,6 +363,10 @@ class GksLaserCalibTuner:
         else:
             self._toast, self._toast_until = "LASER TX FAIL", time.time() + 1.5
 
+    def _toggle_guide(self) -> None:
+        """手动校零参考线开关: 纯显示状态, 无硬件/日志副作用, 进页(begin)复位。"""
+        self._guide_on = not self._guide_on
+
     def on_leave(self) -> None:
         """切页/退出兜底: 激光开着就自动发关帧（多条路径之一, 幂等）。"""
         if not self._laser_on:
@@ -376,6 +385,7 @@ class GksLaserCalibTuner:
         self._laser_on = False
         self._dot = None
         self._last_stats = None
+        self._guide_on = False
         self._pressed_last = False
         processor = self._get_processor()
         zero = processor.target_zero_px() if processor is not None else 0
@@ -401,6 +411,7 @@ class GksLaserCalibTuner:
 
         _t = time.perf_counter()
         self._draw_overlay(img)
+        self._draw_guide(img)
         self._rect(img, 0, 0, img.width(), _UI_TOPBAR_H,
                    color=self._C["black"], thickness=-1)
         self._draw_topbar(img)
@@ -439,6 +450,8 @@ class GksLaserCalibTuner:
             self._reset()
         elif self._in(x, y, _UI_LASER_BTN):
             self._toggle_laser()
+        elif self._in(x, y, _UI_GUIDE_BTN):
+            self._toggle_guide()
 
     def _draw_overlay(self, img) -> None:
         if self._dot is None:
@@ -481,6 +494,19 @@ class GksLaserCalibTuner:
             self._text(img, x, y + h + 6,
                        f"a={st.get('area', 0)} core={st.get('core', 0)} "
                        f"dom={st.get('dom', 0)}", self._C["cyan"], 1.0)
+
+    def _draw_guide(self, img) -> None:
+        """手动校零竖线(检测失效时的物理对齐基准, Line 按钮开关)。
+
+        只画在显示画布上 —— 检测帧在 _to_maix 之前, 两者天然隔离, 线永不进检测。
+        x=画面中心: 光斑压线即 X=帧中心, 默认零点 laser_cx=0(center) 即正确,
+        收尾按 RESET 确认回中心。err 零点只校 X 轴, 故为竖线。
+        """
+        if not self._guide_on:
+            return
+        x = img.width() // 2
+        self._line(img, x, _UI_TOPBAR_H, x, img.height(),
+                   self._C["blue"], thickness=1)
 
     def exit_requested(self) -> bool:
         return self._stop
@@ -528,3 +554,11 @@ class GksLaserCalibTuner:
             img.draw_rect(x, y, w, h, color=color, thickness=thickness)
         except Exception as e:
             self._diag(f"rect@({x},{y})", e)
+
+    def _line(self, img, x1, y1, x2, y2, color, thickness=1):
+        """draw_line 优先; 固件不支持时降级为 1px rect(复用 _rect 自身的兜底)。"""
+        try:
+            img.draw_line(x1, y1, x2, y2, color=color, thickness=thickness)
+        except Exception:
+            self._rect(img, min(x1, x2), min(y1, y2), max(1, abs(x2 - x1)),
+                       max(1, abs(y2 - y1)), color, thickness=-1)
