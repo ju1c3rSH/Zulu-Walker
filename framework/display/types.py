@@ -6,6 +6,7 @@ BGR888 故意留成显式的"慢路径"标记: MaixCAM1 show() 只白名单 RGB8
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, FrozenSet, Optional
@@ -24,13 +25,16 @@ class PixelFormat(Enum):
 
     @staticmethod
     def of(frame: Any) -> Optional["PixelFormat"]:
-        """判帧格式; 判不出（如 LazyFrame）返回 None, 由调用方拒绝。"""
+        """判帧格式; 判不出（LazyFrame / BGRA 等）返回 None, 由调用方拒绝。"""
         if isinstance(frame, np.ndarray):
-            return PixelFormat.BGR888
+            # ⚠ 只有 3 通道才是 BGR888。灰度/BGRA 一律 None: 猜错会让闸门放行慢路径
+            if frame.ndim == 3 and frame.shape[2] == 3:
+                return PixelFormat.BGR888
+            return None
         fmt_fn = getattr(frame, "format", None)
         if callable(fmt_fn):
             try:
-                return _FMT_MAP.get(fmt_fn())
+                return _format_map().get(fmt_fn())
             except Exception:
                 return None
         return None
@@ -44,7 +48,7 @@ class Frame:
     fmt: PixelFormat
     w: int
     h: int
-    seq: int = 0
+    seq: int = -1              # ⚠ -1 = 未打号; 0 会被误读成"与首帧同一帧"而丢帧
     origin: str = "camera"     # "camera" | "canvas"
     ts: float = 0.0
 
@@ -68,7 +72,7 @@ class PresentResult:
     reason: str = ""
 
 
-# 名字 -> 枚举, 只建一次; 逐帧 dir(Format) 会吃掉探针全部收益。
+# 名字 -> 枚举; 逐帧 dir(Format) 会吃掉探针全部收益。
 _BY_FMT_NAME = {
     "RGB888": PixelFormat.RGB888,
     "BGR888": PixelFormat.BGR888,
@@ -76,19 +80,25 @@ _BY_FMT_NAME = {
     "JPEG": PixelFormat.JPEG,
 }
 
-
-def _build_format_map() -> dict:
-    """一次性建 maix.image.Format 值 -> PixelFormat 表; PC 无 maix 则空表。"""
-    try:
-        from maix import image as _mi
-        members = getattr(_mi, "Format", None)
-        if members is None:
-            return {}
-        return {getattr(members, a): _BY_FMT_NAME[a[4:]]
-                for a in dir(members)
-                if a.startswith("FMT_") and a[4:] in _BY_FMT_NAME}
-    except Exception:
-        return {}
+_FMT_MAP: dict = {}
+_FMT_MOD = None     # 建表时的 maix.image 模块身份; 模块换了就重建
 
 
-_FMT_MAP = _build_format_map()
+def _build_format_map(members) -> dict:
+    """Format 成员 -> PixelFormat 表。"""
+    return {getattr(members, a): _BY_FMT_NAME[a[4:]]
+            for a in dir(members)
+            if a.startswith("FMT_") and a[4:] in _BY_FMT_NAME}
+
+
+def _format_map() -> dict:
+    """按 maix.image 模块身份缓存; maix 晚于本模块导入也能补建, 无 maix 时只花一次查表。"""
+    global _FMT_MAP, _FMT_MOD
+    mod = sys.modules.get("maix.image") or getattr(
+        sys.modules.get("maix"), "image", None)
+    if mod is _FMT_MOD:                      # 常态: 两次 dict 查询, 不碰 dir()
+        return _FMT_MAP
+    _FMT_MOD = mod
+    members = getattr(mod, "Format", None) if mod is not None else None
+    _FMT_MAP = _build_format_map(members) if members is not None else {}
+    return _FMT_MAP

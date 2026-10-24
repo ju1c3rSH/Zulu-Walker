@@ -371,10 +371,9 @@ class GksRescueTuner:
         return img
 
     def _to_maix(self, bgr):
-        """BGR numpy -> FMT_RGB888 原生画布, 免 show() 内部整帧转换。
-
-        ⚠ 相机给的是负步长视图, 必须先落成连续 RGB 字节, 否则红蓝互换。
-        """
+        """BGR numpy -> FMT_RGB888 原生画布, 免 show() 内部整帧转换。"""
+        # RGB 字节本就正确; ascontiguousarray 只保证连续(防 pybind11 拒收/镜像)。
+        # ⚠ 若去掉 copy=True, 负步长视图会 OOB 或整帧镜像 —— 不是换色通道。
         import maix.image
         rgb = np.ascontiguousarray(bgr[:, :, ::-1])
         return maix.image.cv2image(rgb, bgr=False, copy=True)

@@ -11,7 +11,7 @@ from utils.boot_timing import boot_stage
 
 logger = logging.getLogger(__name__)
 
-# MaixCAM-Pro 触摸屏面板尺寸; 构造失败时 caps() 的唯一兜底。
+# MaixCAM-Pro 面板物理尺寸; 显示对象打不开时 width()/height() 与 caps() 共用它。
 _FALLBACK_W, _FALLBACK_H = 552, 368
 
 
@@ -69,33 +69,26 @@ class MaixCam1Display:
             return False
 
     def caps(self) -> DisplayCaps:
-        """平台上屏能力; 尺寸读真实 Display, 读不到退回 552x368 面板。"""
-        try:
-            w, h = self._disp.width(), self._disp.height()
-        except Exception:
-            w = h = 0
+        """平台上屏能力; 尺寸直接取 width()/height(), 保证两者永不矛盾。"""
         return DisplayCaps(
-            width=w or _FALLBACK_W, height=h or _FALLBACK_H,
+            width=self.width(), height=self.height(),
             native_format=PixelFormat.RGB888,
             accepted=frozenset((PixelFormat.NATIVE, PixelFormat.RGB888)),
             encode_in_show=True,
         )
 
     def width(self) -> int:
-        if self._disp is None:
-            return 0
+        """⚠ 打不开时退回面板物理尺寸而非 0: 0 会让调试页 resize(0,0) 直接失败。"""
         try:
-            return self._disp.width()
+            return self._disp.width() or _FALLBACK_W
         except Exception:
-            return 0
+            return _FALLBACK_W
 
     def height(self) -> int:
-        if self._disp is None:
-            return 0
         try:
-            return self._disp.height()
+            return self._disp.height() or _FALLBACK_H
         except Exception:
-            return 0
+            return _FALLBACK_H
 
     def close(self) -> None:
         if self._disp is not None:

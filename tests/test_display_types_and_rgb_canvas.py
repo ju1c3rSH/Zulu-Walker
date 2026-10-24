@@ -3,9 +3,10 @@
 
 钉住三件事:
   1. 三个 tuner 的 _to_maix 走 cv2image(..., bgr=False) 且交的是**连续 RGB**;
-  2. 通道序不互换（相机交来的 BGR 是负步长视图, 最容易在这里红蓝互换）;
-  3. PixelFormat.of() 与四个平台 display 的 caps()/width()/height() 契约。
+  2. 通道序不互换（纯红像素必须落成 R 高）;
+  3. PixelFormat.of() / 四个平台 display 的 caps()/width()/height() 契约。
 """
+import importlib
 import importlib.util
 import os
 import sys
@@ -53,7 +54,8 @@ class _CvCalls(list):
     """记录每次 cv2image 的实参, 顺带断言"交进去的真连续"。"""
 
     def __call__(self, arr, bgr=True, copy=False):
-        self.append({"bgr": bgr, "copy": copy, "contiguous": arr.flags["C_CONTIGUOUS"]})
+        self.append({"bgr": bgr, "copy": copy,
+                     "contiguous": bool(arr.flags["C_CONTIGUOUS"])})
         return _FakeImage(arr, _FakeFormat.FMT_RGB888)
 
 
@@ -78,7 +80,7 @@ class _FakeMaixDisplayDev:
 
 
 def _install_fake_maix(monkeypatch):
-    """只装 display.py 需要的最小子集, 不拖 camera/ai 的依赖。"""
+    """只装 display.py / types.py 需要的最小子集, 不拖 camera/ai 依赖。"""
     maix = types.ModuleType("maix")
     display = types.ModuleType("maix.display")
     err = types.ModuleType("maix.err")
@@ -89,13 +91,12 @@ def _install_fake_maix(monkeypatch):
     calls = _CvCalls()
     image.cv2image = calls
     image.image2cv = lambda img, **kw: np.array(img.pixels, copy=True)
-    image.Color = types.SimpleNamespace(from_rgb=lambda r, g, b: (r << 16) | (g << 8) | b)
+    image.Color = types.SimpleNamespace(
+        from_rgb=lambda r, g, b: (r << 16) | (g << 8) | b)
     maix.display, maix.err, maix.image = display, err, image
     for name, mod in (("maix", maix), ("maix.display", display),
                       ("maix.err", err), ("maix.image", image)):
         monkeypatch.setitem(sys.modules, name, mod)
-    # types.py 的表在 import 时建; PC 上当时没有 maix, 这里按同一条构建路径重建。
-    monkeypatch.setattr(dt, "_FMT_MAP", dt._build_format_map())
     return calls
 
 
@@ -139,12 +140,12 @@ def _bgr_red_negative_stride_view():
 @pytest.mark.parametrize("make_tuner", [_laser, _rescue, _threshold])
 def test_to_maix_uses_native_rgb888_path(fake_maix, make_tuner):
     tuner = make_tuner()
-    bgr = _bgr_red_negative_stride_view()
-    img = tuner._to_maix(bgr)
+    img = tuner._to_maix(_bgr_red_negative_stride_view())
 
     assert len(fake_maix) == 1
     assert fake_maix[0]["bgr"] is False
-    # 负步长视图不能直接喂 cv2image: bgr=False 只换标记, 通道会红蓝互换
+    assert fake_maix[0]["copy"] is True
+    # 负步长视图不能直接喂 cv2image: pybind11 会拒收或整帧镜像
     assert fake_maix[0]["contiguous"] is True
     assert img.format() == _FakeFormat.FMT_RGB888
 
@@ -165,6 +166,12 @@ def test_pixel_format_of_ndarray_is_bgr888():
     assert dt.PixelFormat.of(np.zeros((4, 4, 3), np.uint8)) is dt.PixelFormat.BGR888
 
 
+@pytest.mark.parametrize("shape", [(480, 640), (480, 640, 4)])
+def test_pixel_format_of_non_bgr_ndarray_is_none(shape):
+    """灰度/BGRA 不是 BGR888; 误判会让格式闸门放行慢或不支持的格式。"""
+    assert dt.PixelFormat.of(np.zeros(shape, np.uint8)) is None
+
+
 def test_pixel_format_of_maix_image_is_rgb888(fake_maix):
     img = _FakeImage(np.zeros((1, 1, 3), np.uint8))
     assert dt.PixelFormat.of(img) is dt.PixelFormat.RGB888
@@ -182,6 +189,34 @@ def test_pixel_format_of_unknown_format_is_none(fake_maix):
     assert dt.PixelFormat.of(img) is None
 
 
+def test_pixel_format_of_works_when_maix_arrives_after_import(monkeypatch):
+    """回归(缺陷B): 表的构建不能只在 import 时试一次, 否则 maix 晚到就一直判 None。"""
+    monkeypatch.delitem(sys.modules, "maix.image", raising=False)
+    monkeypatch.delitem(sys.modules, "maix", raising=False)
+    assert dt.PixelFormat.of(_FakeImage(np.zeros((1, 1, 3), np.uint8))) is None
+
+    image = types.ModuleType("maix.image")
+    image.Format = _FakeFormat
+    maix = types.ModuleType("maix")
+    maix.image = image
+    monkeypatch.setitem(sys.modules, "maix", maix)
+    monkeypatch.setitem(sys.modules, "maix.image", image)
+
+    # 不碰任何私有表: 公开入口自己补建
+    rgb = _FakeImage(np.zeros((1, 1, 3), np.uint8))
+    gray = _FakeImage(np.zeros((1, 1, 3), np.uint8), _FakeFormat.FMT_GRAYSCALE)
+    assert dt.PixelFormat.of(rgb) is dt.PixelFormat.RGB888
+    assert dt.PixelFormat.of(gray) is dt.PixelFormat.GRAY8
+
+
+# ---------------- Frame.seq 哨兵 ----------------
+
+def test_frame_seq_defaults_to_unset_sentinel():
+    """回归(缺陷C): 0 会被 seq 比较读成"与首帧同帧", 于是每帧都被丢。"""
+    f = dt.Frame(handle=object(), fmt=dt.PixelFormat.RGB888, w=1, h=1)
+    assert f.seq == -1
+
+
 # ---------------- 四个平台 display 的 caps() / width() / height() ----------------
 
 def test_maixcam1_caps(fake_maix):
@@ -195,12 +230,13 @@ def test_maixcam1_caps(fake_maix):
     assert (disp.width(), disp.height()) == (552, 368)
 
 
-def test_maixcam1_caps_survives_dead_display(fake_maix):
+def test_maixcam1_caps_agrees_with_size_on_dead_display(fake_maix):
+    """回归(缺陷E): caps() 与 width()/height() 必须说同一件事, 否则调试页 resize(0,0)。"""
     mod = _load_display_module("maixcam1")
     disp = mod.MaixCam1Display()
     disp._disp = None                     # caps() 必须永不抛异常
     caps = disp.caps()
-    assert (caps.width, caps.height) == (552, 368)
+    assert (caps.width, caps.height) == (disp.width(), disp.height()) == (552, 368)
     assert dt.PixelFormat.RGB888 in caps.accepted
 
 
@@ -217,6 +253,14 @@ def test_maixcam2_caps(fake_maix):
         assert (disp.width(), disp.height()) == (640, 480)
     finally:
         _FAKE_DISPLAY_SIZE[:] = [552, 368]
+
+
+def test_maixcam2_caps_agrees_with_size_on_dead_display(fake_maix):
+    mod = _load_display_module("maixcam2")
+    disp = mod.MaixCam2Display()
+    disp._disp = None
+    caps = disp.caps()
+    assert (caps.width, caps.height) == (disp.width(), disp.height()) == (640, 480)
 
 
 def test_linux_display_caps():
@@ -240,55 +284,77 @@ def test_mock_display_caps_and_size_follows_frame():
 
 # ---------------- warn_once 格式闸门 ----------------
 
-def test_warn_slow_format_logs_once(monkeypatch):
-    from framework.display import gate
+class _CapsDisp:
+    """只声明 accepted 的最小 display。"""
 
+    def __init__(self, accepted):
+        self._accepted = frozenset(accepted)
+
+    def caps(self):
+        return dt.DisplayCaps(width=552, height=368,
+                              native_format=dt.PixelFormat.RGB888,
+                              accepted=self._accepted, encode_in_show=True)
+
+
+@pytest.fixture()
+def gate_logs(monkeypatch):
+    from framework.display import gate
     logs = []
     monkeypatch.setattr(gate, "log_print", lambda m="": logs.append(m))
     monkeypatch.setattr(gate, "_WARNED", set())
     monkeypatch.setattr(gate, "_ACCEPTED_BY_TYPE", {})
-
-    class _Disp:
-        def caps(self):
-            return dt.DisplayCaps(
-                width=552, height=368, native_format=dt.PixelFormat.RGB888,
-                accepted=frozenset({dt.PixelFormat.NATIVE, dt.PixelFormat.RGB888}),
-                encode_in_show=True)
-
-    disp, frame = _Disp(), np.zeros((4, 4, 3), np.uint8)
-    assert gate.warn_slow_format(disp, frame) is True
-    assert gate.warn_slow_format(disp, frame) is True
-    assert len(logs) == 1
-    assert "slow path" in logs[0] and "BGR888" in logs[0]
+    return logs
 
 
-def test_warn_slow_format_transparent_through_proxy(monkeypatch, fake_maix):
-    """调试页拿到的是代理; 闸门必须看真实 display 的 caps, 不能凭空报慢路径。"""
+def test_warn_slow_format_logs_once(gate_logs):
     from framework.display import gate
+    disp = _CapsDisp({dt.PixelFormat.NATIVE, dt.PixelFormat.RGB888})
+    frame = np.zeros((4, 4, 3), np.uint8)
 
-    logs = []
-    monkeypatch.setattr(gate, "log_print", lambda m="": logs.append(m))
-    monkeypatch.setattr(gate, "_WARNED", set())
-    monkeypatch.setattr(gate, "_ACCEPTED_BY_TYPE", {})
+    assert gate.warn_slow_format(disp, frame) is True
+    assert gate.warn_slow_format(disp, frame) is True
+    assert len(gate_logs) == 1
+    assert "BGR888" in gate_logs[0] and "accepted" in gate_logs[0]
 
-    class _Real:
+
+def test_warn_slow_format_silent_on_fast_path(gate_logs, fake_maix):
+    from framework.display import gate
+    disp = _CapsDisp({dt.PixelFormat.NATIVE, dt.PixelFormat.RGB888})
+    frame = _FakeImage(np.zeros((1, 1, 3), np.uint8))    # FMT_RGB888
+
+    assert dt.PixelFormat.of(frame) is dt.PixelFormat.RGB888
+    assert gate.warn_slow_format(disp, frame) is False
+    assert gate_logs == []
+
+
+@pytest.mark.parametrize("wrap", ["plain", "nested", "falsy_inner"])
+def test_warn_slow_format_works_through_any_proxy(gate_logs, wrap):
+    """回归(缺陷D): 闸门只认公开 caps(); 代理嵌代理 / 假值 _real 也要判对。"""
+    from framework.display import gate
+    real = _CapsDisp({dt.PixelFormat.NATIVE, dt.PixelFormat.RGB888})
+
+    class _Falsy:
+        def __bool__(self):
+            return False
+
         def caps(self):
-            return dt.DisplayCaps(
-                width=552, height=368, native_format=dt.PixelFormat.RGB888,
-                accepted=frozenset({dt.PixelFormat.NATIVE, dt.PixelFormat.RGB888}),
-                encode_in_show=True)
+            return real.caps()
 
     class _Proxy:
-        def __init__(self, real):
-            self._real = real
+        def __init__(self, inner):
+            self._real = inner
 
-        def caps(self):
-            return self._real.caps()
+        def __getattr__(self, name):        # 与 _ThrottledPageDisplay 同款透传
+            return getattr(self._real, name)
 
-    fast = _FakeImage(np.zeros((1, 1, 3), np.uint8))   # RGB888 -> 快路径
-    assert dt.PixelFormat.of(fast) is dt.PixelFormat.RGB888
-    assert gate.warn_slow_format(_Proxy(_Real()), fast) is False
-    assert logs == []
+    disp = {"plain": lambda: _Proxy(real),
+            "nested": lambda: _Proxy(_Proxy(real)),
+            "falsy_inner": lambda: _Proxy(_Falsy())}[wrap]()
+
+    # slow path 仍要被判出来, 且只告警一次（缓存键取公开类型, 不再嗅探 _real）
+    assert gate.warn_slow_format(disp, np.zeros((4, 4, 3), np.uint8)) is True
+    assert gate.warn_slow_format(disp, np.zeros((4, 4, 3), np.uint8)) is True
+    assert len(gate_logs) == 1
 
 
 def test_warn_slow_format_never_raises(monkeypatch):
@@ -299,3 +365,8 @@ def test_warn_slow_format_never_raises(monkeypatch):
             raise RuntimeError("no caps")
 
     assert gate.warn_slow_format(_Disp(), np.zeros((2, 2, 3), np.uint8)) is False
+
+
+def test_warn_slow_format_needs_no_caps_attr():
+    from framework.display import gate
+    assert gate.warn_slow_format(object(), np.zeros((2, 2, 3), np.uint8)) is False

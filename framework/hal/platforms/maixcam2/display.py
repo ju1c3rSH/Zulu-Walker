@@ -5,6 +5,9 @@ import maix.err
 
 from framework.display.types import DisplayCaps, PixelFormat
 
+# 面板物理尺寸; 显示对象打不开时 width()/height() 与 caps() 共用它。
+_FALLBACK_W, _FALLBACK_H = 640, 480
+
 
 class MaixCam2Display:
     def __init__(self) -> None:
@@ -22,23 +25,26 @@ class MaixCam2Display:
             return False
 
     def caps(self) -> DisplayCaps:
-        """平台上屏能力; 尺寸读真实 Display, 读不到退回 640x480。"""
-        try:
-            w, h = self._disp.width(), self._disp.height()
-        except Exception:
-            w = h = 0
+        """平台上屏能力; 尺寸直接取 width()/height(), 保证两者永不矛盾。"""
         return DisplayCaps(
-            width=w or 640, height=h or 480,
+            width=self.width(), height=self.height(),
             native_format=PixelFormat.RGB888,
             accepted=frozenset((PixelFormat.NATIVE, PixelFormat.RGB888)),
             encode_in_show=True,
         )
 
     def width(self) -> int:
-        return self._disp.width() if self._disp else 0
+        """⚠ 打不开时退回面板物理尺寸而非 0: 0 会让调试页 resize(0,0) 直接失败。"""
+        try:
+            return self._disp.width() or _FALLBACK_W
+        except Exception:
+            return _FALLBACK_W
 
     def height(self) -> int:
-        return self._disp.height() if self._disp else 0
+        try:
+            return self._disp.height() or _FALLBACK_H
+        except Exception:
+            return _FALLBACK_H
 
     def close(self) -> None:
         if self._disp is not None:
