@@ -141,3 +141,12 @@ C5  合并两份 _maybe_show、删 _ThrottledPageDisplay、_frame_tag 的 dir() 
 """
 
 __all__ = []
+
+## TODO
+
+- [ ] **T1 (P0) 热重载 mtime 同 tick 失效** — `gks_task_processor.py::_reload_laser_calib`
+      / `_reload_rescue_params` / 阈值重载 用 `mtime == 上次` 判变化；同一文件系统
+      tick 内二次 SAVE 会判"未变"→ 参数不生效。实测 300 次连续写 mtime 相同 187 次(62%)，
+      紧凑循环 200 次失败 48 次(24%)。现场表现为"SAVE 了但参数没变"。
+      建议：(st_mtime_ns, st_size) 双字段签名，或内容哈希兜底。同时把
+      `test_laser_calib_hot_reload` / `test_hot_reload_on_mtime_change` 改成能稳定捕获该 bug。
