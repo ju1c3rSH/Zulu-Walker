@@ -10,6 +10,7 @@ import maix.camera
 import maix.image
 
 from utils.boot_timing import boot_stage
+from utils.log_util import perf_detail_enabled, perf_note
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,24 @@ _CAP_PROP_FRAME_HEIGHT = 4
 _CAP_PROP_FPS = 5
 _CAP_PROP_GAIN = 14
 _CAP_PROP_EXPOSURE = 15
+
+
+try:
+    # FMT_* 查表只建一次: `dir()` 每帧遍历会直接吃掉探针想量的那点开销。
+    _FMT_NAMES = {getattr(maix.image.Format, a): a[4:]
+                  for a in dir(maix.image.Format) if a.startswith("FMT_")}
+except Exception:
+    _FMT_NAMES = {}
+
+
+def _fmt_tag(img) -> str:
+    """maix Image 格式 -> "RGB888"/"BGR888"/… —— conv 探针的归因依据。"""
+    if img is None:
+        return "none"
+    try:
+        return _FMT_NAMES.get(img.format(), "?")
+    except Exception:
+        return "?"
 
 
 def _log_attempts(n: int) -> None:
@@ -369,6 +388,7 @@ class MaixCam1Camera:
         np_rgb = maix.image.image2cv(raw, ensure_bgr=False, copy=True)
         self._last_frame = np_rgb[:, :, ::-1]
         self._mark_stage("convert", _t0)
+        self._note_conv(_t0)
         return self._last_frame
 
     def _ingest_lazy(self, raw):
@@ -384,6 +404,7 @@ class MaixCam1Camera:
             _t0 = time.perf_counter()
             np_rgb = maix.image.image2cv(img, ensure_bgr=False, copy=True)
             self._mark_stage("convert", _t0)
+            self._note_conv(_t0, img)
             if np_rgb is None:
                 # 转换失败: 交回 None 由 LazyFrame 退化为空数组（不在闭包里抛,
                 # 否则异常会打断整帧 —— 见 lazy_frame.py::numpy 的降级说明）。
@@ -419,6 +440,16 @@ class MaixCam1Camera:
         if st is None:
             st = self.__dict__["stage_ms"] = {"read": 0.0, "convert": 0.0}
         st[key] = (time.perf_counter() - t0) * 1000.0
+
+    def _note_conv(self, t0: float, raw=None) -> None:
+        """`[PERF] conv` 探针: image2cv 每帧代价 + 源格式。源格式只取一次（要问 C++）。"""
+        if not perf_detail_enabled():
+            return
+        tag = self.__dict__.get("_conv_fmt")
+        if tag is None:
+            tag = self.__dict__["_conv_fmt"] = _fmt_tag(
+                raw if raw is not None else self._last_raw)
+        perf_note("conv", (time.perf_counter() - t0) * 1000.0, f"src={tag} out=BGR")
 
     def read_raw(self) -> Optional[np.ndarray]:
         """主流水线取帧：非阻塞，空队列 = None（停帧）。

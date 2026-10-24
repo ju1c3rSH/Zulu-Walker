@@ -353,10 +353,16 @@ class GksRescueTuner:
 
     def _fit_display(self, img, disp):
         if img.width() != disp.width() or img.height() != disp.height():
+            from utils.log_util import perf_note, perf_t0
+            _t0 = perf_t0()
             try:
                 img = img.resize(disp.width(), disp.height())
             except Exception as e:
                 self._diag("resize", e)
+            else:
+                if _t0:
+                    perf_note("resize", (time.perf_counter() - _t0) * 1000.0,
+                              "{}x{}".format(disp.width(), disp.height()))
         return img
 
     def _to_maix(self, bgr):

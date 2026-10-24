@@ -44,7 +44,15 @@ display_show_interval_ms: 100
 #         看 nowayout（=1 ⇒ 内核禁止停止看门狗，谁都关不掉，只能用 false 规避）。
 wdt_enabled: false
 
+# ---- 观测闸门（supersedes perf_log, 但 perf_log: 仍然生效）----
+# perf=false 吞掉全部 `[PERF] ` 行; perf_detail=false 只留 vision/mainloop/lcd show。
+observability:
+  perf: false
+  perf_detail: false
+
 # 高频性能日志闸门（默认 enabled: false = 台架调试时不再刷屏）。
+# 本段管非 `[PERF] ` 的高频行（DATA_STREAM/CMD_ACK/WDT/MEM）; `observability` 已取代它
+# 对 `[PERF] ` 的控制, 但两段并存时都会被读取（老配置不改也能用）。
 #   为什么: `[PERF] vision/mainloop/lcd` × 3 + `[UART TX] DATA_STREAM` + `CMD_ACK`
 #   + `[WDT] feed` + `[MEM]` 每秒各刷一条, 合起来把真正想看的信息淹掉。
 #   关掉**只少打印, 不改变任何行为**: 推流帧照发、计数器照累加、log_print 仍非阻塞。

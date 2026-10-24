@@ -6,6 +6,7 @@ from pathlib import Path
 import queue
 import sys
 import threading
+import time
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -45,6 +46,13 @@ _DEFAULT_PERF_NAMES = (
 
 _PERF_LOG_NAMES: set = set()
 
+# `observability:` 两级闸门, 只管 `[PERF] ` 行; 上面的 names 路径照旧管非 [PERF] 高频行。
+# ⚠ 前缀必须带尾空格: startswith("[PERF") 会误吞 [PERFLOG] 配置行。
+_PERF_TAG = "[PERF] "
+_PERF_COARSE = ("[PERF] vision", "[PERF] mainloop", "[PERF] lcd show")
+_PERF_GATE = True
+_PERF_DETAIL = True
+
 
 def set_perf_log(enabled: bool = True, names=None) -> None:
     """开关高频性能日志行。
@@ -55,13 +63,28 @@ def set_perf_log(enabled: bool = True, names=None) -> None:
 
     调用点: `app/main.py` 从 `project_config.yaml` 的 `perf_log:` 段读取。
     默认（enabled=True）不设过滤集合, 保持"改前逐行照打"。
+
+    ⚠ 关默认组时一并落 `_PERF_GATE`: 未进名单的 `[PERF] page*` 等也必须静音。
     """
-    global _PERF_LOG_NAMES
+    global _PERF_LOG_NAMES, _PERF_GATE, _PERF_DETAIL
     if enabled:
         _PERF_LOG_NAMES = set()
+        _PERF_GATE = True
+        _PERF_DETAIL = True
         return
-    selected = names if names else _DEFAULT_PERF_NAMES
-    _PERF_LOG_NAMES = {str(n) for n in selected}
+    if not names:
+        _PERF_LOG_NAMES = set(_DEFAULT_PERF_NAMES)
+        _PERF_GATE = False
+        return
+    _PERF_LOG_NAMES = {str(n) for n in names}
+    _PERF_GATE = True                   # 自定义名单只静音列出的标签, 其余照打
+
+
+def set_perf_gate(perf: bool = True, detail: bool = True) -> None:
+    """`observability` 闸门: perf = 所有 `[PERF] ` 行, detail = 细粒度分项。"""
+    global _PERF_GATE, _PERF_DETAIL
+    _PERF_GATE = bool(perf)
+    _PERF_DETAIL = bool(detail)
 
 
 def perf_log_enabled() -> bool:
@@ -69,14 +92,90 @@ def perf_log_enabled() -> bool:
     return not _PERF_LOG_NAMES
 
 
+def perf_enabled() -> bool:
+    """`[PERF] ` 行总开关 —— 探针在拼字符串之前先问这一句。"""
+    return _PERF_GATE
+
+
+def perf_detail_enabled() -> bool:
+    """细粒度探针开关（总开关关掉时恒 False, 热路径直接跳过）。"""
+    return _PERF_GATE and _PERF_DETAIL
+
+
+def perf_t0() -> float:
+    """探针计时起点: 关闸时返回 0.0, 调用方据此跳过计时与格式化。"""
+    return time.perf_counter() if _PERF_GATE and _PERF_DETAIL else 0.0
+
+
+def _is_coarse_perf(msg: str) -> bool:
+    for name in _PERF_COARSE:
+        if msg.startswith(name):
+            return True
+    return False
+
+
 def _is_perf_log(msg: str) -> bool:
     """消息是否命中当前被吞的性能日志标签。空集合 -> 恒 False（零开销）。"""
+    if msg.startswith(_PERF_TAG):
+        if not _PERF_GATE:
+            return True
+        if not _PERF_DETAIL and not _is_coarse_perf(msg):
+            return True
     if not _PERF_LOG_NAMES:
         return False
     for name in _PERF_LOG_NAMES:
         if name in msg:
             return True
     return False
+
+
+class PerfAgg:
+    """每秒一条 `[PERF] <label>` 汇总; 闸门关闭时只做一次布尔判断, 零格式化。"""
+
+    __slots__ = ("_label", "_tag", "_t0", "_n", "_ms")
+
+    def __init__(self, label: str, tag: Optional[str] = None) -> None:
+        self._label = label
+        self._tag = tag
+        self._t0 = 0.0
+        self._n = 0
+        self._ms = 0.0
+
+    def add(self, ms: float, tag: Optional[str] = None) -> None:
+        if not _PERF_GATE or not _PERF_DETAIL:
+            return
+        self._n += 1
+        self._ms += ms
+        if tag is not None:
+            self._tag = tag
+        now = time.monotonic()
+        if self._t0 == 0.0:
+            self._t0 = now
+            return
+        elapsed = now - self._t0
+        if elapsed < 1.0:
+            return
+        n = self._n
+        avg = self._ms / n
+        extra = " " + self._tag if self._tag else ""
+        log_print(f"[PERF] {self._label} {n / elapsed:.1f}Hz "
+                  f"avg={avg:.2f}ms{extra}")
+        self._t0 = now
+        self._n = 0
+        self._ms = 0.0
+
+
+_AGGS: Dict[str, PerfAgg] = {}
+
+
+def perf_note(label: str, ms: float, tag: Optional[str] = None) -> None:
+    """探针入口: 每秒一条 `[PERF] <label>` 汇总。闸门关闭时只有一次布尔判断。"""
+    if not _PERF_GATE or not _PERF_DETAIL:
+        return
+    agg = _AGGS.get(label)
+    if agg is None:
+        agg = _AGGS[label] = PerfAgg(label)
+    agg.add(ms, tag)
 
 
 def debug_console_active() -> bool:

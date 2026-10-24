@@ -13,7 +13,8 @@ import sys
 import threading
 import time
 
-from utils.log_util import log_print, start_log_writer, debug_console_active
+from utils.log_util import (log_print, start_log_writer, debug_console_active,
+                           perf_detail_enabled, perf_note)
 from utils.boot_timing import thread_cpu as _thread_cpu
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -310,6 +311,9 @@ class DebugPageFactory:
         _wall_ms = (time.perf_counter() - t0) * 1000.0
         self._iter["show"] += _wall_ms
         self._last_show_tag = _frame_tag(frame)
+        # [PERF] fmt: to_format 在 C++ show() 内部, 拆不出来 —— 这里记帧格式 + 总耗时。
+        if perf_detail_enabled():
+            perf_note("fmt", _wall_ms, f"fmt={self._last_show_tag}")
         self._note_show_perf(_wall_ms, (_thread_cpu() - cpu0) * 1000.0)
         return True
 
@@ -682,8 +686,11 @@ class MainUiShell:
             pass
         self._last_show_time = now
         self._last_show_tag = _frame_tag(frame)
-        self._note_show_perf((time.perf_counter() - t0) * 1000.0,
-                            (_thread_cpu() - cpu0) * 1000.0)
+        _wall = (time.perf_counter() - t0) * 1000.0
+        # [PERF] fmt: to_format 在 C++ show() 内部, 拆不出来 —— 这里记帧格式 + 总耗时。
+        if perf_detail_enabled():
+            perf_note("fmt", _wall, f"fmt={self._last_show_tag}")
+        self._note_show_perf(_wall, (_thread_cpu() - cpu0) * 1000.0)
 
     def _cmm_pressure_throttled(self) -> bool:
         """CMM 压力查询降频到 1s 一次。
@@ -1018,30 +1025,51 @@ def _project_config() -> dict:
         return {}
 
 
-def _apply_perf_log_config(cfg) -> None:
-    """把 `perf_log:` 配置应用到 log_util 层的闸门。
+def _apply_perf_log_config(cfg, observability=None) -> None:
+    """把 `perf_log:` / `observability:` 配置应用到 log_util 层的闸门。
 
     两种写法都认（老配置不改也不炸）:
         perf_log: true / false                     # 布尔: 全开 / 按默认组静音
         perf_log: {enabled: false, names: [...]}   # 映射: 可自定义静音标签
+    `observability.perf` / `.perf_detail` 决定 `[PERF] ` 行（存在时优先）。
     缺键/解析异常 -> 保持默认（全开, 即改前行为）。
     """
-    from utils.log_util import set_perf_log
+    from utils.log_util import set_perf_log, set_perf_gate, _DEFAULT_PERF_NAMES
+    perf = detail = True
+    enabled, names = True, None
+    handled = False
     try:
         if isinstance(cfg, bool):
-            set_perf_log(cfg)
-            enabled, names = cfg, None
+            enabled = cfg
+            handled = True
         elif isinstance(cfg, dict):
             enabled = bool(cfg.get("enabled", True))
             names = cfg.get("names")
+            handled = True
+        if handled:
+            # ⚠ 关默认组 = 关性能日志, 故未列入名单的 `[PERF] ` 行也要静音。
+            if not enabled and (not names
+                                or {str(n) for n in names} == set(_DEFAULT_PERF_NAMES)):
+                names = None
             set_perf_log(enabled, names)
-        else:
-            return                      # 缺键/None -> 用模块默认（全开）
+        if isinstance(observability, dict):
+            perf = bool(observability.get("perf", True))
+            detail = perf and bool(observability.get("perf_detail", True))
+            set_perf_gate(perf, detail)
+            if not perf and not handled:
+                # ⚠ observability 取代 perf_log: 只写这一段也要静音非 [PERF] 的心跳行。
+                enabled, names = False, None
+                set_perf_log(False)
+            handled = True
+        if not handled:
+            return                      # 缺键/None/乱写 -> 用模块默认（全开）
     except Exception as e:
         log_print(f"[PERFLOG] 配置应用失败, 保持全开: {type(e).__name__}: {e}")
         return
     log_print(f"[PERFLOG] perf_log={'ON' if enabled else 'MUTED'} "
-              f"names={list(names) if names else 'default'}")
+              f"names={list(names) if names else 'default'} "
+              f"observability.perf={'ON' if perf else 'OFF'} "
+              f"perf_detail={'ON' if detail else 'OFF'}")
 
 
 def main():
@@ -1054,8 +1082,9 @@ def main():
     # 必须在 `log_print("0xfb709394")`/DCONSOLE 之外最早生效: 闸门在 log_util 层,
     # 设完之后下面所有线程的 `[PERF]`/`[MEM]`/`[WDT]`/`[UART TX] CMD_ACK` 等
     # 高频行都被吞掉, 台架调试只剩事件类日志。
-    # 兼容旧的布尔写法 (`perf_log: true/false`) 与新的映射写法。
-    _apply_perf_log_config(config.get("perf_log"))
+    # 兼容旧的布尔写法 (`perf_log: true/false`) 与新的映射写法;
+    # `observability.perf/perf_detail` 优先决定 `[PERF] ` 行。
+    _apply_perf_log_config(config.get("perf_log"), config.get("observability"))
 
     # ---- 调试台（rich TUI）----
     # 决策权在 **run.py::_init_debug_console()**: 它在导入 app.main 之前读

@@ -241,10 +241,16 @@ class GksThresholdTuner:
 
         img = self._to_maix(preview_bgr)
         if img.width() != disp_w or img.height() != disp_h:
+            from utils.log_util import perf_note, perf_t0
+            _t0 = perf_t0()
             try:
                 img = img.resize(disp_w, disp_h)
             except Exception as e:
                 self._diag("resize", e)
+            else:
+                if _t0:
+                    perf_note("resize", (time.perf_counter() - _t0) * 1000.0,
+                              "{}x{}".format(disp_w, disp_h))
         sx = img.width() / frame_bgr.shape[1]
         sy = img.height() / frame_bgr.shape[0]
 

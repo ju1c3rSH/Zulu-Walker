@@ -79,6 +79,7 @@ class JpegStreamer:
             sys.stdout.flush()
             return
 
+        from utils.log_util import perf_note, perf_t0
         while self._is_running:
             with self._lock:
                 try:
@@ -86,10 +87,15 @@ class JpegStreamer:
                 except IndexError:
                     img = None
             if img is not None:
+                # [PERF] jpeg: 编码在 write() 内部的 C++ to_jpeg 里, 这里只能量总代价。
+                _t0 = perf_t0()
                 try:
                     self._server.write(img)
                 except Exception:
                     pass
+                else:
+                    if _t0:
+                        perf_note("jpeg", (time.perf_counter() - _t0) * 1000.0)
             else:
                 time.sleep(_EMPTY_SLEEP)
 

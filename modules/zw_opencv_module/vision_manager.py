@@ -16,7 +16,7 @@ import yaml
 from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference
 from utils.boot_timing import thread_cpu as _thread_cpu
-from utils.log_util import log_print
+from utils.log_util import log_print, perf_note, perf_t0
 
 from .pipeline_camera import PipelineCamera
 from .performance import profiler
@@ -351,7 +351,11 @@ class VisionManager:
                     self._last_hud_draw = _now
                     fps = self.get_pipeline_fps(pid)
                     if self._hud is not None:
+                        # [PERF] hud: 原本埋在 disp= 里面, 单独拆出来才看得见绘制成本。
+                        _hud_t0 = perf_t0()
                         self._hud.draw(raw_img, fps, pipe.last_results)
+                        if _hud_t0:
+                            perf_note("hud", (time.perf_counter() - _hud_t0) * 1000.0)
                     self._draw_exit_icon(raw_img)
                     self._display_frame = raw_img
             else:
