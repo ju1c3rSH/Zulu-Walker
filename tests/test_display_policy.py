@@ -55,9 +55,14 @@ def ui():
     return shell
 
 
-def _show(ui, counter):
-    ui._display_counter = counter
-    ui._maybe_show(frame="FRAME")
+def _show(ui, counter=None):
+    """驱动唯一上屏出口。
+
+    counter 仅用于把内部的帧计数摆到某个相位（旧实现直接写 _display_counter）。
+    """
+    if counter is not None:
+        ui.presenter.frame_counter = counter - 1
+    ui.presenter.submit("FRAME", source="main")
 
 
 def test_disabled_never_shows(ui):
@@ -93,20 +98,20 @@ def test_show_calls_reset_throttle_clock(ui):
     """放行后必须刷新时钟，否则限流会退化成"第一次之后永久封禁"。"""
     ui.set_display_policy(enabled=True, show_interval_ms=10000)
     _show(ui, 2)
-    first = ui._last_show_time
-    ui._last_show_time = 0.0          # 模拟"已经过了很久"
+    first = ui.presenter.last_show_time
+    ui.presenter.last_show_time = 0.0     # 模拟"已经过了很久"
     _show(ui, 2)
     assert len(ui._machine.display.shown) == 2
-    assert ui._last_show_time > first or ui._last_show_time > 0.0
+    assert ui.presenter.last_show_time > first
 
 
 def test_missing_config_keys_keep_current_behaviour(ui):
     """缺键（None）不得改变行为 —— 老配置文件必须原样能用。"""
-    before_enabled = ui._display_enabled
-    before_interval = ui._show_interval_s
+    before_enabled = ui.presenter.policy.enabled
+    before_interval = ui.presenter.policy.interval_ms
     ui.set_display_policy(None, None)
-    assert ui._display_enabled is before_enabled
-    assert ui._show_interval_s == before_interval
+    assert ui.presenter.policy.enabled is before_enabled
+    assert ui.presenter.policy.interval_ms == before_interval
 
 
 def test_cmm_pressure_checked_at_most_once_per_second(ui, monkeypatch):
@@ -124,8 +129,8 @@ def test_show_perf_is_accumulated(ui):
     """show() 开销必须被统计 —— 否则台架无法量化"显示吃掉多少 GIL"。"""
     ui.set_display_policy(enabled=True, show_interval_ms=0)
     _show(ui, _DISPLAY_SHOW_SKIP)
-    assert ui._show_n == 1
-    assert ui._show_ms_sum >= 0.0
+    assert ui.presenter.stats()["shows"] == 1
+    assert ui.presenter.metrics["main"].wall_sum >= 0.0
 
 
 # ---------------- HUD 绘制节流：与 show 同频（2026-10-09）----------------

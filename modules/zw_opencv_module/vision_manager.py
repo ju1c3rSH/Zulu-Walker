@@ -14,6 +14,7 @@ import numpy as np
 import yaml
 
 from framework.hal.camera_hub import CameraHub
+from framework.display.sources import DisplaySource
 from framework.hal.interface import AIInference
 from utils.boot_timing import thread_cpu as _thread_cpu
 from utils.log_util import log_print, perf_note, perf_t0
@@ -44,14 +45,10 @@ class VisionManager:
 
         self._any_fresh = False
         self._pending_results: deque = deque(maxlen=5)
-        self._display_frame = None
+        self._display_src = DisplaySource()   # seq 化发布槽: 显示侧据此判"新帧"
 
         self._wdt_feed = lambda: None
         self._wdt_count = 0
-
-        self._capture_sink: callable = None
-        self._capture_seq: int = 0
-        self._CAPTURE_EVERY_N: int = 4
 
         self._exit_icon = None
         self._exit_icon_size: int = 0
@@ -60,7 +57,7 @@ class VisionManager:
         # 调参页等独占相机的场景: 暂停采集处理, 让出相机成为唯一读取者
         self._paused = False
 
-        # 比赛模式: 跳过每帧的 HUD 叠加与 wifi JPEG 推流, 只保留"把最新原始帧
+        # 比赛模式: 跳过每帧的 HUD 叠加, 只保留"把最新原始帧
         # 交给显示线程"。见 _update_display_frame。
         self._render_enabled = True
 
@@ -91,9 +88,6 @@ class VisionManager:
 
     def set_wdt_feed(self, feed_fn) -> None:
         self._wdt_feed = feed_fn
-
-    def set_capture_sink(self, sink: callable) -> None:
-        self._capture_sink = sink
 
     def set_exit_icon(self, icon, icon_size: int = 48, margin: int = 12) -> None:
         self._exit_icon = icon
@@ -298,15 +292,21 @@ class VisionManager:
         return None, all_results, any_fresh
 
     def get_display_frame(self):
-        return self._display_frame
+        return self._display_src.latest()
+
+    def take_display_frame(self):
+        """有新帧才返回（同一帧不重复上屏）; 显示线程用这个。"""
+        return self._display_src.take_new()
+
+    def display_seq(self) -> int:
+        return self._display_src.seq()
 
     def set_render_enabled(self, enabled: bool) -> None:
-        """比赛模式开关: False = 跳过 HUD 叠加与 wifi JPEG 推流。
+        """比赛模式开关: False = 跳过 HUD 叠加与 JPEG 推流（推流已迁到 presenter）。
 
         **只影响显示, 不影响日志与协议推流。** 视觉线程里被跳过的只有
         `DisplayHUD.draw()`（约 20 次 maix draw_string/draw_rect, CAM1 纯软件
-        渲染, TARGET 模式还多 6 个误差刻度标签）与 JPEG 编码 —— 两者都在
-        取帧→处理→推流的同一拍里串行执行, 直接吃掉一帧的推流时间。
+        渲染, TARGET 模式还多 6 个误差刻度标签）。
         `log_print` 走独立写盘线程, coordinator 的 UART 推流走主循环,
         两者都不经这里, 照常工作。
 
@@ -357,14 +357,10 @@ class VisionManager:
                         if _hud_t0:
                             perf_note("hud", (time.perf_counter() - _hud_t0) * 1000.0)
                     self._draw_exit_icon(raw_img)
-                    self._display_frame = raw_img
+                    self._display_src.publish(raw_img)
             else:
                 # 比赛模式: 无 HUD 可画, 每帧照旧发布（保持"最新原始帧"语义）
-                self._display_frame = raw_img
-            if self._render_enabled and self._capture_sink is not None:
-                # 每帧都喂, 节流由 sink 按 fps 自己做。此前用帧计数闸门
-                # (`_capture_seq += 1` 在 if 内) 导致自增只发生一次 -> 整进程只喂 1 帧。
-                self._capture_sink(raw_img)
+                self._display_src.publish(raw_img)
             return
 
     def set_hud(self, hud) -> None:

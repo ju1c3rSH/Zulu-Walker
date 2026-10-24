@@ -79,9 +79,9 @@ def _factory(display=None, pages=None):
     return DebugPageFactory(machine=None, vision_manager=None, pages=pages)
 
 
-def _call(factory, show_fn):
-    """直接打 _maybe_show（节流判定的唯一出口）。"""
-    return factory._maybe_show(show_fn)
+def _call(factory, show_fn, frame=None):
+    """直接打唯一出口 presenter.present()（调试页的节流判定就在那里）。"""
+    return factory.presenter.present(show_fn, frame, source="page")
 
 
 # ---------------- 1/2. 时间限流 & 帧跳回退 ----------------
@@ -212,9 +212,9 @@ def test_step_active_tolerates_none_frame():
 def test_missing_config_keys_keep_current_behaviour():
     """None -> 保持当前值（默认 enabled=True / interval=0 = 改前帧跳行为）。"""
     f = _factory()
-    before = (f._display_enabled, f._show_interval_s)
+    before = (f.presenter.policy.enabled, f.presenter.policy.interval_ms)
     f.set_display_policy(None, None)
-    assert (f._display_enabled, f._show_interval_s) == before
+    assert (f.presenter.policy.enabled, f.presenter.policy.interval_ms) == before
 
 
 # ---------------- 5. 进页清相位 ----------------
@@ -225,9 +225,9 @@ def test_enter_page_resets_show_clock():
     f.set_display_policy(enabled=True, show_interval_ms=10_000)
     disp = _SpyDisplay()
     _call(f, lambda: disp.show("F"))       # 先建立相位
-    assert f._last_show_time > 0.0
+    assert f.presenter.last_show_time > 0.0
     f._reset_show_clock()
-    assert f._last_show_time == 0.0
+    assert f.presenter.last_show_time == 0.0
     assert _call(f, lambda: disp.show("F")) is True   # 首帧必上屏
     assert len(disp.shown) == 2
 
@@ -237,9 +237,9 @@ def test_reset_clears_show_clock():
     f = _factory()
     f.set_display_policy(enabled=True, show_interval_ms=10_000)
     _call(f, lambda: None)
-    assert f._last_show_time > 0.0
+    assert f.presenter.last_show_time > 0.0
     f.reset()
-    assert f._last_show_time == 0.0
+    assert f.presenter.last_show_time == 0.0
 
 
 # ---------------- 6. show 异常不冒泡 ----------------

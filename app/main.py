@@ -14,8 +14,9 @@ import threading
 import time
 
 from utils.log_util import (log_print, start_log_writer, debug_console_active,
-                           perf_detail_enabled, perf_note)
-from utils.boot_timing import thread_cpu as _thread_cpu
+                           perf_detail_enabled)
+from framework.display.policy import DEFAULT_FRAME_SKIP as _DISPLAY_SHOW_SKIP
+from framework.display.service import PresenterService
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.makedirs("logs", exist_ok=True)
@@ -30,19 +31,20 @@ logging.basicConfig(
 from framework.hal import Machine
 from framework.module_manager import ModuleManager
 
-try:
-    from maix import sys as maix_sys
-    _HAVE_MAIX_SYS = True
-except ImportError:
-    maix_sys = None
-    _HAVE_MAIX_SYS = False
+def _check_cmm_pressure() -> bool:
+    """CMM 占用是否超阈值; 无 maix 时 False（PC/测试）。"""
+    try:
+        from maix import sys as maix_sys
+        info = maix_sys.memory_info()
+        used = info.get("cmm_used", 0)
+        total = info.get("cmm_total", 256 * 1024 * 1024)
+        return used > int(total * 0.80)
+    except Exception:
+        return False
 
-_DISPLAY_SHOW_SKIP = 2
 _ICON_SIZE = 48
 _ICON_MARGIN = 12
 _ICON_HIT_PAD = 4
-_CMM_PRESSURE_THRESHOLD = 0.80
-_CMM_TOTAL_FALLBACK = 256 * 1024 * 1024
 _WDT_WINDOW_MS = 10000
 _WDT_FEED_PERIOD_S = 1.0
 
@@ -104,18 +106,6 @@ _VISION_MODULE = "zw_opencv_module"
 from app.page_sm import STATE_MAIN
 
 
-def _check_cmm_pressure() -> bool:
-    if not _HAVE_MAIX_SYS:
-        return False
-    try:
-        info = maix_sys.memory_info()
-        cmm_used = info.get("cmm_used", 0)
-        cmm_total = info.get("cmm_total", _CMM_TOTAL_FALLBACK)
-        return cmm_used > int(cmm_total * _CMM_PRESSURE_THRESHOLD)
-    except Exception:
-        return False
-
-
 def _push_coordinator_status(coordinator) -> None:
     """把协调器状态推给调试台（调试台没在跑就整段跳过）。
 
@@ -139,39 +129,9 @@ def _push_coordinator_status(coordinator) -> None:
     dc.set("tx_hz", f"{info.get('tx_hz', 0.0):.1f}")
 
 
-def _frame_tag(frame) -> str:
-    """把一帧的"真实格式/内存来源"压缩成短标记, 用于 [PERF] show 归因。
-
-    为什么需要（2026-10-15, MaixCDK 源码证实）:
-      MaixCAM1 的 `Display::show()` 只白名单接受 FMT_RGB888 / YVU420SP /
-      YUV420SP / BGRA8888 / GRAYSCALE。其它格式会先在 show() 内部走一次
-      `to_format(FMT_RGB888)` **全帧分配 + 逐像素通道交换**, 而且结果落在
-      CPU 堆而不是 CMM/VIPU, VO 再拷一次。
-      而 `maix.image.cv2image(bgr, bgr=True)` 产出的正是 **FMT_BGR888** ——
-      于是调试页每一帧都白付这两次全帧搬运。
-    这就是"调试页图更小(552x368)却比 MAIN(640x480)慢 3~8 倍"的全部原因:
-    成本在**格式/内存来源**, 不在像素数量。
-
-    返回值: "RGB888" / "BGR888" / "numpy" / 类型名 —— 出现非 RGB888 即是病。
-    """
-    if frame is None:
-        return "none"
-    try:
-        import maix.image as _mi
-        fmt_fn = getattr(frame, "format", None)
-        if callable(fmt_fn):
-            fmt = fmt_fn()
-            names = getattr(_mi, "Format", None)
-            for attr in dir(names) if names is not None else []:
-                if attr.startswith("FMT_") and getattr(names, attr) == fmt:
-                    return attr[4:]
-            return str(fmt)
-    except Exception:
-        pass
-    shape = getattr(frame, "shape", None)
-    if shape is not None:
-        return f"numpy{tuple(shape[2:]) or ''}"
-    return type(frame).__name__
+def _make_presenter(display):
+    """⚠ 注入晚绑定探针: 测试会 monkeypatch 模块级 _check_cmm_pressure。"""
+    return PresenterService(display, cmm_probe=lambda: _check_cmm_pressure())
 
 
 class DebugPageFactory:
@@ -190,44 +150,25 @@ class DebugPageFactory:
         self._active = None
         self._step_fail_logged = set()
         self._laser_sender = None
-        # ---- 调试页上屏节流（2026-10-15）----
-        # 为什么必须在这里节流: 调试页的 disp.show() 由页面自己调（见 step_active）,
-        # 而 MainUiShell._maybe_show 的 display_show_interval_ms 节流**只在 MAIN 页生效**
-        #（_display_loop 对非 MAIN 页直接 continue 让位）。于是调试页上 show() 退化为
-        # "每个相机帧一次" ≈ 58Hz, 比 MAIN 页的 10Hz 高约 6 倍, 且每次都走一遍 MaixCAM1
-        # 的 VPU/VENC JPEG 编码（show 同时要压缩一份发给 MaixVision）。
-        # 这正是「激光页 fps 低 + CVI_VENC_GetStream failed 0xc0078012 /
-        # compress image failed 刷屏」的应用层成因 —— 官方 FAQ 明确: 拿不到 venc 资源
-        # 就报该错, 并建议"关掉 maixvision 预览视图, 或者切换到 png 流"。
-        # 语义与 MAIN 页完全一致: 同一组配置键 display_enabled / display_show_interval_ms;
-        # interval == 0 回退到 _DISPLAY_SHOW_SKIP 帧跳 = 改前行为。
-        self._display_enabled = True
-        self._show_interval_s = 0.0
-        self._last_show_time = 0.0
-        self._display_counter = 0
-        self._show_ms_sum = 0.0
-        self._show_cpu_sum = 0.0
-        self._show_n = 0
-        self._show_t0 = 0.0
-        self._last_show_tag = "-"
+        # 上屏策略与节流状态都在 PresenterService 里 —— MAIN 页与调试页共用同一个出口。
+        self._presenter = None
         # ---- 调试页迭代归因（2026-10-15）----
         # 为什么需要: 台架实测调试页"每轮 ~150ms, 其中 show 只占 18ms", 剩下 ~130ms
         # 完全无法归因 —— 而 MAIN 页的视觉线程有 [PERF] vision 的 read/conv/task/disp
         # 四项打点, 调试页这条路径却是黑盒。没有归因就只能靠猜, 所以先补打点再谈重构。
         # 分项语义（全部是"墙钟", 单位 ms）:
         #   read = cam.read()（含 image2cv 拷贝与负步长视图生成）
-        #   prep = 构造上屏代理
-        #   step = page.step() 全程（不含 show, show 由代理单独计时到 show 项）
+        #   step = page.step() 全程（show 计入 step, presenter 单独计时）
         #   show = 真正进入 display.show() 的那一段（编码 + 上屏）
         #   iter = step_active 整体; 与 1/Hz 的真实周期对照, 差额就是"iter 之外"的开销
-        self._iter = {"t0": 0.0, "n": 0, "read": 0.0, "prep": 0.0,
+        self._iter = {"t0": 0.0, "n": 0, "read": 0.0,
                       "step": 0.0, "show": 0.0, "iter": 0.0, "none": 0}
 
     def _note_page_iter(self, key: str, dt_s: float) -> None:
         self._iter[key] += dt_s * 1000.0
 
     def _flush_page_iter(self, page_name: str) -> None:
-        """每秒一条 [PERF] page: 把调试页一轮的耗时拆到 read/prep/step/show。
+        """每秒一条 [PERF] page: 把调试页一轮的耗时拆到 read/step/show。
 
         读法: iter 是 step_active 自身耗时, 1/Hz 是真实周期,
         `iter外 = 周期 - iter` = 主循环里**非调试页**的开销
@@ -247,99 +188,32 @@ class DebugPageFactory:
         show_ms = it["show"] / n
         log_print(
             f"[PERF] page[{page_name}] {n / elapsed:.1f}Hz period={period_ms:.1f}ms | "
-            f"read={it['read'] / n:.1f} prep={it['prep'] / n:.1f} "
+            f"read={it['read'] / n:.1f} "
             f"step={it['step'] / n:.1f}(含show {show_ms:.1f}) "
             f"iter={iter_ms:.1f} none={it['none']} | "
             f"iter外={period_ms - iter_ms:.1f}ms(主循环+视觉抢GIL)")
-        self._iter = {"t0": time.monotonic(), "n": 0, "read": 0.0, "prep": 0.0,
+        self._iter = {"t0": time.monotonic(), "n": 0, "read": 0.0,
                       "step": 0.0, "show": 0.0, "iter": 0.0, "none": 0}
 
+    @property
+    def presenter(self) -> PresenterService:
+        """唯一上屏出口; 缺注入时懒建（测试直接构造 factory 的场合）。"""
+        p = self._presenter
+        if p is None:
+            disp = getattr(self._machine, "display", None)
+            p = self._presenter = _make_presenter(disp)
+        return p
+
+    def set_presenter(self, presenter) -> None:
+        self._presenter = presenter
+
     def set_display_policy(self, enabled=None, show_interval_ms=None) -> None:
-        """调试页上屏策略（与 MainUiShell 同名同语义, 由 main() 注入同一组配置键）。
-
-        为什么两个类各持一份状态而不共享: MAIN 页与调试页的调用方线程和节奏不同,
-        共享 _last_show_time 会让"上一页的节流相位"漏到下一页, 表现为进页第一帧被吞。
-        语义必须一致, 状态不能共享。
-        """
-        if enabled is not None:
-            self._display_enabled = bool(enabled)
-        if show_interval_ms is not None:
-            self._show_interval_s = max(0.0, float(show_interval_ms) / 1000.0)
-
-    def _page_display(self, ts=None):
-        """返回给 page.step() 用的 display 代理（show 被节流, 其余透传）。
-
-        每次现建一个极轻的代理对象（无状态, 状态都在 factory 上）, 避免
-        display 实例被页面长期持有而在切页后继续用旧策略上屏。
-        """
-        return _ThrottledPageDisplay(self, self._machine.display)
+        """薄封装: 策略只存在 presenter 一处（main() 与既有测试都调它）。"""
+        self.presenter.set_policy(enabled, show_interval_ms)
 
     def _reset_show_clock(self) -> None:
-        """进页/回 MAIN 时清节流相位: 新页首帧必须上屏（用户据此判断"进没进去"）。"""
-        self._last_show_time = 0.0
-        self._display_counter = 0
-
-    def _maybe_show(self, show_fn, frame=None) -> bool:
-        """按策略决定这一拍要不要真的上屏; 返回是否执行了 show_fn。
-
-        与 MainUiShell._maybe_show 的四条语义逐一对应（见 tests/test_display_policy.py）:
-          1. display_enabled=False -> 一次都不上屏;
-          2. interval > 0 -> 按**时间**限流, 与帧率无关;
-          3. interval == 0 -> 回退"每 _DISPLAY_SHOW_SKIP 帧一次"帧跳;
-          4. "有无新帧"由调用方判（调试页每次都是刚读到的帧）。
-        另按秒汇总 show 的墙上/CPU 开销 —— 判断 VENC 编码是否成为瓶颈的唯一依据。
-        """
-        if not self._display_enabled:
-            return False
-        now = time.monotonic()
-        if self._show_interval_s > 0.0:
-            if now - self._last_show_time < self._show_interval_s:
-                return False
-        else:
-            self._display_counter += 1
-            if self._display_counter % _DISPLAY_SHOW_SKIP != 0:
-                return False
-        t0 = time.perf_counter()
-        cpu0 = _thread_cpu()
-        try:
-            show_fn()
-        except Exception as e:
-            if "show" not in self._step_fail_logged:
-                self._step_fail_logged.add("show")
-                log_print(f"[PAGE] display.show FAIL: {type(e).__name__}: {e}")
-        self._last_show_time = now
-        _wall_ms = (time.perf_counter() - t0) * 1000.0
-        _cpu_ms = (_thread_cpu() - cpu0) * 1000.0    # ⚠ 必须在 fmt 探针之前采样
-        self._iter["show"] += _wall_ms
-        self._last_show_tag = _frame_tag(frame)
-        # [PERF] fmt: to_format 在 C++ show() 内部, 拆不出来 —— 这里记帧格式 + 总耗时。
-        if perf_detail_enabled():
-            perf_note("fmt", _wall_ms, f"fmt={self._last_show_tag}")
-        self._note_show_perf(_wall_ms, _cpu_ms)
-        return True
-
-    def _note_show_perf(self, wall_ms: float, cpu_ms: float = 0.0) -> None:
-        """调试页每秒一条 [PERF] page show（与 MAIN 页 [PERF] lcd show 同口径）。"""
-        self._show_ms_sum += wall_ms
-        self._show_cpu_sum += cpu_ms
-        self._show_n += 1
-        now = time.monotonic()
-        if self._show_t0 == 0.0:
-            self._show_t0 = now
-        elapsed = now - self._show_t0
-        if elapsed < 1.0:
-            return
-        n = max(1, self._show_n)
-        log_print(f"[PERF] page show {n / elapsed:.1f}Hz "
-                  f"avg={self._show_ms_sum / n:.1f}ms "
-                  f"(cpu {self._show_cpu_sum / n:.1f}ms) "
-                  f"fmt={self._last_show_tag} "
-                  f"-> 每秒占墙上 {self._show_ms_sum / elapsed:.0f}ms / "
-                  f"CPU {self._show_cpu_sum / elapsed:.0f}ms")
-        self._show_t0 = now
-        self._show_ms_sum = 0.0
-        self._show_cpu_sum = 0.0
-        self._show_n = 0
+        """进页/回 MAIN 时清节流相位: 新页首帧必须上屏。"""
+        self.presenter.reset_phase()
 
     def set_laser_sender(self, sender) -> None:
         """注入激光帧发送回调（main() 装配 UART 后传入, LASER 页专用）。"""
@@ -428,19 +302,15 @@ class DebugPageFactory:
         # （2026-10-09 真机现象, 根因是 LazyFrame 缺 .copy()）。这里改为:
         # 控制台留痕一次 + 自动回 MAIN 页恢复显示, 别让用户对着一帧死画面猜。
         try:
-            # 上屏节流: 页面 step() 的最后一句是 disp.show()。这里交给一个
-            # **只拦 show 的代理**, 而不是把整个 step() 包进节流里 ——
-            # step() 里还有 ts.read() 与识别，必须每帧照跑（否则触摸/退出失效，
-            # 页面直接变成死的）。代理把 show 按 display_enabled /
-            # display_show_interval_ms 与 MAIN 页同口径限流, 顺带按秒统计开销。
-            _t_pre = time.perf_counter()
-            _disp = self._page_display(ts)
-            self._note_page_iter("prep", time.perf_counter() - _t_pre)
+            # ⚠ 只拦 show, 不拦 step: 触摸/识别必须每帧照跑, 否则页面变成死的。
+            _presenter = self.presenter
             _t_step = time.perf_counter()
             try:
-                page.step(_disp, ts, frame_bgr)
+                page.step(_presenter, ts, frame_bgr)
             finally:
                 self._iter["step"] += (time.perf_counter() - _t_step) * 1000.0
+                # 只累加真正上屏那一次的耗时, 读后清零（节流掉的帧记 0）
+                self._iter["show"] += _presenter.take_last_show_ms()
         except Exception as e:
             if page_name not in self._step_fail_logged:
                 self._step_fail_logged.add(page_name)
@@ -527,37 +397,11 @@ class DebugPageFactory:
         return task.processor if task else None
 
 
-class _ThrottledPageDisplay:
-    """调试页专用的 display 代理: **只拦 show()**, 其余接口原样转发。
-
-    为什么不能直接节流整个 step(): 调试页的 step() 里既有识别也有 ts.read(),
-    触摸退出判定就在 show 之前 —— 一票否决 step 会让页面既看不出画面也没法退出。
-    """
-
-    def __init__(self, factory, real):
-        self._factory = factory
-        self._real = real
-
-    def show(self, frame, *args, **kwargs):
-        return self._factory._maybe_show(
-            lambda: self._real.show(frame, *args, **kwargs), frame=frame)
-
-    def width(self):
-        return self._real.width()
-
-    def height(self):
-        return self._real.height()
-
-    def __getattr__(self, name):
-        # 其余接口（close/set_backlight/...）一律透传给真实 display
-        return getattr(self._real, name)
-
-
 class MainUiShell:
     """主循环 tick / MAIN 页触摸退出判定 / 显示线程。
 
     MAIN 页 tick 只推 DebugConsole 状态; display_callback 读触摸判定
-    退出图标; 显示线程每 _DISPLAY_SHOW_SKIP 帧 show 一次（CMM 压力跳帧）。
+    退出图标; 显示线程把新帧交给 presenter, 由它按策略限流后上屏。
     非 MAIN 页所有路径短路, 与调试页触摸/显示互不干扰。
     """
 
@@ -570,7 +414,8 @@ class MainUiShell:
     #   0.5s => 2Hz, 肉眼对控制台读数无感, 争用点少一个数量级。
     _STATUS_PUSH_INTERVAL_S = 0.5
 
-    def __init__(self, machine, pages, factory: DebugPageFactory, vision_manager):
+    def __init__(self, machine, pages, factory: DebugPageFactory, vision_manager,
+                 presenter: PresenterService = None):
         self._machine = machine
         self._pages = pages
         self._factory = factory
@@ -579,46 +424,13 @@ class MainUiShell:
         self._touch_down = False
         self._touch_x = 0
         self._touch_y = 0
-        self._last_seen_frame = None
-        self._display_counter = 0
         self._last_status_push = 0.0
-
-        # ---- 显示输出策略（只影响 LCD, 不影响日志与协议推流）----
-        # `project_config.yaml: display_enabled` 此前是个**死配置**: 全仓库只有
-        # 定义那一行, 没有任何代码读它 —— 于是"关了显示"只是心理安慰, 显示线程
-        # 照旧每 2 帧 show 一次。2026-10-08 台架实测 CAM1 `display.show()` 单次
-        # **23.4ms**（C++ 编码期间全程持 GIL）, 每 2 帧一次 ≈ 每秒 117ms 的 GIL
-        # 独占, 与视觉线程直接串行 —— 这是"识别链路单独跑 59.7Hz, 带显示的真机
-        # 只有 20.3Hz"的首位嫌疑。
-        self._display_enabled = True
-        self._show_interval_s = 0.0        # 0 = 沿用 _DISPLAY_SHOW_SKIP 帧跳
-        self._last_show_time = 0.0
-        self._cmm_check_time = 0.0
-        self._cmm_pressure = False
-        self._show_ms_sum = 0.0
-        self._show_cpu_sum = 0.0
-        self._show_n = 0
-        self._show_t0 = 0.0
-        self._last_show_tag = "-"
+        # 上屏策略/节流/统计全在 presenter —— MAIN 与调试页共用同一个出口。
+        self.presenter = presenter or _make_presenter(machine.display)
 
     def set_display_policy(self, enabled=None, show_interval_ms=None) -> None:
-        """注入显示策略（main() 从 project_config.yaml 读取）。
-
-        *show_interval_ms*: 两次 show 的最小间隔。0 = 保留原来的"每
-        _DISPLAY_SHOW_SKIP 帧一次"帧跳语义（等价改前行为）。帧跳按**帧数**跳,
-        帧率一变节流比例就变; 按时间限流则与帧率无关, 台架更好预测。
-        """
-        if enabled is not None:
-            self._display_enabled = bool(enabled)
-        if show_interval_ms is not None:
-            self._show_interval_s = max(0.0, float(show_interval_ms) / 1000.0)
-        if self._show_interval_s > 0.0:
-            throttle = f"{self._show_interval_s * 1000:.0f}ms 限流"
-        else:
-            throttle = f"每 {_DISPLAY_SHOW_SKIP} 帧一次(帧跳)"
-        log_print(f"[DISPLAY] lcd={'ON' if self._display_enabled else 'OFF'}, {throttle}")
-        # HUD 绘制与 show 用同一间隔 —— 否则视觉线程每帧画、只 show 其中一部分,
-        # 中间那些绘制是白做（CAM1 纯软件渲染, TARGET 还多 6 个误差刻度标签）。
+        """薄封装: 策略只存在 presenter 一处; HUD 绘制跟同一间隔（否则白画）。"""
+        self.presenter.set_policy(enabled, show_interval_ms)
         if self._vm is not None and hasattr(self._vm, "set_hud_draw_interval"):
             self._vm.set_hud_draw_interval(show_interval_ms)
 
@@ -658,83 +470,14 @@ class MainUiShell:
             if not self._pages.is_main():
                 time.sleep(0.01)
                 continue
-            frame = self._vm.get_display_frame() if self._vm else None
-            if frame is not None and frame is not self._last_seen_frame:
-                self._last_seen_frame = frame
-                self._display_counter += 1
-                self._maybe_show(frame)
+            # ⚠ 用 seq 判"新帧", 不再比对象身份: 相机双缓冲会复用同一块内存,
+            #   `frame is not last` 会把真正的新帧误判成重复而整段漏掉。
+            frame = self._vm.take_display_frame() if self._vm else None
+            if frame is not None:
+                self.presenter.submit(frame, source="main")
             # 原为 1ms 自旋: 每秒 1000 次唤醒抢 GIL, 对视觉线程是纯干扰。
             # 显示侧只需要"有新帧就上屏", 5ms 轮询(200Hz) 远快于任何帧率。
             time.sleep(0.005)
-
-    def _maybe_show(self, frame) -> None:
-        """按显示策略决定是否真的上屏, 并统计 show() 的 GIL 开销。"""
-        if not self._display_enabled:
-            return
-        now = time.monotonic()
-        if self._show_interval_s > 0.0:
-            if now - self._last_show_time < self._show_interval_s:
-                return
-        elif self._display_counter % _DISPLAY_SHOW_SKIP != 0:
-            return
-        if self._cmm_pressure_throttled():
-            return
-        t0 = time.perf_counter()
-        cpu0 = _thread_cpu()
-        try:
-            self._machine.display.show(frame)
-        except Exception:
-            pass
-        self._last_show_time = now
-        self._last_show_tag = _frame_tag(frame)
-        _wall = (time.perf_counter() - t0) * 1000.0
-        _cpu = (_thread_cpu() - cpu0) * 1000.0       # ⚠ 必须在 fmt 探针之前采样
-        # [PERF] fmt: to_format 在 C++ show() 内部, 拆不出来 —— 这里记帧格式 + 总耗时。
-        if perf_detail_enabled():
-            perf_note("fmt", _wall, f"fmt={self._last_show_tag}")
-        self._note_show_perf(_wall, _cpu)
-
-    def _cmm_pressure_throttled(self) -> bool:
-        """CMM 压力查询降频到 1s 一次。
-
-        原实现每 2 帧调一次 maix_sys.memory_info()（一次系统调用 + 建 dict）,
-        在 60fps 下就是每秒 30 次无谓开销; 内存压力本来也不是秒级突变。
-        """
-        now = time.monotonic()
-        if now - self._cmm_check_time >= 1.0:
-            self._cmm_check_time = now
-            self._cmm_pressure = _check_cmm_pressure()
-        return self._cmm_pressure
-
-    def _note_show_perf(self, wall_ms: float, cpu_ms: float = 0.0) -> None:
-        """每秒汇总一条 show() 开销 —— 直接量化"显示吃掉多少 GIL / CPU"。
-
-        ⚠ 两个数都必须报, 且**单位别乘错**:
-        · 墙上 ms/s = 本秒内 show() 占用的墙上时间合计（含被 GIL 挡住的等待）
-        · CPU ms/s  = 本秒内 show() 真正消耗的 CPU（thread_time 差值）
-        首版实现把已经是"毫秒"的量又乘了 1000, 打出 `每秒占用 164818ms`,
-        比一秒还长 —— 读者会直接当成 bug 而忽略整行。真实值是 ~164ms/s。
-        """
-        self._show_ms_sum += wall_ms
-        self._show_cpu_sum += cpu_ms
-        self._show_n += 1
-        now = time.monotonic()
-        if self._show_t0 == 0.0:
-            self._show_t0 = now
-        elapsed = now - self._show_t0
-        if elapsed < 1.0:
-            return
-        n = max(1, self._show_n)
-        log_print(f"[PERF] lcd show {n / elapsed:.1f}Hz "
-                  f"avg={self._show_ms_sum / n:.1f}ms "
-                  f"(cpu {self._show_cpu_sum / n:.1f}ms) "
-                  f"fmt={self._last_show_tag} "
-                  f"-> 每秒占墙上 {self._show_ms_sum / elapsed:.0f}ms / "
-                  f"CPU {self._show_cpu_sum / elapsed:.0f}ms")
-        self._show_t0 = now
-        self._show_ms_sum = 0.0
-        self._show_cpu_sum = 0.0
-        self._show_n = 0
 
     def _consume_main_touch(self) -> None:
         if self._touch is None:
@@ -1010,17 +753,19 @@ def _apply_render_policy(vision_manager, config: dict) -> None:
     vision_manager.set_render_enabled(not mode)
 
 
-def _init_streamer(vision_manager, config: dict) -> None:
-    """按 `stream:` 配置启动 HTTP 推流；关闭时不占 VENC（MaixCAM1 上是单例资源）。"""
+def _init_streamer(presenter, config: dict) -> None:
+    """把 streamer 注册成 JpegTap; 关闭时挂 NullTap（不占 VENC 单例资源）。"""
+    from framework.display.taps.jpeg import JpegTap
+    from framework.display.taps.null import NullTap
     from modules.zw_wifi_stream import get_streamer, disabled_reason
     streamer = get_streamer()
     if streamer is None:
         log_print(f"[HTTP] 推流未启用: {disabled_reason()}")
+        presenter.add_tap(NullTap())
         return
-    if vision_manager is None:
-        return
-    vision_manager.set_capture_sink(streamer.push_frame)
+    presenter.add_tap(JpegTap(streamer))
     streamer.start_async()
+    log_print("[HTTP] 推流已接入 presenter (JpegTap)")
 
 
 def _project_config() -> dict:
@@ -1150,7 +895,11 @@ def main():
     coordinator.set_ai(machine.ai)
     _apply_stream_policy(coordinator, config)
     _apply_render_policy(vision_manager, config)
-    _init_streamer(vision_manager, config)
+    # ⚠ 全系统唯一的 display.show() 出口: MAIN 与调试页共用
+    presenter = _make_presenter(machine.display)
+    # competition_mode 关推流（原先由视觉线程跳过来实现, 现在归 presenter 管）
+    presenter.set_policy(stream_enabled=not bool(config.get("competition_mode")))
+    _init_streamer(presenter, config)
 
     exit_icon = _load_exit_icon()
     if exit_icon is not None and vision_manager is not None:
@@ -1169,11 +918,12 @@ def main():
         KeyCycleRouter(pages)
 
     factory = DebugPageFactory(machine, vision_manager, pages)
+    factory.set_presenter(presenter)
     factory.set_laser_sender(_send_laser)
     # 调试页上屏与 MAIN 页同口径（同一组配置键）; 缺键即保持改前行为
     factory.set_display_policy(config.get("display_enabled"),
                                config.get("display_show_interval_ms"))
-    ui = MainUiShell(machine, pages, factory, vision_manager)
+    ui = MainUiShell(machine, pages, factory, vision_manager, presenter=presenter)
     # 显示策略与分项计时的配置入口（缺键即保持改前行为, 可一键回退）
     ui.set_display_policy(config.get("display_enabled"),
                           config.get("display_show_interval_ms"))

@@ -87,25 +87,23 @@ def test_competition_mode_skips_hud_but_keeps_frame(vm_with_pipe):
     assert vm.get_display_frame() == "RAW_FRAME"
 
 
-def test_competition_mode_skips_capture_sink(vm_with_pipe):
-    """比赛模式: wifi JPEG 推流不再被调用（编码耗时同属每帧开销）。"""
+def test_vision_thread_has_no_capture_sink(vm_with_pipe):
+    """C4: 推流已迁出视觉线程 —— VisionManager 不再持有/调用任何 capture sink。
+
+    ⚠ 本用例此前钉的是已被删除的旧设计（`set_capture_sink` + 每帧喂帧）。
+      那个钩子正是 C4 要移除的东西（编码在视觉线程里串行, 与取帧抢同一拍）,
+      所以这里改为钉新不变量: 钩子不存在, 且推流只由 presenter 的 JpegTap 发起。
+    """
     vm = vm_with_pipe
-    pushed = []
-    vm.set_capture_sink(pushed.append)
+    assert not hasattr(vm, "set_capture_sink"), "视觉线程不得再持有推流钩子"
+    assert not hasattr(vm, "_capture_sink"), "视觉线程不得再持有推流钩子"
 
-    vm.set_render_enabled(True)
-    n = vm._CAPTURE_EVERY_N
-    for _ in range(n):
-        vm._update_display_frame()
-    # 生产者每帧都喂; 节流由 sink 按 fps 自己做。
-    # 旧实现用 `_capture_seq += 1` 放在 if 内 -> 整进程只喂 1 帧(bug), 此处曾断言 ==1。
-    assert len(pushed) == n, "渲染开启时每帧都应喂给 sink"
-
-    pushed.clear()
-    vm.set_render_enabled(False)
-    for _ in range(vm._CAPTURE_EVERY_N * 3):
-        vm._update_display_frame()
-    assert pushed == [], "比赛模式不应有任何 JPEG 编码"
+    # 渲染开/关都只更新 HUD 与 _display_frame, 不产生任何编码副作用
+    for render in (True, False):
+        vm.set_render_enabled(render)
+        for _ in range(4):
+            vm._update_display_frame()
+        assert vm.get_display_frame() == "RAW_FRAME"
 
 
 def test_render_toggle_is_reversible(vm_with_pipe):
