@@ -2849,7 +2849,7 @@ WDT::feed()
 [02:46:36] [MEM] user=102/128MB CMM=0/0MB
 [02:46:36] [GKS] target 跟踪窄窗未命中 x161 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次窄窗）; 频繁出现请调大 target.track_roi_px
 [02:46:37] [PERF] mainloop 127Hz body=1.14ms cpu=0.88ms gil_wait=0.26ms | wdt=0.14 coord=0.49 tick=0.17 touch=0.17 | 每秒 CPU 112ms
-[02:46:37] [UART TX] DATA_STREAM 22.0Hz seq=47 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+0 found=0
+[02:46:37] [UART TX] DATA_ 22.0Hz seq=47 type=TARGET mode=TARGET cx=0 pit=0 pos=0 err=+0 found=0
 [02:46:37] [PERF] vision 20.8Hz loop=48.2ms body=42.9ms cpu=17.1ms gil_wait=25.8ms | read=5.8(cpu6.70) conv=12.7 task=23.0(cpu9.47) disp=0.8(cpu0.60) none=0 | idle=5.3ms 自身cpu=0.31ms 未归因=0.6ms
 [02:46:37] [GKS] target 跟踪窄窗未命中 x181 -> 已当帧回退全 ROI（结果与全程全 ROI 一致, 只是多花一次窄窗）; 频繁出现请调大 target.track_roi_px
 [02:46:38] [PERF] mainloop 140Hz body=1.09ms cpu=0.93ms gil_wait=0.16ms | wdt=0.05 coord=0.56 tick=0.13 touch=0.21 | 每秒 CPU 130ms

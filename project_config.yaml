@@ -145,6 +145,17 @@ streaming:
   wifi_ssid: ""
   wifi_password: ""
 
+# ---- HTTP JPEG 推流（浏览器预览）----
+# ⚠ MaixCAM1 的 VENC 是**单例硬件资源**: 它和 `Display.show()` 内部的 MaixVision 编码
+#    会互相抢, 抢不到就刷 `CVI_VENC_GetStream failed 0xc0078012` 并把视觉线程拖到 1fps
+#    （见 MaixPy faq）。所以默认关闭; 要看预览时开它, 并确保 MaixVision 预览窗口已关。
+# 关闭时**完全不创建** http.JpegStreamer, 因而不占用任何 VENC 资源。
+stream:
+  enabled: false      # 默认关; 需要浏览器预览时改 true
+  fps: 5              # 推流频率, 与 LCD 刷新频率解耦（编码很贵）
+  quality: 80
+  max_width: 320      # 编码前降采样到该宽度, 0 = 不降
+
 # 近端推流策略（GksCoordinator，v2.1 DATA_STREAM）
 #   push_on_new_result: true  = 结果驱动：视觉每产出一帧结果立即推一帧，不受订阅帧
 #                               min_interval_ms 限制 —— 误差/坑位"有一帧就实时输出"。

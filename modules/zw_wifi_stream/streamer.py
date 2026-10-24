@@ -33,13 +33,27 @@ def _local_ip() -> str:
 
 
 class JpegStreamer:
-    def __init__(self) -> None:
+    """HTTP JPEG 推流。**仅 maix 平台可用**（依赖 maix.http + Image.to_jpeg）。"""
+
+    def __init__(self, fps: float = 5.0, quality: int = 80,
+                 max_width: int = 320) -> None:
         self._server: Optional[object] = None
         self._is_running: bool = False
         self._url: str = ""
         self._thread: Optional[threading.Thread] = None
         self._queue: deque = deque(maxlen=_QUEUE_MAX)
         self._lock: threading.Lock = threading.Lock()
+        # 推流节奏与编码成本闸门（与显示频率解耦）
+        self._min_interval_s = (1.0 / fps) if fps and fps > 0 else 0.0
+        self._last_push_ts = 0.0
+        self._quality = int(quality)
+        self._max_width = int(max_width)
+        # 统计：编码耗时 / 丢帧 / 失败（浏览器端看不到这些，只能靠日志）
+        self._enc_ms_sum = 0.0
+        self._enc_n = 0
+        self._enc_t0 = 0.0
+        self._dropped = 0
+        self._failed = 0
 
     @property
     def is_running(self) -> bool:
@@ -79,7 +93,6 @@ class JpegStreamer:
             sys.stdout.flush()
             return
 
-        from utils.log_util import perf_note, perf_t0
         while self._is_running:
             with self._lock:
                 try:
@@ -87,22 +100,75 @@ class JpegStreamer:
                 except IndexError:
                     img = None
             if img is not None:
-                # [PERF] jpeg: 编码在 write() 内部的 C++ to_jpeg 里, 这里只能量总代价。
-                _t0 = perf_t0()
-                try:
-                    self._server.write(img)
-                except Exception:
-                    pass
-                else:
-                    if _t0:
-                        perf_note("jpeg", (time.perf_counter() - _t0) * 1000.0)
+                self._write_one(img)
             else:
                 time.sleep(_EMPTY_SLEEP)
+            self._flush_stats()
+
+    def _write_one(self, img) -> None:
+        """编码一帧并写入。write() 要的是 JPEG; 首次失败只打一次日志。"""
+        t0 = time.perf_counter()
+        try:
+            self._server.write(self._encode(img))
+        except Exception as e:
+            self._failed += 1
+            if self._failed == 1:
+                from utils.log_util import log_print
+                log_print(f"[HTTP] encode/write FAILED: {type(e).__name__}: {e} "
+                          f"(only logged once)")
+            return
+        self._enc_ms_sum += (time.perf_counter() - t0) * 1000.0
+        self._enc_n += 1
+
+    def _encode(self, img):
+        """原生 Image -> 降采样 -> JPEG。降采样走平台 resize(C++ 内完成)。"""
+        if self._max_width > 0:
+            try:
+                w = img.width()
+                if w > self._max_width:
+                    h = max(1, img.height() * self._max_width // w)
+                    img = img.resize(self._max_width, h)
+            except Exception:
+                pass
+        to_jpeg = getattr(img, "to_jpeg", None)
+        if to_jpeg is None:
+            raise TypeError(f"frame has no to_jpeg(): {type(img).__name__}")
+        try:
+            return to_jpeg(quality=self._quality)
+        except TypeError:
+            return to_jpeg()
+
+    def _flush_stats(self) -> None:
+        from utils.log_util import perf_enabled, perf_note
+        if not perf_enabled():
+            self._enc_t0 = 0.0
+            return
+        now = time.monotonic()
+        if self._enc_t0 == 0.0:
+            self._enc_t0 = now
+            return
+        if now - self._enc_t0 < 1.0:
+            return
+        n = self._enc_n
+        avg = (self._enc_ms_sum / n) if n else 0.0
+        self._enc_t0 = now
+        self._enc_ms_sum = 0.0
+        self._enc_n = 0
+        if n:
+            perf_note("jpeg", avg)
 
     def push_frame(self, img) -> None:
+        """喂一帧。按 fps 时间节流；deque(maxlen=1) 丢旧，永不阻塞生产者。"""
         if not self._is_running or self._server is None:
             return
+        if self._min_interval_s > 0.0:
+            now = time.monotonic()
+            if now - self._last_push_ts < self._min_interval_s:
+                return
+            self._last_push_ts = now
         with self._lock:
+            if len(self._queue) >= _QUEUE_MAX:
+                self._dropped += 1
             self._queue.appendleft(img)
 
     def stop(self) -> None:

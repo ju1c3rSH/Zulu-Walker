@@ -1010,12 +1010,17 @@ def _apply_render_policy(vision_manager, config: dict) -> None:
     vision_manager.set_render_enabled(not mode)
 
 
-def _init_streamer(vision_manager) -> None:
-    from modules.zw_wifi_stream import get_streamer
+def _init_streamer(vision_manager, config: dict) -> None:
+    """按 `stream:` 配置启动 HTTP 推流；关闭时不占 VENC（MaixCAM1 上是单例资源）。"""
+    from modules.zw_wifi_stream import get_streamer, disabled_reason
     streamer = get_streamer()
-    if streamer is not None and vision_manager is not None:
-        vision_manager.set_capture_sink(streamer.push_frame)
-        streamer.start_async()
+    if streamer is None:
+        log_print(f"[HTTP] 推流未启用: {disabled_reason()}")
+        return
+    if vision_manager is None:
+        return
+    vision_manager.set_capture_sink(streamer.push_frame)
+    streamer.start_async()
 
 
 def _project_config() -> dict:
@@ -1120,7 +1125,7 @@ def main():
     except Exception:
         pass
 
-    manager = ModuleManager(machine, event_bus=bus, wdt_feed=wdt_feed)
+    manager = ModuleManager(machine, event_bus=bus, wdt_feed=wdt_feed, config=config)
     manager.register_many([_VISION_MODULE, "zw_uart_module", "zw_wifi_stream"])
 
     from modules.zw_opencv_module import get_vision_manager
@@ -1145,7 +1150,7 @@ def main():
     coordinator.set_ai(machine.ai)
     _apply_stream_policy(coordinator, config)
     _apply_render_policy(vision_manager, config)
-    _init_streamer(vision_manager)
+    _init_streamer(vision_manager, config)
 
     exit_icon = _load_exit_icon()
     if exit_icon is not None and vision_manager is not None:
