@@ -48,8 +48,8 @@ wdt_enabled: false
 # perf=false 吞掉全部 `[PERF] ` 行; perf_detail=false 只留 vision/mainloop/lcd show。
 # ⚠ perf=false 连 DATA_STREAM/WDT/MEM 心跳一起静音, 与 perf_log: 写什么无关。
 observability:
-  perf: false
-  perf_detail: false
+  perf: true
+  perf_detail: true
 
 # 高频性能日志闸门（默认 enabled: false = 台架调试时不再刷屏）。
 # 本段管非 `[PERF] ` 的高频行（DATA_STREAM/CMD_ACK/WDT/MEM）; `observability` 已取代它
@@ -71,7 +71,7 @@ observability:
 #
 # 想全静音: names 追加 "[UART ACTION]", "[UART RX]"。想全开: enabled: true。
 perf_log:
-  enabled: false
+  enabled: true        
   names:
     - "[PERF] vision"
     - "[PERF] mainloop"
@@ -112,8 +112,8 @@ cameras:
     source: null
     width: 640
     height: 480   # 与旧上端 main.py 标定几何一致（坑位 ROI/误差中心按 640 宽标定）
-    fps: 60       # ⚠ CAM1 实测上限约 30fps：内部框架限制，即使 buff_num=1 也至少
-                  #   双缓存、取图延时 30+ms。此处仅作期望值，勿按 60 验收推流率。
+    fps: 60       # 2026-10-25 真机实测: [FPS] pipeline ~60fps 可达（旧"上限约 30fps"
+                  #   系旧串行路径误判）。取图延时（帧龄）~30ms 仍成立，但不限帧率。
     camera_stream_queue_size: 2   # CAM1 无需堆缓冲（延时下限由固件决定）
 
 uart_defaults:
@@ -151,7 +151,7 @@ streaming:
 #    （见 MaixPy faq）。所以默认关闭; 要看预览时开它, 并确保 MaixVision 预览窗口已关。
 # 关闭时**完全不创建** http.JpegStreamer, 因而不占用任何 VENC 资源。
 stream:
-  enabled: true      # 默认关; 需要浏览器预览时改 true
+  enabled: false      # 默认关; 需要浏览器预览时改 true
   fps: 5              # 推流频率, 与 LCD 刷新频率解耦（编码很贵）
   quality: 80
   max_width: 320      # 编码前降采样到该宽度, 0 = 不降

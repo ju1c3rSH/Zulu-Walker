@@ -274,3 +274,16 @@ def test_laser_frame_payload_layout():
         parsed = parse_frame(frame)
         assert parsed is not None and parsed.frame_type == 0x25
         assert parsed.payload == bytes([1 if on else 0]) + b"\x00" * 7
+
+
+def test_laser_polarity_is_active_high():
+    """极性契约(2026-10-24): 激光高有效 —— 开=PA4 拉高, 关=PA4 拉低。
+
+    线上故障: 早期文档把 0x01 描述成"PA4 拉低(开)", 而 2026-09-14 硬件实测
+    激光高有效(拉高发射), 结果"按 Laser:ON 不亮, 按 Laser:OFF 反而亮"。
+    帧字节从未反过(0x01=开), 反的是文档对电平的解释。本测试锁住
+    on=True -> on_off=0x01 -> PA4 拉高(发射) 这条链, 防回归。
+    """
+    assert build_cmd_laser_frame(True)[4] == 0x01    # 开
+    assert build_cmd_laser_frame(False)[4] == 0x00   # 关
+    assert build_cmd_laser_frame(True) != build_cmd_laser_frame(False)

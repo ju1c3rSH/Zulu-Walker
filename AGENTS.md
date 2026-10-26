@@ -33,8 +33,8 @@ CAM1 平台的五处硬差异（详见 `docs/competition/gks_bench_checklist_mai
   引脚所以没这步，**换口后极易漏**（2026-10-07 审查 P0）。
 - **模块布局不同**：`wdt` 在 CAM1 是 `maix.wdt`、CAM2 是 `maix.peripheral.wdt`；`uart` 同理。
   只写 CAM2 路径会被 `except` 吞掉 → **看门狗静默失效**（线程死锁无硬件复位兜底）。
-- **帧率上限约 30fps**：MaixPy 文档明确 CAM1 即使 `buff_num=1` 也至少双缓存、取图延时
-  30+ms ⇒ "推流率≈相机帧率" 在 CAM1 上不成立，勿按 60fps 验收。
+- **帧率口径（2026-10-25 实测翻案）**：出帧 **60fps 可达**（`[FPS] pipeline` 实测）；MaixPy 的
+  "取图延时 30+ms" 只限**帧龄**不限帧率——旧"上限约 30fps"是旧串行路径开销的误判。
   ⚠ `read(block=False)` 若被固件拒绝会降级为阻塞读（停帧保护失效），
   启动日志出现 `camera.read(block=...) unsupported` 即须升级固件。
 

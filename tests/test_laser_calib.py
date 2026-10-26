@@ -566,3 +566,68 @@ def test_guide_toggle_has_no_hardware_side_effect():
     assert sent == [] and tuner._guide_on is True
     tuner.on_leave()                       # 兜底关激光只由 laser_is_on 决定
     assert sent == []
+
+
+class _FakeImg:
+    """记录 draw 调用的假画布: 锁定按钮/参考线的渲染路径(PC 无 maix.image)。
+
+    存在意义: 曾经只接了点击热区没接渲染, 按钮在设备上隐形 —— 状态级测试
+    全绿也发现不了, 必须有渲染路径断言。
+    """
+
+    def __init__(self, w=640, h=480):
+        self._w, self._h = w, h
+        self.rects, self.strings, self.lines = [], [], []
+
+    def width(self):
+        return self._w
+
+    def height(self):
+        return self._h
+
+    def draw_rect(self, x, y, w, h, color=None, thickness=2):
+        self.rects.append((x, y, w, h, thickness))
+
+    def draw_string(self, x, y, s, color=None, scale=1.0, thickness=1):
+        self.strings.append((x, y, s))
+
+    def draw_line(self, x1, y1, x2, y2, color=None, thickness=1):
+        self.lines.append((x1, y1, x2, y2))
+
+
+def test_guide_button_rendered_with_label():
+    """回归: Line 按钮必须有可见渲染 —— 点击热区不能是隐形的。"""
+    tuner = lt.GksLaserCalibTuner(
+        get_processor=lambda: None, send_laser=lambda on: True)
+    img = _FakeImg()
+    tuner._draw_guide_btn(img)
+    assert lt._UI_GUIDE_BTN[:4] + (-1,) in img.rects       # 填充矩形
+    assert any(s == "Line:OFF" for _, _, s in img.strings)
+    tuner._toggle_guide()
+    img2 = _FakeImg()
+    tuner._draw_guide_btn(img2)
+    assert any(s == "Line:ON" for _, _, s in img2.strings)
+
+
+def test_guide_line_rendered_at_center_when_on():
+    """开关控制竖线: 关不画; 开画在画面中心 x, 从顶栏下沿到底。"""
+    tuner = lt.GksLaserCalibTuner(
+        get_processor=lambda: None, send_laser=lambda on: True)
+    img = _FakeImg(w=640, h=480)
+    tuner._draw_guide(img)
+    assert img.lines == []
+    tuner._toggle_guide()
+    tuner._draw_guide(img)
+    assert img.lines == [(320, 30, 320, 480)]
+
+
+def test_guide_click_route_toggles():
+    """按钮矩形内的点击必须路由到 _toggle_guide。"""
+    tuner = lt.GksLaserCalibTuner(
+        get_processor=lambda: None, send_laser=lambda on: True)
+    img = _FakeImg()
+    bx, by, bw, bh = lt._UI_GUIDE_BTN[:4]
+    tuner._handle_click(img, bx + 10, by + 10)
+    assert tuner._guide_on is True
+    tuner._handle_click(img, bx + 10, by + 10)
+    assert tuner._guide_on is False

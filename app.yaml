@@ -1,7 +1,7 @@
 id: gks_nearcam
 name: gks_nearcam
 name[zh]: 工科赛近端视觉
-version: 2.11.5
+version: 2.12.1
 icon: app.png
 author: GongKeSai 2026
 desc: >-
@@ -31,6 +31,18 @@ files:
   - assets\models\hostage_yolov5_cam1\model_239147.cvimodel
   - assets\models\hostage_yolov5_cam1\model_239147.mud
   - assets\restart.png
+  - framework\display\taps\__init__.py
+  - framework\display\taps\base.py
+  - framework\display\taps\jpeg.py
+  - framework\display\taps\lcd.py
+  - framework\display\taps\null.py
+  - framework\display\__init__.py
+  - framework\display\gate.py
+  - framework\display\metrics.py
+  - framework\display\policy.py
+  - framework\display\service.py
+  - framework\display\sources.py
+  - framework\display\types.py
   - framework\hal\interface\__init__.py
   - framework\hal\interface\ai.py
   - framework\hal\interface\camera.py
@@ -71,6 +83,7 @@ files:
   - modules\zw_opencv_module\config\vision_config.yaml
   - modules\zw_opencv_module\debug\__init__.py
   - modules\zw_opencv_module\debug\lab_session.py
+  - modules\zw_opencv_module\debug\laser_calib_tuner.py
   - modules\zw_opencv_module\debug\rescue_tuner.py
   - modules\zw_opencv_module\debug\threshold_tuner.py
   - modules\zw_opencv_module\detectors\eod_color\__init__.py

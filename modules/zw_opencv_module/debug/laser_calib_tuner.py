@@ -51,7 +51,8 @@ from modules.zw_opencv_module.processors.gks_task_processor import (
 _UI_TOPBAR_H = 30
 _UI_BTN_W = 70
 _UI_LASER_BTN = (12, 60, 130, 54)   # Laser 开关按钮 (x, y, w, h)
-_UI_GUIDE_BTN = (12, 122, 130, 54)  # 手动校零参考线开关(竖线 @ 画面中心 x)
+_UI_GUIDE_BTN = (12, 144, 130, 54)  # 手动校零参考线开关(竖线 @ 画面中心 x);
+                                    # y 让开 Laser 按钮下的 a/core/dom 读数文本
 
 
 def _pack(rgb) -> int:
@@ -416,6 +417,7 @@ class GksLaserCalibTuner:
                    color=self._C["black"], thickness=-1)
         self._draw_topbar(img)
         self._draw_laser_btn(img)
+        self._draw_guide_btn(img)
 
         x, y, pressed = ts.read()
         clicked = pressed and not self._pressed_last
@@ -494,6 +496,14 @@ class GksLaserCalibTuner:
             self._text(img, x, y + h + 6,
                        f"a={st.get('area', 0)} core={st.get('core', 0)} "
                        f"dom={st.get('dom', 0)}", self._C["cyan"], 1.0)
+
+    def _draw_guide_btn(self, img) -> None:
+        """Line 按钮渲染(镜像 _draw_laser_btn): 开=青, 关=灰。"""
+        x, y, w, h = _UI_GUIDE_BTN
+        color = self._C["cyan"] if self._guide_on else self._C["gray"]
+        self._rect(img, x, y, w, h, color, thickness=-1)
+        label = "Line:ON" if self._guide_on else "Line:OFF"
+        self._text(img, x + 8, y + h // 2 - 8, label, self._C["black"], 1.1)
 
     def _draw_guide(self, img) -> None:
         """手动校零竖线(检测失效时的物理对齐基准, Line 按钮开关)。

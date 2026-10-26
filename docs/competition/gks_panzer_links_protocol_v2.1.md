@@ -213,7 +213,7 @@ CAM → 中控:  DATA_STREAM [seq, 0x10, sub_payload]   ← 有缓存立刻发�
 | 0x03 REQ_TURNTABLE | 转台定点角：1~3 对坑（1→123° 2→90° 3→57°）；4~6 对桶（4/5→270° 6→90°反向 CW，入桶摆位沿用实车验证值）；7 回正 90°（CCW） | 转台码 0~7（0=不动作） | 保留恒 0 |
 | 0x04 GYRO_ZERO | 陀螺仪置零 + 底盘里程计航向基准复位；**须车静止**（上电流程：扫码→置零→起步） | 0 | 0 |
 | 0x05 TRACKING_START | 打靶段内跟瞄开启（段表不断，靶标前一段开启，边走边修航向；履带动，转盘不动） | tracking_speed_level：0=段表速度 / 1=低速跟瞄 | 0 |
-| 0x06 TRACKING_ERROR | 跟瞄误差流（中控 30~50ms 透传视觉归一化误差，闭环在底盘本地） | error_low_byte，error_high_byte（小端 i16 = horizontal_error_normalized×10000），target_found_flag | —（5B payload） |
+| 0x06 TRACKING_ERROR | 跟瞄误差流（中控**新帧门控事件透传**：收到视觉 0x02 新帧即转，UART4 空闲≈0 时延、忙时 ≤一个帧时长内接力；重复帧不透传——底盘靠 frame_age 老化判丢目标，found=0/stale 不透传假误差。闭环在底盘本地。历史：定时 30~50ms → 2026-09-29 新帧门控+TIM4 拍 ≤10ms → v2.3-r2 事件泵 ≤1ms） | error_low_byte，error_high_byte（小端 i16 = horizontal_error_normalized×10000），target_found_flag | —（5B payload） |
 | 0x07 TRACKING_STOP | 跟瞄停止 | tracking_stop_mode：0=就地刹停等发射 / 1=发射后继续走完当前段 | 0 |
 
 - REQ_NAV 与 REQ_TURNTABLE 相互独立、任意先后；转台动作不再绑定路线节点，
@@ -454,7 +454,7 @@ UART4 底盘→中控 TRACKING_FAULT(预留, 未实现):AA 55 0D 24 05 22 06 00 
 
 | 端 | 口 | 事件行（主循环回发，事件驱动） | 查询输入 | 查询回行 |
 |---|---|---|---|---|
-| panzer_Brain | USART3, 115200 | `NACK:[C/Q/R]<sub>/<reason> #<n>`（C=底盘链/Q=USART2 扫码/R=USART1 近相机） | `'?'` | `BRAIN:<状态名> ACK:<n> NACK:<n> <sub>/<reason>` |
+| panzer_Brain | USART3, 115200 | `NACK:[C/Q/R]<sub>/<reason> #<n>`（C=底盘链/Q=USART2 扫码/R=USART1 近相机） | `'?'` | `BRAIN:<状态名> ACK:<n> NACK:<n> <sub>/<reason> FWD:<relay>/<busy>/<gate>`（FWD=0x06 事件泵计数: TxCplt 接力发送 / busy 留槽 / 门控判重吞帧，v2.3-r2 新增） |
 | panzer | USART2, 115200 | `ACK:<sub>/<status> #<n>`、`NACK:<sub>/<reason> #<n>`（自报无链路前缀，与 Brain `[C]` 行同构对照） | `'?'`（USART2 RX DMA1_S5/CH4，IDLE+0x8000 突发扫描） | `CHASSIS:NAV=<I/R/D> ID=<nav_id> SEG=<seg>/<done> TRK=<I/R/L> E=<误差x10000>` + `POSE:<x_mm> <y_mm> <yaw_x10deg>` |
 
 联调试法：同一参数错误在 Brain 侧打 `NACK:[C]02/03`、底盘侧打 `NACK:02/03`，两边 `#n` 应同步递增；底盘 ORE/错误重装沿用 UART4 ErrorCallback 同款。USART2 RX DMA 用 HAL 旧式 Stop+重装骨架（同 UART4 实车验证路径），IDLE→重装窗口丢字节仅影响 '?' 类人工单字节输入，可忽略。
@@ -465,10 +465,12 @@ UART4 底盘→中控 TRACKING_FAULT(预留, 未实现):AA 55 0D 24 05 22 06 00 
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v2.3-r2 | 2026-10-25 | 0x06 TRACKING_ERROR 转发时序修订（**帧字节不变**，仅 Brain 实现层）：定时 30~50ms → **新帧门控事件透传**。视觉 0x02 新帧到达即转（USART1 RX 事件泵 + UART4 TX 完成接力 + TIM4 10ms 兜底，`Tracking_Fwd_Pump`）；重复帧不透传（保底盘 frame_age 丢目标判定）、found=0/stale 不透传、NAV↔ALIGN 段切换重置语义保留；编译开关 `TRACKING_FWD_EVENT_MODE=0` 完整回退旧拍轮询。USART3 `'?'` BRAIN 行行尾追加 `FWD:<relay>/<busy>/<gate>` 观测计数（§7.1 同步） |
 | v2.3 | 2026-10-15 | 附录新增从→主帧型 0x25 CMD_LASER（激光开关, Brain 写 PA4）—— 仅以独立附录 gks_laser_ctrl_addendum_v2.3.md 承载, 本文档帧型表补指针行 |
+| v2.3-r1 | 2026-10-24 | 激光极性更正为高有效（对齐 2026-09-14 实测）：0x25 的 `on_off=0x01` = PA4 拉高（开）、`0x00` = 拉低（关）。**帧字节不变**，仅电平语义互换。详见附录 v2.3-r1 |
 | v2.2 | 2026-09-14 | NACK 全链路语义落地（§1.4 新章节）：原因码统一枚举 0x01 FORMAT/0x02 BUSY/0x03 PARAM/0x04 UNKNOWNSUB（相机 0x01/0x02 语义与格式不变）；底盘 NACK 升级 3B `[0x21, sub_cmd_echo, reason]`（legacy 2B 仍接受，master 按 payload 长度判别），逐请求拒绝对照表 + 样例帧；Brain 新增三链路 NACK 解析与 volatile 计数 / fresh 事件标志，按 sub_cmd_echo 立即作废对应 sent 标志触发下拍重发，USART3 调试口主循环异步回显 NACK 事件与计数；底盘新增 USART2 调试口（RX DMA1_S5/CH4）ACK/NACK 事件与 '?' 状态查询（§7.1）；Zulu-Walker SDK NACK_REASON_NAMES 补 0x03/0x04 |
 | v2.1 | 2026-09-12 | 入桶方向补全 + 航向重锚恢复：REQ_TURNTABLE arg0 扩展 4~6 对桶（270°/270°/90°反向CW，摆位沿用旧实测值）与 7 回正90°，TURN_DONE echo 泛化为 arg0 回显，投放后回正与下一 NAV 同拍并行；nav_id 新增 6/7 重锚伪路线（MF_SEG_TURN_TO 原地转绝对角 −90.3°/−179.8°，复用 NAV 幂等/看门狗/重发全套机制），主控在排爆区对坑前与携人质返程前各调度一次 |
-| v2.0 | 2026-09-11 | 打靶段内跟瞄（段表不断）：视觉 0x02 直推归一化误差 e=(cx-320)/320；新增 TRACKING_START/ERROR/STOP + TRACKING_DONE/FAULT（全称语义变量）；底盘段内叠加视觉航向修正、收敛段内刹停、发射后继续走完当前段；REQ_TURNTABLE 恢复固定角（删 err）；激光 PA4 拉低发射 |
+| v2.0 | 2026-09-11 | 打靶段内跟瞄（段表不断）：视觉 0x02 直推归一化误差 e=(cx-320)/320；新增 TRACKING_START/ERROR/STOP + TRACKING_DONE/FAULT（全称语义变量）；底盘段内叠加视觉航向修正、收敛段内刹停、发射后继续走完当前段；REQ_TURNTABLE 恢复固定角（删 err）；激光 PA4 拉高发射（2026-09-14 实测高有效；0x25 帧型见 v2.3 附录） |
 | v1.5 | 2026-09-10 | 远端改常扫+缓存+请求即回（时刻扫码画 bbox，无码等扫到再回，不回空帧）；近端修任务码切换清 latch、无阈值空帧心跳、阈值缺失保护；帧格式/Brain 零改动 |
 | v1.4 | 2026-09-09 | 段表改为原 flags 路线完整复刻（基线 git true_BOOM_Finish：距离/速度/加速度/转弯机制全用原值，单位=旧 Car_Pos，R=2π×轮径，WHEEL_DIA_M 采 150mm 记录值）；Motion 库去硬件化：mf_tick 改纯消费 `Car_Sense` 采样快照（seq 去重），采集/存储/执行移入 sense 层，删 mf_hal；新增 sub_cmd 0x04 GYRO_ZERO（置零+里程计航向基准复位）；上电全自动流程：IDLE 静置→原点扫码（周期重发直到读出）→陀螺仪置零静置→NAV 起步，删调试口 'g' 手动触发；§4.2/§4.4/§7 随实现刷新 |
 | v1.3 | 2026-09-09 | 底盘侧落地（线上协议不变）：段表实现为 Motion 库 mf_seg_t（Control_Car.c 按 nav_id 索引），mf_tick 融合进 TIM4 10ms 循环；UART4 换 protocol 框架解析；Brain 三链路收发回调 + mission_sm 接通 NAV/QR/急停；任务流改为原点长焦扫码（EXE_QR 提前，NAV_TO_BOMB 前插 43cm 首段直达排爆）；USART1 订阅帧扩展携带任务码（5B payload）；近/远端 MaixCAM 改帧编解码；§2.1/§4.4/§7 随实现刷新 |

@@ -188,7 +188,14 @@ def build_cmd_stop_frame() -> bytes:
 
 
 def build_cmd_laser_frame(on: bool) -> bytes:
-    """Build TYPE_CMD_LASER frame [on_off, rsv x7]; Brain 写 PA4, 无应答。"""
+    """Build TYPE_CMD_LASER frame [on_off, rsv x7]; Brain 写 PA4, 无应答。
+
+    电平语义(2026-10-24 与 Brain 对齐, 依据 2026-09-14 硬件实测): 激光**高有效**,
+    `on=True` -> PA4 拉高 = 发射, `on=False` -> PA4 拉低 = 熄灭。
+    只改电平解释, **帧字节不变**(on_off 仍是 0x01/0x00), 测试向量保持
+    `...01...8F 91` / `...00...C8 42`。旧文档写的"拉低发射"是反的, 见
+    docs/competition/gks_laser_ctrl_addendum_v2.3.md 的 v2.3-r1。
+    """
     payload = bytes([0x01 if on else 0x00]) + b"\x00" * 7
     return _build_frame(TYPE_CMD_LASER, payload)
 

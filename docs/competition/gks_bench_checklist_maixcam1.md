@@ -73,14 +73,30 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
 
 | # | 发送 | 预期 |
 |---|---|---|
-| 1 | 5B 订阅 `[0x01, 50, 爆色, 靶色, 形状]` | ACK `[0x01,60,10]`；HUD `MODE:EXPLOSIVE LINK:OK`；**推流率≈相机帧率（CAM1 上限约 30fps）**，无新结果时按 50ms 推心跳（下限 30ms） |
-| 2 | 切`0x02` TARGET | 归一化误差定点 `err_fixed` = (cx-w/2)/(w/2) ×10000，clamp ±1 |
+| 1 | 5B 订阅 `[0x01, 50, 爆色, 靶色, 形状]` | ACK `[0x01,60,10]`；HUD `MODE:EXPLOSIVE LINK:OK`；**推流率≈相机帧率（60fps 实测可达, 2026-10-25）**，无新结果时按 50ms 推心跳（下限 30ms） |
+| 2 | 切`0x02` TARGET | 归一化误差定点 `err_fixed` = (cx-w/2)/(w/2) ×10000，clamp ±1；Brain 侧对每帧**收到即转**（0x06 事件泵，见 §3.1） |
 | 3 | 切 `0x03` RESCUE | 三形状坑位 `pos` 1..3；模型缺失则 NACK NOT_READY |
 | 4 | STOP `0x23` | 停推流，HUD 回 `MODE:IDLE` |
 | 5 | 拔线/主站停发 | 1s 内停止推流 |
 
-⚠ **帧率预期必须与 Brain 侧对齐**：CAM1 推流上限约 30fps，Brain 的 1s stale 判定与看门狗
-不受影响，但任何"按 50fps 节奏等数据"的假设都要下调。
+⚠ **帧率预期**：CAM1 出帧 60fps 实测可达（`[FPS] pipeline` 同源证据）；但每帧**帧龄
+仍 ~30ms**（固件取图延时，不随帧率下降）——时延敏感的下游按帧龄算账。
+
+## 3.1 Brain 侧 0x06 事件泵核对（2026-10-25 落地，需联机）
+
+Brain 已把 UART4 打靶误差透传从"TIM4 10ms 拍轮询"改为"收到即转"事件泵
+（USART1 RX 收到 0x02 新帧即发 0x06，忙时 TxCplt 接力/TIM4 兜底；重复帧不透传，
+保底盘 frame_age 丢目标判定。协议 md §4.2/v2.3-r2）。逐项核对:
+
+| # | 检查项 | 预期 |
+|---|---|---|
+| 1 | 直通时延 | 逻辑分析仪/示波器: USART1 0x02 帧尾 → UART4 0x06 帧头间距 **<1ms**（旧路径 ≤10ms 拍抖动） |
+| 2 | `FWD:` 三计数 | Brain USART3 发 `'?'`，BRAIN 行行尾 `FWD:<relay>/<busy>/<gate>`：gate 随打靶缓增正常；busy 偶发正常（留槽由接力/兜底重试，无 >50ms 断流）；relay>0 说明接力路径真实工作 |
+| 3 | 无重复帧 | 底盘侧 0x06 逐帧 tick 不同（frame_age 不被重复重置）；同帧双发 = 门控失效，立即停用排查 |
+| 4 | 段切换重置 | NAV_TARGET→ALIGN_TARGET 交界: NAV 末帧与 ALIGN 首帧同 tick 时，ALIGN 首帧仍能发出（gate 计数不异常暴涨） |
+| 5 | 急停断流 | 打靶中 USART3 发 `'S'`: 急停后无 0x06 续发（相位活位熄灭 + Cam1_Stop 断流双保险） |
+| 6 | 回退演练（至少一次） | `interrupt.h` `TRACKING_FWD_EVENT_MODE` 置 0 重编烧录: 行为与改造前一致（FWD 恒 0、≤10ms 拍节奏），验完回 1 |
+| 7 | 底盘侧复标 | Brain 侧 10ms 量化时延已移除（均 ~5ms），底盘 `TRACKING_LAG_MS=69` 预测阈含旧标定，按 `panzer/App/nav_tracking.h` 头注释规程复标 |
 
 ## 4. 排爆/人质硬要求（沿用CAM2 规范）
 
