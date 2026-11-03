@@ -1,4 +1,5 @@
 from .ai import MaixCam1AI
+from .battery import MaixCam1Battery
 from .camera import MaixCam1Camera
 from .display import MaixCam1Display
 from .uart import MaixCam1Uart
@@ -38,12 +39,20 @@ def create_ai() -> MaixCam1AI:
     return MaixCam1AI()
 
 
+def create_battery() -> MaixCam1Battery:
+    # 不在这里构造 PMU: 那是一次 I2C 事务, 放到启动路径上等于给 boot 加一次不可控
+    # 阻塞。句柄由第一次 read() 懒建, 之后常驻。
+    return MaixCam1Battery()
+
+
 __all__ = [
     "MaixCam1AI",
+    "MaixCam1Battery",
     "MaixCam1Camera",
     "MaixCam1Display",
     "MaixCam1Uart",
     "create_ai",
+    "create_battery",
     "create_camera",
     "create_display",
     "create_uart",
