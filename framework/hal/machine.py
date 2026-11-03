@@ -8,7 +8,7 @@ from typing import Optional
 import yaml
 
 from framework.hal.camera_hub import CameraHub
-from framework.hal.interface import AIInference, Display, Uart
+from framework.hal.interface import AIInference, Battery, Display, Uart
 from utils.boot_timing import BootTimer
 try:
     from utils.cpu_affinity import configure as configure_cpu_affinity
@@ -25,11 +25,13 @@ class Machine:
         display: Display,
         uart: Uart,
         ai: Optional[AIInference] = None,
+        battery: Optional[Battery] = None,
     ) -> None:
         self.camera_hub = camera_hub
         self.display = display
         self.uart = uart
         self.ai = ai
+        self.battery = battery
 
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
@@ -106,6 +108,14 @@ class Machine:
             uart = None
         bt.mark("uart")
 
+        # 电量: 构造不碰硬件（Pro 的 PMU 句柄在第一次 read 时懒建）, 所以不打点。
+        # 失败不致命: 没有电量计就退化成"不显示电量"。
+        try:
+            battery = platform_mod.create_battery()
+        except Exception as e:
+            logger.warning("Battery creation failed (non-fatal): %s", e)
+            battery = None
+
         # --- AI initialization ---
         ai: Optional[AIInference] = None
         if ai_config is not None:
@@ -140,7 +150,7 @@ class Machine:
                 ai = None
 
         bt.summary("Machine.create")
-        return cls(camera_hub=hub, display=display, uart=uart, ai=ai)
+        return cls(camera_hub=hub, display=display, uart=uart, ai=ai, battery=battery)
 
     def close(self) -> None:
         if self.camera_hub:

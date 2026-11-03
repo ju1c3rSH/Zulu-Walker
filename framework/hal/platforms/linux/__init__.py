@@ -11,7 +11,14 @@ from .camera import LinuxCamera
 from .display import LinuxDisplay
 from .uart import LinuxUart
 
+from framework.hal.interface import NullBattery
+
 logger = logging.getLogger(__name__)
+
+
+def create_battery() -> NullBattery:
+    """PC 上没有电量计; 返回 -1 的默认实现, 让调用方少两个 None 分支。"""
+    return NullBattery()
 
 
 def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> LinuxCamera | None:
@@ -64,7 +71,9 @@ __all__ = [
     "LinuxCamera",
     "LinuxDisplay",
     "LinuxUart",
+    "NullBattery",
     "create_ai",
+    "create_battery",
     "create_camera",
     "create_display",
     "create_uart",
