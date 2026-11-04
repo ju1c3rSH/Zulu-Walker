@@ -108,13 +108,14 @@ class Machine:
             uart = None
         bt.mark("uart")
 
-        # 电量: 构造不碰硬件（Pro 的 PMU 句柄在第一次 read 时懒建）, 所以不打点。
-        # 失败不致命: 没有电量计就退化成"不显示电量"。
+        # 电量: 与 display/uart 一样在 create 阶段初始化（Pro 上 open i2c-4, ~2.4ms）。
+        # 不能留到第一次 read —— 那把一次冷 import 塞进了主循环。
         try:
             battery = platform_mod.create_battery()
         except Exception as e:
             logger.warning("Battery creation failed (non-fatal): %s", e)
             battery = None
+        bt.mark("battery")
 
         # --- AI initialization ---
         ai: Optional[AIInference] = None

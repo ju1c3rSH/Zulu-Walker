@@ -129,6 +129,25 @@ uart_defaults:
   port: "/dev/ttyS0"
   baudrate: 115200     # keep 115200: official docs warn other baud rates are unreliable
 
+# ---- 电量（Pro: AXP2101 / CAM2: CW2015）----
+# 采集在主循环里按 monotonic 判据降频（modules/zw_battery_module），不开线程。
+#   poll_interval_ms: 一次完整读实测 1.02ms（Pro，2026-11-03；加 is_charging 后约
+#     1.30ms），落在主循环的一拍里；DATA_STREAM 推迟 ≤1ms，不丢帧（结果在 deque 里，
+#     推流用当次 now）。
+#   ⚠ 不要改回"每 N 拍采一次": 台架实测主循环只有 89Hz（11.2ms/拍 —— sleep(2ms) 被
+#     Linux 定时器粒度拉长，body 只有 0.82ms），5000 拍 = 56s 而不是 10s；而且拍长随
+#     负载变（开调试页时 step() 含 show()，4~8ms/拍）。计数器不是时间单位。
+#   ⚠ 首拍即采，否则开机要等满一个周期才有第一个读数。
+#   日志: **快照发布就打印一行**（每 10s），`log_print` 一次调用同时进控制台与
+#     logs/debug.log，所以"控制台 + 存档 + HUD"是同一个快照喂出来的三个消费者，
+#     没有第二条 I/O 路径。8640 行/天 ≈ 730KB/天。**不要**改回"值变了才打"：那样
+#     debug.log 里的电量大段空缺，事后无法回答"那段时间到底采没采"（2026-11-03 踩过）。
+#     `percent=-1` 也照打（没有第二套策略）；嫌吵就 `enabled: false`。
+battery:
+  enabled: true
+  poll_interval_ms: 10000
+  low_percent: 20          # 低于它转红
+
 ai:
   models:
     # 人质形状 YOLOv5 (yao_gu/yuan_zhu/yuan_tai) —— CVITEK .cvimodel，MaixCAM 专用格式

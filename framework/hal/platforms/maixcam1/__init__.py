@@ -40,8 +40,8 @@ def create_ai() -> MaixCam1AI:
 
 
 def create_battery() -> MaixCam1Battery:
-    # 不在这里构造 PMU: 那是一次 I2C 事务, 放到启动路径上等于给 boot 加一次不可控
-    # 阻塞。句柄由第一次 read() 懒建, 之后常驻。
+    # 与 create_display/create_uart 一致: 在 create 阶段就把硬件打开。
+    # 不能留到第一次 read() —— 那把"冷 import maix.ext_dev"塞进了主循环的一拍。
     return MaixCam1Battery()
 
 

@@ -878,10 +878,17 @@ def main():
         pass
 
     manager = ModuleManager(machine, event_bus=bus, wdt_feed=wdt_feed, config=config)
-    manager.register_many([_VISION_MODULE, "zw_uart_module", "zw_wifi_stream"])
+    manager.register_many([_VISION_MODULE, "zw_uart_module", "zw_wifi_stream",
+                           "zw_battery_module"])
 
     from modules.zw_opencv_module import get_vision_manager
     from modules.zw_uart_module import get_interface
+
+    # 电量: 采集在主循环慢节拍（zw_battery_module），HUD 只读快照。
+    battery_mod = manager.get_module("zw_battery_module")
+    battery_sampler = battery_mod.get_sampler() if battery_mod else None
+    if battery_sampler is None:
+        log_print("[BAT] 未接入（模块没加载，或 battery.enabled=false）")
 
     vision_manager = get_vision_manager()
     if vision_manager:
