@@ -893,7 +893,13 @@ def main():
     vision_manager = get_vision_manager()
     if vision_manager:
         coordinator.connect_vision(vision_manager)
-        vision_manager.set_hud(DisplayHUD(status_fn=coordinator.get_info))
+        # battery_stale_s=30: 正常 10s 一更，30s 没刷新就说明采样卡住/总线坏了，数字转灰。
+        # 退避到 60s 时数字确实已经旧了 —— 那时转灰是正确表现，不需要跟着放大阈值。
+        vision_manager.set_hud(DisplayHUD(
+            status_fn=coordinator.get_info,
+            battery_fn=battery_sampler.snapshot if battery_sampler else None,
+            battery_stale_s=30.0,
+        ))
 
     uart_interface = get_interface()
     if uart_interface:

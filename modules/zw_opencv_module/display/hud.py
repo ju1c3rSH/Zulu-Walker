@@ -9,6 +9,7 @@
   检测叠加（bbox+标签）来自处理器 hits（RGB 色, maix Image 为 RGB888）。
 - 引导叠加: 靶标 ROI 两条横线 + 水平中线/误差刻度（读 get_info().target_roi）。
 - 告警横幅: 模型未加载/阈值缺失/推流停摆/NACK 文案, 单行红/黄色条。
+- 电量: 第二行右对齐, 只读 BatterySampler 的快照（无 I/O）。
 
 HUD 不解释像素, 只做呈现; 状态来自 status_fn（coordinator.get_info）。
 PC 无 maix 时所有绘制静默跳过（pytest 不受影响）。
@@ -48,6 +49,13 @@ _BAR_H = 30
 _LINE2_H = 24
 _BANNER_H = 20
 
+# 电量等级 → 颜色键; 等级在采集侧算好。
+_BAT_COLORS = {"charging": "green", "ok": "white", "low": "red", "unknown": "gray"}
+_BAT_Y = _BAR_H + 2
+_BAT_SCALE = 1.2
+_BAT_MARGIN = 8
+_TEXT_GAP = 6           # 第二行文字与电量之间的最小间隙
+
 
 def _try_import_maix_image():
     try:
@@ -60,8 +68,20 @@ def _try_import_maix_image():
 class DisplayHUD:
     """状态栏 + 检测叠加。draw() 每显示帧调用一次（显示线程/处理循环）。"""
 
-    def __init__(self, status_fn: Optional[Callable[[], dict]] = None):
+    def __init__(self, status_fn: Optional[Callable[[], dict]] = None,
+                 battery_fn: Optional[Callable[[], object]] = None,
+                 battery_stale_s: float = 30.0):
         self._status_fn = status_fn
+        self._battery_fn = battery_fn
+        self._battery_stale_s = float(battery_stale_s)
+        self._bat_pct = -2          # -2 = 还没画过, 首帧就要量宽
+        self._bat_mv = -2
+        self._bat_text = ""
+        self._bat_w = 0
+        self._bat_short = ""        # 与第二行撞车时退化成 "BAT:87%"
+        self._bat_short_w = 0
+        self._line2_text = ""       # 第二行当前文本/宽度, 供电量行避让
+        self._line2_w = 0
         self._mi = _try_import_maix_image()
         self._draw_once_logged = False
         self._diag_logged = {}
@@ -113,6 +133,7 @@ class DisplayHUD:
         self._draw_bar(img)
         self._draw_line1(img, status, fps)
         self._draw_line2(img, status)
+        self._draw_battery(img)
         self._draw_debug(img, status, fps)
         self._draw_hits(img, results or {})
         self._draw_guides(img, status)
@@ -175,7 +196,7 @@ class DisplayHUD:
         codes = status.get("codes") or [0, 0, 0]
         y = _BAR_H + 2
         if mode == "IDLE":
-            self._text(img, 6, y, "IDLE (wait CMD_REQUEST)", self._c["gray"], scale=1.2)
+            self._line2(img, y, "IDLE (wait CMD_REQUEST)", self._c["gray"])
             return
 
         parts = [f"CODES:{codes}"]
@@ -196,7 +217,71 @@ class DisplayHUD:
             parts.append(f"POS:{status.get('pos', 0)}")
 
         color = self._c["green"] if status.get("found") else self._c["yellow"]
-        self._text(img, 6, y, "  ".join(parts), color, scale=1.2)
+        self._line2(img, y, "  ".join(parts), color)
+
+    def _line2(self, img, y, text: str, color) -> None:
+        """第二行文本 + 缓存宽度（电量行靠它避让，只在文本变化时量一次）。"""
+        if text != self._line2_text:
+            self._line2_text = text
+            self._line2_w = self._measure(text, 1.2)
+        self._text(img, 6, y, text, color, scale=1.2)
+
+    # ---- battery (第二行右对齐) ----
+
+    def _measure(self, text: str, scale: float) -> int:
+        try:
+            return int(self._mi.string_size(text, scale=scale, thickness=1)[0])
+        except Exception:
+            return int(8 * len(text) * scale)
+
+    def _draw_battery(self, img) -> None:
+        """每帧 1 次 draw_string; 文本与宽度只在百分比变化时重算。
+
+        放第二行而不放第一行: 第一行右侧已被 T:FOUND / FPS 占满, 只剩 ~130px。
+        ⚠ 这里跑的线程是**视觉线程**（同线程在跑 find_blobs）: 任何异常都会冒到
+        `vision_manager` 的兜底 except → traceback 走 stderr + sleep(1.0) 停帧。
+        所以失败一次就把输入断开, 与 `_fetch_status` 同约定。
+        """
+        if self._battery_fn is None:
+            return
+        try:
+            snap = self._battery_fn()
+        except Exception as e:
+            self._diag("battery", e)
+            self._battery_fn = None
+            return
+
+        pct, mv = snap.percent, snap.millivolts
+        if pct != self._bat_pct or mv != self._bat_mv:
+            self._bat_pct, self._bat_mv = pct, mv
+            if pct < 0:                 # -1 = 无电池/未采到: 不画
+                self._bat_text, self._bat_w = "", 0
+                self._bat_short, self._bat_short_w = "", 0
+            else:
+                if mv >= 0:
+                    self._bat_text = f"BAT:{pct}% {mv / 1000:.2f}V"
+                else:
+                    self._bat_text = f"BAT:{pct}%"
+                self._bat_w = self._measure(self._bat_text, _BAT_SCALE)
+                self._bat_short = f"BAT:{pct}%"
+                self._bat_short_w = (self._measure(self._bat_short, _BAT_SCALE)
+                                     if self._bat_text != self._bat_short else self._bat_w)
+        if not self._bat_text:
+            return
+
+        # 第二行最长出现在 TARGET + THR:MISSING（~57 字符），会压到右对齐的电量。
+        # 撞车就退化成只画百分比, 再撞就整行不画 —— 宁可少一个数字也不叠成一团。
+        x = img.width() - _BAT_MARGIN - self._bat_w
+        text, w = self._bat_text, self._bat_w
+        if x < 6 + self._line2_w + _TEXT_GAP:
+            text, w = self._bat_short, self._bat_short_w
+            x = img.width() - _BAT_MARGIN - w
+            if x < 6 + self._line2_w + _TEXT_GAP:
+                return
+
+        level = snap.level if time.monotonic() - snap.ts <= self._battery_stale_s else "unknown"
+        self._text(img, x, _BAT_Y, text, self._c[_BAT_COLORS.get(level, "gray")],
+                   scale=_BAT_SCALE)
 
     # 顶栏已绘制过的键，调试行不再重复（state/link/fps → 行1; codes/pending → 行2）
     _DEBUG_DUP_KEYS = ("state", "link_active", "fps", "codes", "pending")
