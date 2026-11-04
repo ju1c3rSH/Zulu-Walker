@@ -1,7 +1,7 @@
 id: gks_nearcam
 name: gks_nearcam
 name[zh]: 工科赛近端视觉
-version: 2.12.1
+version: 2.13.1
 icon: app.png
 author: GongKeSai 2026
 desc: >-
@@ -28,8 +28,6 @@ files:
   - app\page_router.py
   - app\page_sm.py
   - app\subscription_sm.py
-  - assets\models\hostage_yolov5_cam1\model_239147.cvimodel
-  - assets\models\hostage_yolov5_cam1\model_239147.mud
   - assets\restart.png
   - framework\display\taps\__init__.py
   - framework\display\taps\base.py
@@ -45,6 +43,7 @@ files:
   - framework\display\types.py
   - framework\hal\interface\__init__.py
   - framework\hal\interface\ai.py
+  - framework\hal\interface\battery.py
   - framework\hal\interface\camera.py
   - framework\hal\interface\display.py
   - framework\hal\interface\uart.py
@@ -56,11 +55,13 @@ files:
   - framework\hal\platforms\linux\uart.py
   - framework\hal\platforms\maixcam1\__init__.py
   - framework\hal\platforms\maixcam1\ai.py
+  - framework\hal\platforms\maixcam1\battery.py
   - framework\hal\platforms\maixcam1\camera.py
   - framework\hal\platforms\maixcam1\display.py
   - framework\hal\platforms\maixcam1\uart.py
   - framework\hal\platforms\maixcam2\__init__.py
   - framework\hal\platforms\maixcam2\ai.py
+  - framework\hal\platforms\maixcam2\battery.py
   - framework\hal\platforms\maixcam2\camera.py
   - framework\hal\platforms\maixcam2\display.py
   - framework\hal\platforms\maixcam2\uart.py
@@ -71,6 +72,7 @@ files:
   - framework\hal\platforms\mock\uart.py
   - framework\hal\platforms\lazy_frame.py
   - framework\hal\__init__.py
+  - framework\hal\battery_sampler.py
   - framework\hal\camera_hub.py
   - framework\hal\machine.py
   - framework\state_machine\__init__.py
@@ -79,6 +81,7 @@ files:
   - framework\event_bus.py
   - framework\log.py
   - framework\module_manager.py
+  - modules\zw_battery_module\__init__.py
   - modules\zw_opencv_module\config\eod_config.yaml
   - modules\zw_opencv_module\config\vision_config.yaml
   - modules\zw_opencv_module\debug\__init__.py
@@ -115,6 +118,7 @@ files:
   - modules\zw_uart_module\uart_driver.py
   - modules\zw_wifi_stream\__init__.py
   - modules\zw_wifi_stream\streamer.py
+  - scripts\battery_probe.py
   - scripts\wdt_probe.py
   - utils\__init__.py
   - utils\boot_timing.py
