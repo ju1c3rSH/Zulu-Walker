@@ -51,6 +51,8 @@ class ModuleManager:
         except Exception as e:
             import traceback
             traceback.print_exc()
+            # traceback 走 stderr, 设备控制台只显示 stdout —— 失败必须留一行看得见的
+            log_print(f"[MODULE] {name} 加载失败: {type(e).__name__}: {e}")
             return False
 
     def get_module(self, name: str):
