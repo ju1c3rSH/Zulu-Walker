@@ -17,7 +17,7 @@ from framework.hal.camera_hub import CameraHub
 from framework.display.sources import DisplaySource
 from framework.hal.interface import AIInference
 from utils.boot_timing import thread_cpu as _thread_cpu
-from utils.log_util import log_print, perf_note, perf_t0
+from utils.log_util import log_print, perf_note, perf_t0, perf_interval_s
 
 from .pipeline_camera import PipelineCamera
 from .performance import profiler
@@ -71,7 +71,7 @@ class VisionManager:
         self._hud_draw_interval_s = 0.0
         self._last_hud_draw = 0.0
 
-        # 分项计时汇总（每秒一条 [PERF]）。用途见 _note_perf:
+        # 分项计时汇总（每 `perf_interval_s()` 秒一条 [PERF], 默认 10s）。用途见 _note_perf:
         # 真机帧周期如果明显大于 read+tasks+disp 之和, 差额就是被其它线程的
         # GIL 占用吞掉的时间 —— 2026-10-08 台架实测 CAM1: 识别链路单独跑能到
         # 59.7Hz(取帧0ms+find_blobs 8.9ms), 而带显示线程的真机只有 20.3Hz,
@@ -196,14 +196,14 @@ class VisionManager:
                 time.sleep(1.0)
 
     def set_perf_log(self, enabled: bool) -> None:
-        """开关每帧分项计时的 [PERF] 汇总行（默认开, 一秒一条, 开销可忽略）。"""
+        """开关每帧分项计时的 [PERF] 汇总行（默认开, 每窗口一条, 开销可忽略）。"""
         self._perf_log = bool(enabled)
 
     def _note_perf(self, disp_ms: float, disp_cpu: float, any_fresh: bool,
                    body_ms: float = 0.0, cpu_ms: float = 0.0) -> None:
-        """累计本帧分项耗时, 每秒汇总打一条 [PERF]。
+        """累计本帧分项耗时, 每 `perf_interval_s()` 秒汇总打一条 [PERF]。
 
-        怎么读这行（四段式, 缺一段就会读错）:
+        怎么读这行（五段式, 缺一段就会读错）:
           ① loop = 帧周期（墙上）。loop - body = 视觉线程 sleep 等帧的余量。
           ② read / conv / task / disp = 分项（墙上）。
           ③ 每个分项后面的 `cpu` = 该项真正消耗的 CPU（thread_time）。
@@ -216,6 +216,8 @@ class VisionManager:
               本打点函数自身、sleep(0) 的调度）。
              它接近 0 -> 瓶颈不在框架, 在驱动调用与 GIL, 别去重构框架;
              它很大  -> 才轮到怀疑框架本身。
+          ⑤ `none=` 是**本窗口内**无新帧的帧数, 分母看行尾 `win=`（默认 10s）;
+             `Hz` / `avg` / `每秒 CPU` 本身已按窗口长度归一, 口径与 1s 时代一致。
         """
         if not self._perf_log:
             return
@@ -240,7 +242,7 @@ class VisionManager:
 
         now = time.perf_counter()
         elapsed = now - p["t0"]
-        if elapsed < 1.0:
+        if elapsed < perf_interval_s():
             return
         n = max(1, p["n"])
         loop_ms = elapsed / n * 1000.0
@@ -260,7 +262,8 @@ class VisionManager:
             f"disp={p['disp'] / n:.1f}(cpu{p['disp_cpu'] / n:.2f}) "
             f"none={p['none']} | idle={loop_ms - body_ms:.1f}ms "
             f"自身cpu={own_cpu:.2f}ms "
-            f"未归因={loop_ms - parts - (loop_ms - body_ms):.1f}ms")
+            f"未归因={loop_ms - parts - (loop_ms - body_ms):.1f}ms "
+            f"win={elapsed:.1f}s")
         p.update(t0=now, n=0, read=0.0, read_cpu=0.0, convert=0.0, tasks=0.0,
                  tasks_cpu=0.0, disp=0.0, disp_cpu=0.0,
                  body=0.0, cpu=0.0, none=0)

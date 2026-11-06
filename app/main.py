@@ -790,12 +790,13 @@ def _apply_perf_log_config(cfg, observability=None) -> None:
     两种写法都认（老配置不改也不炸）:
         perf_log: true / false                     # 布尔: 全开 / 按默认组静音
         perf_log: {enabled: false, names: [...]}   # 映射: 可自定义静音标签
-    `observability.perf` / `.perf_detail` 只管 `[PERF] ` 行（存在该键时才生效）。
-    缺键/解析异常 -> 保持默认（全开, 即改前行为）。
+    `observability.perf` / `.perf_detail` / `.perf_interval_s` 只管 `[PERF] ` 行
+    （存在该键时才生效）。缺键/解析异常 -> 保持默认（全开, 窗口取代码默认 10s）。
     """
-    from utils.log_util import (set_perf_log, set_perf_gate, perf_log_enabled,
-                                perf_enabled, perf_detail_enabled)
-    perf = detail = None
+    from utils.log_util import (set_perf_log, set_perf_gate, set_perf_interval,
+                                perf_log_summary, perf_enabled,
+                                perf_detail_enabled, perf_interval_s)
+    perf = detail = interval = None
     try:
         if isinstance(cfg, bool):
             set_perf_log(cfg)
@@ -809,16 +810,22 @@ def _apply_perf_log_config(cfg, observability=None) -> None:
                 perf = bool(observability["perf"])
             if "perf_detail" in observability:
                 detail = bool(observability["perf_detail"])
+            if "perf_interval_s" in observability:
+                interval = observability["perf_interval_s"]
             set_perf_gate(perf, detail)
+            set_perf_interval(interval)
             if perf is False:
                 # ⚠ observability.perf=false 连心跳行一起静音（DATA_STREAM/WDT/MEM）。
                 set_perf_log(False)
     except Exception as e:
         log_print(f"[PERFLOG] 配置应用失败, 保持全开: {type(e).__name__}: {e}")
         return
-    log_print(f"[PERFLOG] perf_log={'ON' if perf_log_enabled() else 'MUTED'} "
+    # `perf_log=` 必须是三态: 只静音 `[WDT]` 时 `perf_log_enabled()` 也是 False,
+    # 直接打 MUTED 会让人以为全静音了。`interval=` 打**生效值**（被 clamp 时不撒谎）。
+    log_print(f"[PERFLOG] perf_log={perf_log_summary()} "
               f"observability.perf={'ON' if perf_enabled() else 'OFF'} "
-              f"perf_detail={'ON' if perf_detail_enabled() else 'OFF'}")
+              f"perf_detail={'ON' if perf_detail_enabled() else 'OFF'} "
+              f"interval={perf_interval_s():.1f}s")
 
 
 def main():

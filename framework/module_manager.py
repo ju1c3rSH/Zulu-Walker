@@ -7,7 +7,7 @@ from typing import Callable, Dict, Optional
 
 from framework.hal import Machine
 from utils.boot_timing import thread_cpu as _thread_cpu
-from utils.log_util import log_print
+from utils.log_util import log_print, perf_interval_s
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class ModuleManager:
         except ImportError:
             pass
 
-        # 主循环分项打点（每秒一条 [PERF]）。
+        # 主循环分项打点（每 `perf_interval_s()` 秒一条 [PERF], 默认 10s）。
         # 为什么需要: 主循环以 MAIN_LOOP_DELAY=2ms 空转 = 每秒 500 次, 每次都要走
         # coordinator.loop() + tick_callback(DebugConsole.set ×6) +
         # display_callback(touch.read() 硬件读)。这些是 Python 侧工作, 累加后可能
@@ -132,7 +132,7 @@ class ModuleManager:
                 _perf["cpu"] += _thread_cpu() - _cpu0
                 _perf["n"] += 1
                 _el = time.perf_counter() - _perf["t0"]
-                if _el >= 1.0:
+                if _el >= perf_interval_s():
                     n = max(1, _perf["n"])
                     body_ms = _perf["body"] / n * 1000.0
                     cpu_ms = _perf["cpu"] / n * 1000.0

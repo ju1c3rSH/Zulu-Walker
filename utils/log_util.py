@@ -1,6 +1,7 @@
 import logging
 import logging.handlers
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -20,7 +21,7 @@ _CONSOLE_MODULE = "utils.debug_console"
 
 # ---- 高频性能日志闸门（默认全开, 保持既有行为）--------------------------------
 # 为什么需要: 台架调试时 `[PERF] vision/mainloop/lcd`、`[UART TX] DATA_STREAM`、
-# `/CMD_ACK`、`[FPS] pipeline`、`[WDT] ... feed`、`[MEM]` 这些行**每秒各刷一条**,
+# `/CMD_ACK`、`[FPS] pipeline`、`[WDT] ... feed`、`[MEM]` 这些行**按各自节拍反复刷**,
 # 合起来把真正想看的信息淹掉。它们全是性能观测/心跳痕迹, 与协议语义无关。
 #
 # 关掉之后**只少打印, 不改变任何行为**:
@@ -35,9 +36,9 @@ _CONSOLE_MODULE = "utils.debug_console"
 # （`[UART ACTION]` 门控、`[UART RX]` 收帧、`[UART TX] CMD_NACK`、`[FPS]`）——
 # 那些是低频事件, 关了就看不出"订没订上/该不该 NACK"。
 _DEFAULT_PERF_NAMES = (
-    "[PERF] vision",        # 视觉线程每帧分项（每秒一条）
-    "[PERF] mainloop",      # 主循环分项（每秒一条）
-    "[PERF] lcd show",      # 显示 show() 开销（每秒一条）
+    "[PERF] vision",        # 视觉线程每帧分项（每窗口一条）
+    "[PERF] mainloop",      # 主循环分项（每窗口一条）
+    "[PERF] lcd show",      # 显示 show() 开销（每窗口一条）
     "[UART TX] DATA_STREAM",  # 推流率心跳（每秒一条, 但高频）
     "[UART TX] CMD_ACK",    # Brain 重订阅洪泛时会被刷屏
     "[WDT] ",               # 主/协调/视觉三处喂狗痕迹（每 600 次一条）
@@ -55,6 +56,13 @@ _PERF_DETAIL = True
 _PERF_GATE_SET = False      # observability.perf 是否被显式配置过
 _PERF_NAMES_MUTE_ALL = False  # 默认组被整组静音 -> 未列名的 `[PERF] ` 行也吞
 _PERF_DEFAULT_SET = frozenset(_DEFAULT_PERF_NAMES)
+
+# 汇总窗口（秒）: 常驻 `[PERF]` 行与 detail 探针的统计周期。
+#   10.0 = 台架/赛场默认（1s 一条太刷屏, 每秒 ~6 行把事件类日志淹掉）;
+#   1.0  = 旧行为, 定位"这一秒时间花在哪"时临时改回。
+# 早前是各发射点硬编码 1.0, 现在统一从这里读, 避免"vision 10s / mainloop 1s"分叉。
+DEFAULT_PERF_INTERVAL_S = 10.0
+_PERF_INTERVAL_S = DEFAULT_PERF_INTERVAL_S
 
 
 def _refresh_mute_all() -> None:
@@ -105,6 +113,48 @@ def perf_log_enabled() -> bool:
     return not _PERF_LOG_NAMES
 
 
+def set_perf_interval(seconds=None) -> None:
+    """设置 `[PERF]` 汇总窗口（秒）。None/非法/非有限值 = 保持现值。
+
+    ⚠ 必须挡掉 NaN/inf:
+      · NaN 能通过 `v <= 0` 之类的检查, 而 `elapsed < nan` 恒为 False
+        -> 每次 add() 都打印, 直接变成日志洪水;
+      · inf 则永远等不到窗口 -> `[PERF]` 全部静默, 比不配更糟（失明且无提示）。
+    ⚠ bool 是 int 子类（True == 1）: 配置写成 `perf_interval_s: true` 时
+      不能把它当成"1 秒"悄悄生效。
+    `<= 0` 视为写错（保持现值）, 不当成"越快越好": 0 秒窗口等于每秒打 N 条。
+    正数下限 0.5s: 再快就回到刷屏区间, 真要逐帧看就该用 detail 探针而不是汇总行。
+    """
+    global _PERF_INTERVAL_S
+    if seconds is None or isinstance(seconds, bool):
+        return
+    try:
+        v = float(seconds)
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(v) or v <= 0:
+        return
+    _PERF_INTERVAL_S = max(0.5, v)
+
+
+def perf_interval_s() -> float:
+    """当前 `[PERF]` 汇总窗口（秒）。各发射点统一从这里读, 避免节拍分叉。"""
+    return _PERF_INTERVAL_S
+
+
+def perf_log_summary() -> str:
+    """`perf_log` 名单状态的三态描述（供 `[PERFLOG]` 自检行）。
+
+    ⚠ 不能用 `perf_log_enabled()` 当文案: 它判的是"名单是否为空",
+      只静音 `[WDT]` 时也返回 False, 打出来会像"全静音"。
+    """
+    if not _PERF_LOG_NAMES:
+        return "ON"
+    if _PERF_NAMES_MUTE_ALL:
+        return "MUTED"
+    return "custom(" + ",".join(sorted(_PERF_LOG_NAMES)) + ")"
+
+
 def perf_enabled() -> bool:
     """`[PERF] ` 行总开关（observability 显式配置优先, 否则由名单推导）。"""
     if _PERF_GATE_SET:
@@ -133,6 +183,12 @@ def _is_coarse_perf(msg: str) -> bool:
 
 def _is_perf_log(msg: str) -> bool:
     """消息是否命中当前被吞的性能日志标签。空集合 -> 恒 False（零开销）。"""
+    # ⚠ 自检/配置行描述闸门本身, 绝不能被闸门吞掉。
+    # `perf_log_summary()` 会把自定义名单原文带进 "[PERFLOG] perf_log=custom([WDT] )",
+    # 而 "[WDT] " 正是被静音的子串 -> 不做这个豁免就会"自我审查", 改完配置连
+    # "改成了什么"都看不到（2026-11 实测踩到, [PERFLOG] 行整个消失）。
+    if msg.startswith("[PERFLOG]"):
+        return False
     if msg.startswith(_PERF_TAG):
         if not perf_enabled():
             return True
@@ -147,7 +203,7 @@ def _is_perf_log(msg: str) -> bool:
 
 
 class PerfAgg:
-    """每秒一条 `[PERF] <label>` 汇总; 闸门关闭时只做一次布尔判断, 零格式化。"""
+    """每 `perf_interval_s()` 秒一条 `[PERF] <label>` 汇总; 关闸时零格式化。"""
 
     __slots__ = ("_label", "_tag", "_t0", "_n", "_ms")
 
@@ -170,7 +226,8 @@ class PerfAgg:
             self._t0 = now
             return
         elapsed = now - self._t0
-        if elapsed < 1.0:
+        # 直接读模块全局: add() 在视觉帧率上调用, 不为一次函数调用付开销。
+        if elapsed < _PERF_INTERVAL_S:
             return
         n = self._n
         avg = self._ms / n
@@ -186,7 +243,7 @@ _AGGS: Dict[str, PerfAgg] = {}
 
 
 def perf_note(label: str, ms: float, tag: Optional[str] = None) -> None:
-    """探针入口: 每秒一条 `[PERF] <label>` 汇总。闸门关闭时只有一次布尔判断。"""
+    """探针入口: 每 `perf_interval_s()` 秒一条 `[PERF] <label>` 汇总。闸门关闭时只有一次布尔判断。"""
     if not perf_detail_enabled():
         return
     agg = _AGGS.get(label)

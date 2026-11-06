@@ -14,7 +14,8 @@ from framework.display.policy import PresentPolicy
 from framework.display.taps.lcd import LcdTap
 from framework.display.types import DisplayCaps, PixelFormat
 from utils.boot_timing import thread_cpu
-from utils.log_util import log_print, perf_detail_enabled, perf_note
+from utils.log_util import (log_print, perf_detail_enabled, perf_note,
+                           perf_interval_s)
 
 _CMM_PRESSURE_THRESHOLD = 0.80
 _CMM_TOTAL_FALLBACK = 256 * 1024 * 1024
@@ -48,8 +49,11 @@ class PresenterService:
         self._phase_reset = False       # 进/出调试页后首帧必上屏
         self._cmm_check_time = 0.0
         self._cmm_pressure = False
-        self.metrics: Dict[str, Metrics] = {"main": Metrics("lcd"),
-                                            "page": Metrics("page")}
+        # MAIN 的 show 汇总跟随全局 `[PERF]` 窗口（默认 10s）;
+        # 调试页的 page 行固定 1s —— 它只在页面打开时发, 是交互调参的反馈,
+        # 不是常驻噪声, 拉长到 10s 反而看不见按键后的变化。
+        self.metrics: Dict[str, Metrics] = {"main": Metrics("lcd", perf_interval_s()),
+                                            "page": Metrics("page", 1.0)}
         self._last_fmt = PixelFormat.NATIVE
         self.last_show_ms = 0.0         # 最近一次上屏的墙上耗时（调试页归因用）
         self._skipped = 0
