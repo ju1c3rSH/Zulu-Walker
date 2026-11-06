@@ -109,7 +109,9 @@ def test_enable_task_reinjects_ai_after_release():
     proc = pipe.get_task("gks_task").processor
     proc.set_task(MODE_RESCUE, (0, 0, 3))
 
-    for _ in range(2):
+    # 4 帧: 本用例无 config 构造 -> 读生产 YAML, shape_hits=3 时第 4 帧才锁存
+    # (shape_hits + pit_latch_frames - 1)。这里验的是"重注 AI", 与锁存时序无关。
+    for _ in range(4):
         r = pipe.process_frame()[1]["gks_task"]
     assert r.result_data["found"] and r.result_data["pos"] == 3
 
