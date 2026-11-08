@@ -467,15 +467,11 @@ def test_target_missing_threshold_zero_heartbeat(cfg):
     assert not r.result_data["found"] and not r.result_data["thresholds_ok"]
 
 
-# ---------- task2 防误检（2026-10-08）----------
-#
-# 选候选原来只有 `max(blobs, key=pixels)` 一个判据, 而 err_fixed 是云台闭环的
-# 控制量 —— 任何单帧误检都以满幅值灌进 PID。这组用例钉住连续性选择 + 死区 +
-# 连续确认, 以及"默认关时行为与改动前逐字节一致"这条不变量。
-#
-# 注: 形状先验(roundness/density/solidity)已删除 —— 靶标是**圆环**, 实心球的
-# 阈值会把真环全部误杀(k=0.5 时圆环 roundness=0.333 < 方块 0.785)。见
-# eod_config.yaml target 段。
+# ---------- task2 防误检 ----------
+# err_fixed 是云台闭环的控制量，任何单帧误检都以满幅值灌进 PID。这组用例钉住
+# 连续性选择 + 死区 + 连续确认，以及"默认关时行为与改动前逐字节一致"这条不变量。
+# 形状先验(roundness/density/solidity)已删除 —— 靶标是圆环，实心球的阈值会误杀真环
+# (k=0.5 时圆环 roundness=0.333 < 方块 0.785)。见 eod_config.yaml target 段。
 
 
 def test_target_continuity_picks_nearest_not_largest(cfg):
@@ -1048,11 +1044,9 @@ def test_threshold_poll_is_rate_limited(cfg, tmp_path, pit_frame, monkeypatch):
     assert fake.calls == 2, "放开节流后应恢复轮询"
 
 
-# ---------- 打靶跨帧跟踪窄窗（target.track_roi_px, 2026-10-09）----------
-#
-# 设计上的硬不变量: 跟踪**只在命中时省时间**, 绝不改变结果 ——
-# 窄窗未命中时同一帧内回退全 ROI 复扫, 所以检出率与精度与"全程全 ROI"逐位一致。
-# 这几条测试就是钉住这个不变量; pad 取值是否合适属于台架调参, 不在这里断言。
+# ---------- 打靶跨帧跟踪窄窗（target.track_roi_px）----------
+# 硬不变量: 跟踪只在命中时省时间，绝不改变结果 —— 窄窗未命中时同一帧内回退全 ROI
+# 复扫，检出率与精度与"全程全 ROI"逐位一致。这几条测试就是钉住这个不变量。
 
 def test_target_track_window_matches_full_roi(cfg, pit_frame):
     """命中时 err 必须与全 ROI 路径**逐位一致**（跟踪只省时间, 不改结果）。"""

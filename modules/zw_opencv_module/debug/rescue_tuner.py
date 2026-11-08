@@ -77,7 +77,7 @@ class GksRescueTuner:
             "cyan": self._mk_color((0, 255, 255), "COLOR_CYAN"),
         }
 
-    # ---- 分项归因（2026-10-15）----
+    # ---- 分项归因 ----
 
     def _note_phase(self, key: str, dt_s: float) -> None:
         ph = self.__dict__.get("_phases")
@@ -205,7 +205,7 @@ class GksRescueTuner:
         self._toast, self._toast_until = "RESET->code defaults", time.time() + 1.0
 
     def step(self, disp, ts, frame_bgr) -> None:
-        """分项归因（2026-10-15）: infer / canvas / resize / draw / show 五段。"""
+        """分项归因: infer / canvas / resize / draw / show 五段。"""
         _t = time.perf_counter()
         dets = self._infer(frame_bgr)
         self._note_phase("infer", time.perf_counter() - _t)
@@ -280,8 +280,7 @@ class GksRescueTuner:
         """当前 rescue 参数落盘 RESCUE_PARAMS_FILE（主程序 mtime 热重载）。
 
         目录不存在自动创建; 写失败只 toast 红字 + [RESCUE-TUNER] 诊断日志,
-        页面不崩（与 LAB 阈值页 SAVE 同级容错）。PC 端路径落在当前盘符根,
-        与 lab_session 的行为一致, 仅台架意义。
+        页面不崩（与 LAB 阈值页 SAVE 同级容错）。
         """
         processor = self._get_processor()
         if processor is None:

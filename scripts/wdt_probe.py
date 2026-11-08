@@ -53,8 +53,8 @@ WDT_SYSFS = "/sys/class/watchdog/watchdog0"
 
 # ⚠ ioctl 码必须按**有符号 32 位**交给 fcntl / ioctl。
 #   典型码 0x80045707 最高位是 1 ⇒ 作为 C int 其实是**负数**(-2147199225)。
-#   2026-10-09 设备实测: 传正数 0x80045707 时内核回 **errno=14 EFAULT Bad address**
-#   —— 不是权限、也不是 nowayout, 纯粹是请求码不认（把它当另一个 ioctl 解了）。
+#   传正数时内核回 **errno=14 EFAULT Bad address** —— 不是权限、也不是 nowayout,
+#   纯粹是请求码不认（把它当另一个 ioctl 解了）。
 WDIOC_GETTIMEOUT = 0x80045707      # _IOR('W', 7, int)
 WDIOC_KEEPALIVE = 0x80045705       # _IOR('W', 5, int)
 WDIOC_SETOPTIONS = 0x80045704      # _IOR('W', 4, int)

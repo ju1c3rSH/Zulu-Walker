@@ -27,3 +27,8 @@ docs/architecture/battery_hal_hud.md
 docs/architecture/logging_pipeline.md
 tests/test_battery_hal.py
 tests/test_battery_sampler.py
+
+# Agent scratch scripts
+.tmp_*.py
+_cleanup_*.py
+_verify_*.py

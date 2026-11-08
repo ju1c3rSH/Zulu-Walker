@@ -180,7 +180,7 @@ class GksThresholdTuner:
         disp.show(img)
         self._flush_phase(time.perf_counter() - _t)
 
-    # ---- 分项归因（2026-10-15）----
+    # ---- 分项归因 ----
 
     def _note_phase(self, key: str, dt_s: float) -> None:
         ph = self.__dict__.get("_phases")
@@ -387,13 +387,11 @@ class GksThresholdTuner:
                  min_area_px: int = 200):
         """返回 (mask, blobs); blobs = [{x,y,w,h,area}] 按面积降序前 5。
 
-        **降采样分析（2026-10-07，CAM1 卡顿修复）**：
+        **降采样分析（CAM1 卡顿修复）**：
 
-        实测热点是 `findContours` —— 它的耗时随命中噪点数量爆炸：PC 端低噪声
-        0.08ms / 高噪声(11854 轮廓) 10.1ms，**差 126 倍**。也就是说"阈值一放宽
-        命中一片噪点 → 轮廓炸到上万 → 逐个 contourArea/boundingRect 的Python
-        循环再叠一层 → 页面骤然卡住"。这正是调参时"有时候卡有时候不卡"的来源。
-        CAM1(cv181x) 算力本就比 CAM2 弱一个量级，叠加 30+ms 取图延时，手感更差。
+        实测热点是 `findContours` —— 耗时随命中噪点数量爆炸（PC 端低噪声 0.08ms /
+        高噪声 11854 轮廓 10.1ms，**差 126 倍**）。这正是调参时"有时候卡有时候不卡"
+        的来源。CAM1(cv181x) 算力比 CAM2 弱一个量级，叠加 30+ms 取图延时，手感更差。
 
         对策与主程序排爆 `explosive.scan_scale` 同一套办法：降采样后分析。
 
@@ -445,9 +443,8 @@ class GksThresholdTuner:
             # 还原到全帧坐标，调用方无需知道降采样存在。
             # ⚠ 面积是**放大** inv²（1/scale²）而非缩小 scale²：小图像素数少
             #   scale² 倍，要回到全帧口径必须乘回去。之前误乘 scale² 导致
-            #   0.5 档把 10000px 的色块报成 625px（差了 16 倍），台架上读
-            #   `max:{area}px` 会被严重误导（AGENTS.md: 排爆面积门槛正是按
-            #   调参页读数取 40~50% 反推的）。
+            #   0.5 档把 10000px 的色块报成 625px，台架上读 `max:{area}px`
+            #   会被严重误导（排爆面积门槛正是按调参页读数取 40~50% 反推的）。
             blobs.append({
                 "x": int(round(bx * inv)), "y": int(round(by * inv)),
                 "w": int(round(bw * inv)), "h": int(round(bh * inv)),

@@ -28,7 +28,6 @@ try:
 except Exception:
     _FMT_NAMES = {}
 
-
 def _fmt_tag(img) -> str:
     """maix Image 格式 -> "RGB888"/"BGR888"/… —— conv 探针的归因依据。"""
     if img is None:
@@ -40,13 +39,13 @@ def _fmt_tag(img) -> str:
 
 
 def _log_attempts(n: int) -> None:
-    """报告本次 camera 构造实际试了几级（2026-10-08 启动打点）。
+    """报告本次 camera 构造实际试了几级。
 
-    走 log_print 而非 logger: 台架看的是 stdout，而 basicConfig 把logger
+    走 log_print 而非 logger: 台架看的是 stdout，而 basicConfig 把 logger
     全部导向 logs/app.log，控制台看不到。
     正常路径恰好 1 次；>1 说明降级阶梯在白跑 —— 前面的失败若是"已经把
     sensor/ISP 初始化做了一半"的通用 Exception，重试等于把那段昂贵初始化
-    重复做一遍（台架日志里 sensor_cfg.ini 出现两组，与此吻合）。
+    重复做一遍。
     """
     if n <= 1:
         return
@@ -56,13 +55,12 @@ def _log_attempts(n: int) -> None:
 
 
 class MaixCam1Camera:
-    """MaixCAM / MaixCAM-Pro 相机（CVI cv181x平台）。
+    """MaixCAM / MaixCAM-Pro 相机（CVI cv181x 平台）。
 
-    与 MaixCam2Camera 的差异（2026-10-07回移植）:
+    与 MaixCam2Camera 的差异:
 
     1. **取图延时**: MaixPy 文档明确 CAM1 内部框架双缓存, 取图延时（帧龄）最低
-       30+ms —— 只限**时延**不限帧率: 2026-10-25 真机实测 [FPS] pipeline ~60fps
-       可达（旧"帧率上限约 30"是旧串行路径 read+image2cv+task 开销的误判）。
+       30+ms —— 只限**时延**不限帧率（真机实测 [FPS] pipeline ~60fps 可达）。
        buff_num 再小也压不下帧龄; 推流率按 [FPS] pipeline 实测验收。
 
     2. **镜头**: 默认 M12 手动调焦镜头（CAM2 是固定焦距），靶标/爆炸物
@@ -94,14 +92,12 @@ class MaixCam1Camera:
         self._last_raw: Optional[maix.image.Image] = None
         self._last_frame: Optional[np.ndarray] = None
         # 最近一帧的分项耗时(ms): read=相机取帧本身, convert=image2cv 转 BGR numpy。
-        # 为什么必须拆开: 2026-10-08 台架真机 `[PERF] vision read=13.6ms`, 而隔离
-        # 台架里 read≈0ms（帧总是就绪）+ image2cv 4.73ms —— 差 3 倍, 但**无法判断
-        # 那 13.6ms 是"在等一帧"还是"在拷 921KB"**:
+        # 为什么必须拆开: 隔离台架里 read≈0ms（帧总是就绪），真机却 read=13.6ms，
+        # 差 3 倍且无法区分"在等一帧"与"在拷 921KB"。拆开后一眼定方向:
         #   · 等一帧   -> 相机没跟上 / 缓冲被打空, 要查 fps 与 buff_num;
         #   · 拷贝慢   -> image2cv 在抢核/抢内存带宽, 而它在 TARGET 下是**纯白做**
         #                 （TARGET 走 C++ find_blobs, 直接吃 last_raw, 这份 numpy
         #                  只服务 cv2 回退路径与调参页）。
-        # 拆开后一眼定方向, 别再靠推测。
         self.stage_ms: dict = {"read": 0.0, "convert": 0.0}
         # 非阻塞读帧是否可用：CAM1 老固件的 read() 可能不认 block kwarg。
         # 探测一次后缓存，read_raw 据此决定走非阻塞（保停帧检测）还是阻塞读。
@@ -125,14 +121,10 @@ class MaixCam1Camera:
         设成 **80fps**，于是 project_config 的 `fps: 60` 被静默忽略、实际跑 80fps。
         每级成功都打日志记录命中级别与被丢弃的参数，否则台架无法判断实际状态。
 
-        ⚠ **每次尝试都单独计时（2026-10-08）**: 相机是启动期最贵的一步，而
-        降级阶梯意味着**可能白构造多次** —— 若level-1 抛的是通用 Exception
-        而非 TypeError，会走 except Exception 只打warning 然后继续试 level-2,
-        等于把sensor/ISP 初始化做了两遍（台架日志里 sensor_cfg.ini 被完整解析
-        两组,与此吻合）。逐级打点 + 累计"尝试次数"日志, 让"开了几次"直接可见:
-        正常应恰好 1次; 若看到 camera.attempts=N(N>1), 说明降级在白跑,
-        此时应把命中的那一级固件签名固定下来、或给 level-1 补TypeError 之外
-        的精确判定。
+        ⚠ **每次尝试都单独计时**：相机是启动期最贵的一步，降级阶梯意味着**可能白构造
+        多次** —— 若 level-1 抛的是通用 Exception 而非 TypeError，会走 except Exception
+        只打warning 然后继续试 level-2，等于把 sensor/ISP 初始化做了两遍。逐级打点 +
+        累计"尝试次数"日志, 让"开了几次"直接可见: 正常应恰好 1次。
         """
         device = str(source) if source is not None else None
         attempts = 0
@@ -143,6 +135,7 @@ class MaixCam1Camera:
         # (640,480) / (640,480,FORMAT)；device/fps/buff_num/open 一律以关键字
         # 出现。若这里写 6 位位置参数而真实签名是 (w,h,format,buff_num,fps,..)，
         # 会**静默把 buff_num 当 fps、fps 当 buff_num** —— 不报错、行为全错。
+
         def _level1():
             return maix.camera.Camera(
                 width=width,
@@ -180,12 +173,10 @@ class MaixCam1Camera:
             pass
         except Exception as e:
             # ⚠ **非 TypeError 的失败不等于"本固件不支持这套签名"**。
-            # 台架实测过一次 `RuntimeError: sensor timeout`（前一个进程/ISP 尚未
-            # 释放, 或 sensor 上电未就绪）—— 那是**瞬时故障**, 不是能力缺失。
-            # 此时直接往下降级会落到位置参数签名 L3, 后果是 fps / buff_num
-            # **静默丢失**（MaixPy 对 <=1280x720 默认给 80fps, buff_num 用默认值）,
-            # 取图延时与缓冲深度全部不可控 —— 而这正是我们在查的帧率问题。
-            # 故先原样重试一次 L1, 仍失败才降级。
+            # 台架实测过一次 `RuntimeError: sensor timeout`（sensor 上电未就绪等
+            # 瞬时故障），那是**瞬时故障**, 不是能力缺失。此时直接往下降级会落到
+            # 位置参数签名 L3, 后果是 fps / buff_num **静默丢失**，取图延时与缓冲深度
+            # 全部不可控。故先原样重试一次 L1, 仍失败才降级。
             logger.warning("Camera open(level1 full kwargs) failed: %s; 原样重试一次", e)
             log_print(f"[CAM1] camera L1 构造失败({type(e).__name__}: {e}), "
                       f"原样重试一次（避免降级丢掉 fps/buff_num）")
@@ -354,11 +345,9 @@ class MaixCam1Camera:
         if frame is not None and not isinstance(frame, np.ndarray):
             # 懒转换模式下 _ingest_raw 交出 LazyFrame 代理 —— 但本方法的**返回
             # 契约就是 np.ndarray**（签名如此, 调参页全链路每帧必用像素）。
-            # ⚠ 不能指望 cv2 自己转: OpenCV 的 Python 绑定（设备 4.9 / PC 5.0
-            # 实测同报错）对 cv2.resize/cvtColor **只收真 ndarray**,
-            # `__array__`/`__array_interface__` 协议一概不认 —— 不在这里收敛,
-            # 调参页第一帧就死在 resize 上（2026-10-09 真机
-            # "[PAGE] EXPLOSIVE step FAIL: ... src is not a numpy array"）。
+            # ⚠ 不能指望 cv2 自己转: OpenCV 的 Python 绑定对 cv2.resize/cvtColor
+            # **只收真 ndarray**, `__array__`/`__array_interface__` 协议一概不认 ——
+            # 不在这里收敛, 调参页第一帧就死在 resize 上。
             # numpy() 只在首次访问时转一次并缓存, 这里就是那次访问。
             frame = frame.numpy()
         return frame
@@ -369,15 +358,13 @@ class MaixCam1Camera:
         **不得回退 _last_frame**（契约见 framework/hal/interface/camera.py::
         read_raw）。CAM2 曾在这里回退过旧帧，导致 pipeline_camera 的"停帧不复用
         旧帧"在设备上失效：视觉线程把同一帧反复当新帧算、结果时间戳持续刷新，
-        1s 陈旧归零永不触发，相机真的挂死时会以冻结误差持续喂主站
-        （2026-09-28 修正）。CAM1 实现同款语义。
+        1s 陈旧归零永不触发，相机真的挂死时会以冻结误差持续喂主站。
+        CAM1 实现同款语义。
 
-        **延迟转换（2026-10-09, `_lazy_convert` 为真时）**: 不在这里做
-        `image2cv`（921KB 拷贝, 实测 9~16ms）, 改为交出 `LazyFrame` 代理 ——
-        只有真正用到像素（cv2 回退 / 调参页 / RESCUE 传 numpy）时才转一次。
-        TARGET/EXPLOSIVE 走 C++ find_blobs 时**一次拷贝都不发生**。
-        `_last_frame` 仍置为转换后的 numpy **或** 代理（依模式）; 显示侧只读
-        `last_raw`（maix Image）, 与本改动无关。
+        **延迟转换**（`_lazy_convert` 为真时）: 不在这里做 `image2cv`（921KB 拷贝,
+        实测 9~16ms）, 改为交出 `LazyFrame` 代理 —— 只有真正用到像素（cv2 回退 /
+        调参页 / RESCUE 传 numpy）时才转一次。TARGET/EXPLOSIVE 走 C++ find_blobs
+        时**一次拷贝都不发生**。`_last_frame` 仍置为转换后的 numpy **或** 代理。
         """
         if raw is None:
             return None
@@ -394,7 +381,7 @@ class MaixCam1Camera:
     def _ingest_lazy(self, raw):
         """延迟转换路径: 返回 LazyFrame, 不立刻 image2cv。
 
-        转换**首次被访问时**才发生, 并计入 `convert` 分项 —— 这样 `[PERF] vision`
+        转换**首次被访问时**才发生, 并计入 `convert` 分项 —— `[PERF] vision`
         的 conv 读数语义不变（只是从"每帧固定"变成"只在真用像素时才出现"）:
         TARGET 纯 C++ 路径下 conv 应降到 0, 这正是本优化的验收信号。
         """
@@ -423,8 +410,7 @@ class MaixCam1Camera:
     def set_lazy_convert(self, enabled: bool) -> None:
         """开关延迟转换（默认关 = 保持 `read_raw()` 急切转 numpy 的旧契约）。
 
-        由 PipelineCamera 按"任务是否需要 numpy"决定; 台架/测试若依赖
-        `read_raw()` 直接返回 numpy, 保持默认即可。
+        由 PipelineCamera 按"任务是否需要 numpy"决定。
         """
         self._lazy_convert = bool(enabled)
 
@@ -466,8 +452,7 @@ class MaixCam1Camera:
         需确认固件走的是非阻塞分支（启动日志无 "block=... unsupported"）。
 
         降级探测发生在**首次**调用：那一拍必须补一次阻塞读把帧拿回来，否则
-        首帧直接丢成 None，等于凭空多一帧"停帧"（视觉侧 any_fresh 首拍为假，
-        虽不至于错乱，但会推迟第一帧结果，也让降级看起来像"相机没画面"）。
+        首帧直接丢成 None，等于凭空多一帧"停帧"。
         """
         if self._cam is None:
             return None
@@ -528,9 +513,8 @@ class MaixCam1Camera:
             except Exception:
                 pass
             self._cam = None
-        # 一并清掉帧缓存: _last_raw 持有已释放相机的 Image 引用，
-        # vision_manager._update_display_frame 只判raw_img is None，
-        # 残留会让显示侧继续拿释放后的帧画 HUD。
+        # 一并清掉帧缓存: _last_raw 持有已释放相机的 Image 引用，残留会让显示侧
+        # 继续拿释放后的帧画 HUD。
         self._last_raw = None
         self._last_frame = None
         self._opened = False

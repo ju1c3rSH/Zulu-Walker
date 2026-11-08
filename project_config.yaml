@@ -1,104 +1,47 @@
-platform: maixcam1   # MaixCAM-Pro(cv181x) · 回移植分支 feat/maixcam1-port
+platform: maixcam1   # MaixCAM-Pro(cv181x)；CAM2 改 maixcam2
 
-# ---- 显示输出（只影响 LCD；日志与协议推流完全不受影响）----
-# ⚠ 关于 show() 的代价（2026-10-09 用真机日志**校正**了早前注释）:
-#   早前这里写"墙上 35.6ms / 差额 32ms 持 GIL 等硬件", 但 s.log（真机 CAM1,
-#   TARGET 模式, 常态化运行）实测的是**完全不同的量级**:
-#       [PERF] lcd show 1.0Hz avg=2.3~6.2ms (cpu 2.1~3.2ms)
-#   即单次 show ≈ 2~6ms、差额仅 0~3ms, 十几次采样全部如此。
-#   视觉线程行也印证: `[PERF] vision ... disp=0.1ms` —— 带框绘制的真实代价极小。
-#   结论: **32ms 那条是早期/异常条件下的单次测量, 不是固有属性**。按 6ms 算,
-#   10Hz 也只占每秒 ~60ms, 完全可接受。判定标准始终是 `[PERF] lcd show` 那行。
-#
-#   false = 完全不向 LCD 输出（比赛最后一刻极限榨帧率时用）;
-#   触摸急停仍可用（退出图标命中框按帧宽高算, 与上屏无关）。
+# ---- 显示输出（只影响 LCD；日志与协议推流不受影响）----
+# false = 完全不向 LCD 输出（比赛极限榨帧率时用），触摸急停仍可用。
 display_enabled: true
 
-# 两次 show 的最小间隔(ms)。0 = 每 2 帧一次(帧跳语义)。
-#   100 = 10Hz（2026-10-09 用户要求）: 画面流畅可调试, 按实测 6ms/次 ≈ 每秒 60ms。
-#   HUD **绘制**也会用同一间隔节流（VisionManager.set_hud_draw_interval, main.py
-#   从本键透传）—— 避免"视觉每帧画、显示只 show 一部分"的白做绘制。
-#   必须与 HUD 绘制同频, 否则画了不 show 的那几帧纯浪费。
-#   提速优先/比赛时: display_enabled: false 归零; 或把本值调大(如 200/500)降频。
+# 两次 show 的最小间隔(ms)。0 = 每 2 帧一次(帧跳语义)，100 = 10Hz。
+# HUD 绘制同频节流（main.py 从本键透传），避免"画了不 show"的白做绘制。
 display_show_interval_ms: 100
 
 # ---- 硬件看门狗（WDT）是否武装 ----
-# ⚠⚠ **2026-10-09 起默认 false（不武装）**，这是一个**安全开关**，别随手打开。
-#
-# 台架现象: 运行期一切正常（帧率/推流/协议全绿），**一退出设备就重启**。
-# 根因（MaixCDK `components/peripheral/port/linux_common/maix_wdt.cpp` 实锤）:
-#   · `maix.wdt.WDT(0, ms)` 构造时就 open("/dev/watchdog") + 设超时 ⇒ **构造即自动启动**，
-#     硬件倒计时立刻开始（本项目窗口 10s）;
-#   · `WDT::stop()` 是**空实现** —— 只打一行 "this operation is not supported" 然后 `return 0`
-#     （返回 0 表示 ERR_NONE，所以调用方**分辨不出**它其实什么都没做）;
-#   · Linux 看门狗在 close 时若没写魔法字符 'V' 就保持运行（内核还会 print
-#     `watchdog0: watchdog did not stop!`）⇒ **进程退出不会让它停**。
-#   喂狗只来自三个 Python 线程（主循环/协调器/视觉），进程一退出三者全没
-#   ⇒ 10s 后 SoC 硬复位 = 设备重启。所以这不是崩溃，是看门狗到点。
-#
-# false = 不武装: 退出干净利落，不再莫名重启（MaixVision/SSH 也不会断线）。
-#         代价 = 失去"线程死锁 → 硬件自动复位"的兜底，卡死时需人工断电。
-# true  = 武装（仅在你确实需要死锁兜底时用）: **必须接受"每次退出后 ~10s 设备重启"**，
-#         除非该固件的 /dev/watchdog 允许 DISABLECARD（退出时 app/main.py 会尝试，
-#         并把真实结果打进日志）。判别办法: 在设备上跑 `python scripts/wdt_probe.py info`
-#         看 nowayout（=1 ⇒ 内核禁止停止看门狗，谁都关不掉，只能用 false 规避）。
+# ⚠⚠ 安全开关，别随手打开。true 时进程退出后设备仍会重启（~10s 后硬复位）：
+#    MaixPy 的 wdt.stop() 是空实现（只打一行 unsupported 然后 return 0），
+#    Linux watchdog 在 close 时不写 'V' 就保持运行，进程退出不会让它停。
+#    判别：设备上跑 python scripts/wdt_probe.py info 看 nowayout。
+# false = 不武装，退出干净；代价 = 失去死锁→硬件复位兜底，卡死需人工断电。
 wdt_enabled: false
 
 # ---- 观测闸门 ----
-# 三段只干一件事: 决定哪些高频行打出来、多快打一条。被吞的行**既不进控制台也不进
-# logs/debug.log**（在入队前 return），所以"关掉" = 这段历史不存在，不是"只是不显示"。
-#   perf            : 所有 `[PERF] ` 行的总开关
-#   perf_detail     : 细粒度探针（[PERF] fmt/hud/conv/jpeg + 调试页 page 行）。
-#                     false = 只留 vision / mainloop / lcd show 三条常驻行。
-#                     探针的数值已由 vision 行的 conv=/disp= 与 lcd show 行的 fmt= 覆盖。
-#   perf_interval_s : 常驻汇总窗口（秒）。10 = 默认; 1 = 旧行为（每秒一条）; 下限 0.5。
-#                     只作用于 vision / mainloop / lcd show 与 detail 探针 ——
-#                     调试页 `[PERF] page/tuner/laser/rescue` 仍按 1s（只在页面打开
-#                     时发，属交互调参反馈，拉长反而看不见按键后的变化）。
-# ⚠ 删掉整段 = perf 全开 + 代码默认窗口(10s)。现场要"逐秒归因"就改
-#   perf_interval_s: 1 + perf_detail: true（WDT 仍静音; 要它回来再把 perf_log.enabled 设 true）,
-#   三者齐了才等于 2026-11 之前的日志形态。
+# perf            : 所有 `[PERF] ` 行的总开关
+# perf_detail     : 细粒度探针（fmt/hud/conv/jpeg + 调试页 page 行），false 只留三条常驻行
+# perf_interval_s : 常驻汇总窗口（秒），下限 0.5；只作用于常驻行与 detail 探针
+# ⚠ 删掉整段 = perf 全开 + 代码默认窗口(10s)。
 observability:
   perf: true
   perf_detail: false
   perf_interval_s: 10
 
 # 高频日志静音名单（子串匹配）。
-#   enabled: false = **只**吞 names 里列出的行（其余照打）
-#   enabled: true  = 名单不生效, 全部照打（旧行为）
-# 现在只静音 [WDT] feed: 喂狗成功是常态, 每 ~1s 一条 × 3 个线程（主循环/协调器/视觉）,
-# 纯噪声。保留: [MEM]（盯 128MB 用户内存）、[UART TX] DATA_STREAM（推流率验收口径,
-# 与 [FPS] pipeline 对拍）、[UART TX] CMD_ACK（Brain 重订阅的现场证据）。
-# ⚠ 不要把 _DEFAULT_PERF_NAMES 那 7 条整组抄进来 —— 那等于连 [PERF] 一起吞。
+# enabled: false = 只吞 names 里列出的行（其余照打）；true = 名单不生效，全部照打。
+# 保留 [MEM] / [UART TX] DATA_STREAM（推流率验收口径）/ [UART TX] CMD_ACK。
 perf_log:
   enabled: false
   names:
     - "[WDT] "
 
-# 调试台（rich 全屏 TUI）。**2026-10-09 起默认关闭**，原因三条，全部实测/读码确认：
-#   ① `utils/debug_console.py` 在**模块顶层** `import rich`。rich 是纯 Python 大包，
-#      CAM1 只有 128MB 用户内存（`[MEM] user=103/128MB` = 已占 80%），导入它要
-#      付内存 + 启动时间两笔账 —— 而它提供的只是一个人看的 TUI。
-#   ② 渲染线程以 10Hz 重建 rich 的 Table/Panel 并往终端写整屏 ANSI：
-#      构造过程**全程持 GIL**，是与视觉线程抢 GIL 的一部分（虽然不在同一线程上）。
-#   ③ 它启动时会把 `sys.stdout` 换成 `ConsoleCapture` —— 此后**每一行 Python 侧
-#      print 都变成一次 log_print + 一次日志文件 open/close**（`_writer_loop` 每行
-#      都 open/write/flush/close）。当前没有逐帧 print 的地方，属"埋着的雷"。
-# 关闭后**日志不受任何影响**：`log_print` 走的写盘线程与 `sys.__stdout__` 直写分支
-# 都还在，`[PERF]` / `[UART TX]` / `[FPS]` 照常出现在控制台与 logs/debug.log。
-# 台架需要 TUI 时改回 true（启动器会按本键决定是否导入 rich）。
+# 调试台（rich 全屏 TUI）。默认关闭：CAM1 只有 128MB 用户内存，rich 导入要付内存
+# + 启动时间两笔账，而它只是一个人看的 TUI；且它会接管 stdout 改走日志管道。
+# 台架需要 TUI 时改回 true。关闭不影响 [PERF]/[UART TX]/[FPS] 正常输出。
 debug_console_enabled: false
 
-# 比赛模式开关（**当前 false = 台架行为, HUD 与 wifi 推流全开**）。
-#   ⚠ 2026-10-09 改回 false: 用户要恢复带框的调试画面。恢复后 show() 的频率由
-#     上面的 display_show_interval_ms(100=10Hz) 控制, HUD 绘制同频节流 ——
-#     按真机实测(见文件头)每帧绘制 ~0.1ms、show ~2~6ms, 10Hz 开销可接受。
-#   true  = 关掉每帧 HUD 叠加与 wifi JPEG 推流（极限榨帧率/正式比赛时用）。
-#           去年 main.py task2 是单线程 read→find_blobs→send, 只画 1 个框 + 1 行字。
-#   ⚠ 只影响显示: log_print 走独立写盘线程, UART DATA_STREAM 走主循环,
-#     **日志与协议推流完全不受影响**。
-#   ⚠ 本开关**不控制 LCD 上屏**。上屏由 display_enabled / display_show_interval_ms
-#     单独控制, 两个键要一起看。
+# 比赛模式开关（false = 台架行为，HUD 与 wifi 推流全开）。
+# true = 关掉每帧 HUD 叠加与 wifi JPEG 推流（极限榨帧率/正式比赛时用）。
+# ⚠ 只影响显示，不控制 LCD 上屏（由上面两个 display 键控制）；日志与协议推流不受影响。
 competition_mode: false
 
 cameras:
@@ -106,37 +49,22 @@ cameras:
     source: null
     width: 640
     height: 480   # 与旧上端 main.py 标定几何一致（坑位 ROI/误差中心按 640 宽标定）
-    fps: 60       # 2026-10-25 真机实测: [FPS] pipeline ~60fps 可达（旧"上限约 30fps"
-                  #   系旧串行路径误判）。取图延时（帧龄）~30ms 仍成立，但不限帧率。
+    fps: 60       # 真机实测 [FPS] pipeline ~60fps 可达；取图延时 ~30ms 是帧龄，不限帧率
     camera_stream_queue_size: 2   # CAM1 无需堆缓冲（延时下限由固件决定）
 
 uart_defaults:
   # MaixCAM UART0 pins A16(TX)/A17(RX) -> Brain USART1
-  # A16/A17 出厂默认即 UART0_TX/UART0_RX（pinmap.md:42），**无需 set_pin_function**。
-  # ⚠ UART0 的三个已知限制（MaixPy uart.md「MaixCAM/MaixCAM-Pro 串口使用注意点」）:
-  #   ① 开机打印日志直到 `serial ready` —— Brain 侧必须丢弃开机段数据,
-  #      否则会把启动日志当协议帧解析（协议有 AA55 帧头, 应能丢弃, 但仍建议丢弃);
-  #   ② **TX(A16) 是启动模式检测引脚, 拉低 = 无法开机**。做 3.3V↔5V 电平转换时
-  #      务必确保 TX 默认不拉低（保持浮空或用电平转换芯片）;
-  #   ③ UART0 同时是系统默认 maix protocol 串口 —— 占用后 MaixVision IDE 的
-  #      调试通道会与本链路抢线, 台架调试需改用 SSH 或断开 IDE。
+  # A16/A17 出厂默认即 UART0，无需 set_pin_function。
+  # ⚠ ① TX(A16) 是启动模式检测引脚，拉低 = 无法开机（电平转换时务必别拉低）。
+  # ⚠ ② 开机打印日志直到 `serial ready`，Brain 侧必须丢弃开机段。
+  # ⚠ ③ UART0 同时是系统 maix protocol 串口，台架调试改用 SSH。
   port: "/dev/ttyS0"
   baudrate: 115200     # keep 115200: official docs warn other baud rates are unreliable
 
 # ---- 电量（Pro: AXP2101 / CAM2: CW2015）----
 # 采集在主循环里按 monotonic 判据降频（modules/zw_battery_module），不开线程。
-#   poll_interval_ms: 一次完整读实测 1.02ms（Pro，2026-11-03；加 is_charging 后约
-#     1.30ms），落在主循环的一拍里；DATA_STREAM 推迟 ≤1ms，不丢帧（结果在 deque 里，
-#     推流用当次 now）。
-#   ⚠ 不要改回"每 N 拍采一次": 台架实测主循环只有 89Hz（11.2ms/拍 —— sleep(2ms) 被
-#     Linux 定时器粒度拉长，body 只有 0.82ms），5000 拍 = 56s 而不是 10s；而且拍长随
-#     负载变（开调试页时 step() 含 show()，4~8ms/拍）。计数器不是时间单位。
-#   ⚠ 首拍即采，否则开机要等满一个周期才有第一个读数。
-#   日志: **快照发布就打印一行**（每 10s），`log_print` 一次调用同时进控制台与
-#     logs/debug.log，所以"控制台 + 存档 + HUD"是同一个快照喂出来的三个消费者，
-#     没有第二条 I/O 路径。8640 行/天 ≈ 730KB/天。**不要**改回"值变了才打"：那样
-#     debug.log 里的电量大段空缺，事后无法回答"那段时间到底采没采"（2026-11-03 踩过）。
-#     `percent=-1` 也照打（没有第二套策略）；嫌吵就 `enabled: false`。
+# ⚠ 不要改回"每 N 拍采一次"：主循环拍长随负载变（89Hz，11.2ms/拍），计数器不是时间单位。
+# ⚠ 首拍即采，否则开机要等满一个周期才有第一个读数。
 battery:
   enabled: true
   poll_interval_ms: 10000
@@ -144,14 +72,13 @@ battery:
 
 ai:
   models:
-    # 人质形状 YOLOv5 (yao_gu/yuan_zhu/yuan_tai) —— CVITEK .cvimodel，MaixCAM 专用格式
-    # 仓库副本: assets/models/hostage_yolov5_cam1/{model_239147.mud, model_239147.cvimodel}
+    # 人质形状 YOLOv5 (yao_gu/yuan_zhu/yuan_tai) —— CVITEK .cvimodel
     # 部署到设备: cp assets/models/hostage_yolov5_cam1/* /root/models/
     # （mud 用 `model =` 键指向同目录 cvimodel，两者必须同目录同名配套）
-    # 注: CAM2 的 .axmodel / nn.YOLO11 在 CAM1 上不可用，两者互不通用。
+    # ⚠ CAM2 的 .axmodel / nn.YOLO11 在 CAM1 上不可用，两者互不通用。
     - nick_name: "eod_hostage"
       model: "/root/models/model_239147.mud"
-      model_type: "yolov5"   # CAM1 无 YOLO11 类，显式指定避免落到 "auto"歧义
+      model_type: "yolov5"   # CAM1 无 YOLO11 类，显式指定避免落到 "auto" 歧义
   active: "eod_hostage"
 
 streaming:
@@ -159,25 +86,21 @@ streaming:
   wifi_password: ""
 
 # ---- HTTP JPEG 推流（浏览器预览）----
-# ⚠ MaixCAM1 的 VENC 是**单例硬件资源**: 它和 `Display.show()` 内部的 MaixVision 编码
-#    会互相抢, 抢不到就刷 `CVI_VENC_GetStream failed 0xc0078012` 并把视觉线程拖到 1fps
-#    （见 MaixPy faq）。所以默认关闭; 要看预览时开它, 并确保 MaixVision 预览窗口已关。
-# 关闭时**完全不创建** http.JpegStreamer, 因而不占用任何 VENC 资源。
+# ⚠ MaixCAM1 的 VENC 是单例硬件资源，与 Display.show() 内部的编码互相抢，抢不到会刷
+#    CVI_VENC_GetStream failed 并把视觉线程拖到 1fps。默认关闭；开它要确保 MaixVision
+#    预览窗口已关。关闭时完全不创建 http.JpegStreamer，不占用 VENC。
 stream:
-  enabled: false      # 默认关; 需要浏览器预览时改 true
-  fps: 5              # 推流频率, 与 LCD 刷新频率解耦（编码很贵）
+  enabled: false      # 默认关；需要浏览器预览时改 true
+  fps: 5              # 推流频率，与 LCD 刷新频率解耦（编码很贵）
   quality: 80
   max_width: 320      # 编码前降采样到该宽度, 0 = 不降
 
 # 近端推流策略（GksCoordinator，v2.1 DATA_STREAM）
-#   push_on_new_result: true  = 结果驱动：视觉每产出一帧结果立即推一帧，不受订阅帧
-#                               min_interval_ms 限制 —— 误差/坑位"有一帧就实时输出"。
-#                               interval 语义降级为"无新结果时的心跳周期"（保 Brain
-#                               1s 帧龄 stale 判定 + 1s 看门狗不重订阅）。
-#                               false = 回到旧的纯 interval 限速（丢中间帧，只保节奏）。
-#   min_push_interval_ms: 两条放行路径共用的硬保护间隔，0 = 不限（上限由相机帧率封顶）。
-#                         相机恢复/队列积压时出现突发连推就把这里调到 10~16。
-# 冒烟判据: 日志 `[UART TX] DATA_STREAM <Hz>Hz` 的 Hz 应≈ `[FPS] pipeline` 的帧率。
+#   push_on_new_result: true  = 结果驱动，视觉每产出一帧结果立即推一帧，不受订阅帧
+#                               min_interval_ms 限制；interval 降级为无新结果时的心跳周期
+#                               （保 Brain 1s 帧龄 stale 判定 + 1s 看门狗不重订阅）。
+#   min_push_interval_ms: 两条放行路径共用的硬保护间隔，0 = 不限。
+# 冒烟判据: `[UART TX] DATA_STREAM <Hz>Hz` 的 Hz 应 ≈ `[FPS] pipeline` 的帧率。
 gks_stream:
   push_on_new_result: true
   min_push_interval_ms: 0

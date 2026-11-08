@@ -20,7 +20,7 @@ from framework.hal.battery_sampler import BatterySampler, BatterySnapshot
 from utils.log_util import log_print
 
 _SLOW_READ_MS = 50.0            # 单次读超过这个值 = 总线不正常，周期翻倍
-_MAX_INTERVAL_S = 60.0
+_MAX_INTERVAL_S = 60.0          # 退避周期上限（秒）
 
 _sampler: Optional[BatterySampler] = None
 _base_interval = 10.0           # 配置值; 退避只往上翻, 不会低于它

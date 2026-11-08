@@ -51,7 +51,7 @@ class PresenterService:
         self._cmm_pressure = False
         # MAIN 的 show 汇总跟随全局 `[PERF]` 窗口（默认 10s）;
         # 调试页的 page 行固定 1s —— 它只在页面打开时发, 是交互调参的反馈,
-        # 不是常驻噪声, 拉长到 10s 反而看不见按键后的变化。
+        # 不是常驻噪声。
         self.metrics: Dict[str, Metrics] = {"main": Metrics("lcd", perf_interval_s()),
                                             "page": Metrics("page", 1.0)}
         self._last_fmt = PixelFormat.NATIVE

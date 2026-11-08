@@ -14,8 +14,8 @@ zw_uart_module - 2026 工科赛协议定义 (panzer_links_protocol.md v2.1)
   计算 Type..Payload 末字节, 高字节在前（大端）发送
 - Payload 内多字节字段一律小端（有符号为补码）
 
-帧类型（四源核对：md v2.1 ↔ serial_protocol/protocol.c ↔ panzer/GetData
-↔ panzer_Brain/Middlewares/serial_protocol + interrupt.c 实际用法）:
+帧类型（panzer_links_protocol.md v2.1 ↔ serial_protocol/protocol.c ↔
+panzer/GetData ↔ panzer_Brain/Middlewares/serial_protocol + interrupt.c）:
 | 0x20 | CMD_REQUEST | 主→从 | [data_id, min_interval_ms, 爆色, 靶色, 形状] |
 | 0x21 | CMD_ACK     | 从→主 | [data_id, max_freq_hz, payload_size]        |
 | 0x22 | CMD_NACK    | 从→主 | [data_id, reason]                           |
@@ -190,11 +190,9 @@ def build_cmd_stop_frame() -> bytes:
 def build_cmd_laser_frame(on: bool) -> bytes:
     """Build TYPE_CMD_LASER frame [on_off, rsv x7]; Brain 写 PA4, 无应答。
 
-    电平语义(2026-10-24 与 Brain 对齐, 依据 2026-09-14 硬件实测): 激光**高有效**,
-    `on=True` -> PA4 拉高 = 发射, `on=False` -> PA4 拉低 = 熄灭。
-    只改电平解释, **帧字节不变**(on_off 仍是 0x01/0x00), 测试向量保持
-    `...01...8F 91` / `...00...C8 42`。旧文档写的"拉低发射"是反的, 见
-    docs/competition/gks_laser_ctrl_addendum_v2.3.md 的 v2.3-r1。
+    电平语义: 激光**高有效**, `on=True` -> PA4 拉高 = 发射, `on=False` -> PA4 拉低
+    = 熄灭。只改电平解释, **帧字节不变**(on_off 仍是 0x01/0x00), 测试向量保持
+    `...01...8F 91` / `...00...C8 42`。
     """
     payload = bytes([0x01 if on else 0x00]) + b"\x00" * 7
     return _build_frame(TYPE_CMD_LASER, payload)

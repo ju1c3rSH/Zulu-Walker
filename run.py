@@ -47,17 +47,14 @@ def run_debug(args):
 def _console_enabled_from_config() -> bool:
     """project_config.yaml 的 `debug_console_enabled`（缺省/读不到 -> True）。
 
-    ⚠ **必须在启动任何东西之前判定**。原实现是在读到配置前就无条件
-    `DebugConsole().start()` + `ConsoleCapture.install()`, 于是
-    `debug_console_enabled: false` **完全无效**:
-      · rich 的 10Hz 全屏重绘照跑（持 GIL 构造 Panel/Table + 往终端写几 KB/s）;
-      · sys.stdout 被换成 Python 对象, 此后**每一行 print 都变成一次 log_print
-        + 一次文件 open/close**。
-    另外这里连 `utils.debug_console` 都不导入 —— 那个模块顶层 `import rich`,
-    而 rich 是纯 Python 大包，CAM1 只有 128MB 用户内存（实测已占 80%）, 不值得
-    为一个已被禁用的功能付这份内存与启动时间。
+    ⚠ **必须在启动任何东西之前判定**。若先无条件 `DebugConsole().start()` +
+    `ConsoleCapture.install()`, 则 `debug_console_enabled: false` 完全无效:
+    rich 的 10Hz 全屏重绘照跑, 且 sys.stdout 被换成 Python 对象, 此后每一行
+    print 都变成一次 log_print + 一次文件 open/close。
 
-    读不到配置时返回 True = 保持改动前的行为，不静默改语义。
+    另外这里连 `utils.debug_console` 都不导入 —— 那个模块顶层 `import rich`,
+    而 rich 是纯 Python 大包, CAM1 只有 128MB 用户内存, 不值得为一个已被禁用的
+    功能付这份内存与启动时间。读不到配置时返回 True = 保持默认行为。
     """
     try:
         import yaml

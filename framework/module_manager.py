@@ -54,7 +54,6 @@ class ModuleManager:
             # traceback 走 stderr, 设备控制台只显示 stdout —— 失败必须留一行看得见的
             log_print(f"[MODULE] {name} 加载失败: {type(e).__name__}: {e}")
             return False
-
     def get_module(self, name: str):
         return self.modules.get(name)
 
@@ -76,8 +75,7 @@ class ModuleManager:
         # 为什么需要: 主循环以 MAIN_LOOP_DELAY=2ms 空转 = 每秒 500 次, 每次都要走
         # coordinator.loop() + tick_callback(DebugConsole.set ×6) +
         # display_callback(touch.read() 硬件读)。这些是 Python 侧工作, 累加后可能
-        # 与视觉线程抢 GIL —— 台架实测 CAM1 上"取帧+find_blobs"单独跑 59.7Hz 而
-        # 带全部线程的真机只有 25Hz, 差额必须能逐线程、逐子步骤归因。
+        # 与视觉线程抢 GIL —— 差额必须能逐线程、逐子步骤归因。
         # ⚠ 同时报 body(墙上) 与 cpu(thread_time): 两者之差就是**等 GIL** 的时间。
         #   只看 body 会把"纯等待"误读成"这一路在吃 CPU"。
         _perf = {

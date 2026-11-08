@@ -39,8 +39,8 @@ class PipelineCamera:
         # 上一帧的分项耗时(ms)。**墙上与 CPU 两个口径都要**, 因为两者的差值含义完全不同:
         #   read  / convert        = 墙上（含等硬件、等 GIL）
         #   read_cpu / tasks_cpu   = thread_time（真正的 CPU 消耗）
-        # ⚠ read 墙上 8.8ms 而 read_cpu 若只有零点几毫秒 -> 那 8ms 是**在驱动里等硬件**,
-        #   不是框架在算; 反之若 read_cpu 接近 read, 才是真的在拷/在算。
+        # ⚠ read 墙上远大于 read_cpu -> 那段是**在驱动里等硬件**, 不是框架在算;
+        #   反之若 read_cpu 接近 read, 才是真的在拷/在算。
         # 这是回答"到底谁最耗性能（驱动调用 vs 框架本身）"的关键一格。
         self.stage_ms: Dict[str, float] = {
             "read": 0.0, "read_cpu": 0.0, "convert": 0.0,

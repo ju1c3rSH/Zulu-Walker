@@ -35,10 +35,9 @@ class Machine:
 
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
-        # 启动打点: 2026-10-08 实测 MaixCAM-Pro 上这段串行构造耗时约 8 秒
-        # (04:05:54 -> 04:06:02), 而改造前**全程无打点**, 导致无法判断是
-        # 相机/显示/UART0 抢线/模型加载哪一段吃掉了时间。五步逐段打点后,
-        # 台架一次启动就能定位到段。零风险: 打点只读时钟, 失败即静默退化。
+        # 启动打点: 这段串行构造在 MaixCAM-Pro 上曾耗时约 8 秒, 而改造前**全程
+        # 无打点**, 导致无法判断是相机/显示/UART0 抢线/模型加载哪一段吃掉了时间。
+        # 五步逐段打点后, 台架一次启动就能定位到段。零风险: 打点只读时钟。
         bt = BootTimer("machine")
         path = Path(config_path)
         # 缺省平台取project_config.yaml 的首选值（当前分支 maixcam1）；

@@ -2,36 +2,32 @@
 """
 工科赛近端任务处理器 — 一处理器三模式（EXPLOSIVE / TARGET / RESCUE）。
 
-识别逻辑逐行照搬 F:\\2026工科赛\\maixcam\\工科赛上端\\main.py 的
+识别逻辑移植自 F:\\2026工科赛\\maixcam\\工科赛上端\\main.py 的
 task1_explosive / task2_target / task3_rescue（锁存/去抖/映射语义不变），
 仅做平台适配：
 
-- 图像来源: 框架单路 640 宽帧（旧版 cam 640x480 + cam1 320x240 双实例消亡）;
-  YOLO 输入由 nn 类按模型输入尺寸自适应缩放（CAM2=nn.YOLO11，**CAM1=nn.YOLOv5**）。
+- 图像来源: 框架单路 640 宽帧; YOLO 输入由 nn 类按模型输入尺寸自适应缩放
+  （CAM1=nn.YOLOv5 + .cvimodel / CVITEK，CAM2=nn.YOLO11 + .axmodel / Axera，
+  两者 mud 键名不同（`model` vs `model_npu`）、模型文件互不通用）。
 - 检测引擎: 设备走 maix_accel C++ find_blobs 快路径（阈值 OpenMV LAB 语义
   1:1 透传），PC/失败自动回退 cv2 inRange（OpenMV→OpenCV LAB 编码转换）。
 - 人质: 模型缺失时回零值结果（心跳不断流），不崩溃。
-  - CAM2 分支: nn.YOLO11 + .axmodel（Axera），走 MaixCam2AI
-  - CAM1 分支: nn.YOLOv5 + .cvimodel（CVITEK），走 MaixCam1AI
-  两者 mud 键名不同（`model_npu` vs `model`），模型文件互不通用。
-- 像素常量全部入 eod_config.yaml `gks:` 段；`/my-threshold/my_64threshold.txt`
-  （脱机调阈值工具产出）作运行时覆盖，内容变化自动重载、不清锁存。
-- 人质参数文件 `/my-threshold/my_rescue_params.txt`（调参页 SAVE 产出, conf_th/
-  iou_th/x_crop_px）同内容签名热重载语义, 详见 `_reload_rescue_params`。
+- 像素常量全部入 eod_config.yaml `gks:` 段；阈值文件
+  （/my-threshold/my_64threshold.txt，脱机调阈值工具产出）与调参页 SAVE 产物
+  （my_rescue_params.txt / my_laser_calib.txt）作运行时覆盖，内容变化自动重载、
+  不清锁存。
 - 人质检出日志"变化才打"（`_log_rescue_dets`）: 形状集合变化或分数跳变 >0.1
   才打一行汇总, 防 log_print 逐行落盘被逐帧检出刷爆。
 - 排爆扫描可降采样: `explosive.scan_scale`（0.5 = 320x240 扫描）—— 全帧三色串行
-  find_blobs 是排爆帧率瓶颈（台架实测 12~19fps, 低于 50ms 推流节奏）。降采样后
-  面积门槛按 scale² 折算、cx/框按 1/scale 还原到全帧坐标; 缩放用 INTER_NEAREST
-  （不做插值, 避免把边缘像素混成中间色 —— 那正是运动模糊掉色的同一机理）。
-  ⚠ 降采样小图必须交 **RGB 字节序**（2026-09-26 台架实测: 交 BGR 会红蓝互换,
-  蓝色目标被框成 C1、坑位定序连带全错）—— 机理见 `_downscale` 注释。
+  find_blobs 是排爆帧率瓶颈。降采样后面积门槛按 scale² 折算、cx/框按 1/scale
+  还原到全帧坐标; 缩放用 INTER_NEAREST（不插值, 避免把边缘像素混成中间色）。
+  ⚠ 降采样小图必须交 **RGB 字节序**（交 BGR 会红蓝互换, 蓝色目标被框成 C1、
+  坑位定序连带全错）—— 机理见 `_downscale` 注释。
 
-锁存语义（task1/task3 同一套，与 2025 视觉方案 task1/task3 一致）:
+锁存语义（task1/task3 同一套）:
 - 坑位顺序 = **首次检出先后**（相机按 pit1→pit3 扫过, 最先看见的那个就在 pit1）;
   某帧同时检出多个时帧内先按画面左右定序（`pit_left_is_1` 决定方向）;
-- 三色/三形状互不相同 → 见到 2 个即可推出第 3 个"是什么", 补在顺序尾部
-  （2025 原版写法: `position[2] = 6 - position[0] - position[1]`）;
+- 三色/三形状互不相同 → 见到 2 个即可推出第 3 个"是什么", 补在顺序尾部;
 - 顺序连续 `pit_latch_frames(2)` 帧一致才锁存；一旦锁存不再重锁, 直到
   set_task 换 data_id/换任务码或 reset()。
 - 每任务的顺序来源与是否允许补位可分别配置: `<task>.order_by` / `<task>.infer_missing`。
@@ -76,7 +72,7 @@ _LASER_CALIB_KEYS = {
     "dom_min":  ("laser", "dom_min", int),
     "min_area": ("laser", "min_area", int),
     "max_area": ("laser", "max_area", int),
-    # 亮环境/白背景签名扩展（2026-10-25; 判据链见 laser_calib_tuner.py 文件头）。
+    # 亮环境/白背景签名扩展（判据链见 laser_calib_tuner.py 文件头）。
     # "白核+淡红晕"签名默认开启; halo_pad=0 整体关闭回到旧"绝对红"单入口。
     "dom_faint": ("laser", "dom_faint", int),   # 白核+淡晕确认: 窗口内 max(dom) 下限
     "halo_pad":  ("laser", "halo_pad", int),    # 白核膨胀半径(0=关闭签名入口)
@@ -87,9 +83,8 @@ _LASER_CALIB_KEYS = {
 def file_signature(path: str):
     """文件内容签名: (size, sha1-of-bytes)。用于热重载变化判定。
 
-    ⚠ 不能用 mtime 判变化: 同一文件系统 tick 内二次写入 mtime 不变
-    (实测连续写 300 次有 57% 相同), 调参页连按两次 SAVE 会漏掉第二次。
-    mtime_ns 也不行(56% 漏检); 只有内容哈希能 100% 检出同长改值。
+    ⚠ 不能用 mtime 判变化: 同一文件系统 tick 内二次写入 mtime 不变, 调参页连按
+    两次 SAVE 会漏掉第二次（mtime_ns 同样漏检）; 只有内容哈希能 100% 检出同长改值。
     先 stat 再读: stat 失败/文件不存在时零 IO 返回, 内容只读几十字节。
     """
     try:
@@ -156,9 +151,8 @@ def load_laser_calib_file(path: str) -> dict:
     return params
 
 # maix.image 是否可用的惰性探测结果（None=未探测 / False=不可用 / True=可用）。
-# 只缓存"可用性", 不缓存模块对象 —— 见 GksTaskProcessor._downscale 的注释
-# （缓存对象会与测试的 sys.modules monkeypatch 冲突）。PC 端首帧探测一次即 False,
-# 之后不再逐帧重抛 ImportError。
+# 只缓存"可用性", 不缓存模块对象 —— 缓存对象会与测试的 sys.modules monkeypatch
+# 冲突（详见 GksTaskProcessor._downscale）。PC 端首帧探测一次即 False。
 _maix_image_ok = None
 
 _DEFAULT_CONFIG = {
@@ -167,16 +161,14 @@ _DEFAULT_CONFIG = {
     "thresholds_file": "/my-threshold/my_64threshold.txt",
     "rescue_params_file": RESCUE_PARAMS_FILE,
     "explosive": {
-        # 面积门槛 2026-09-26 下调: 10000 -> 4000（10000 px ≈ 100x100 ≈ 画面 3.3%,
-        # 是 2025 main.py 原值, 对应他们那套机位; 我们机位目标更小, 且运动模糊会先啃掉
-        # 边缘一圈 —— 调参页看得见(只要 area>=200)但主流程 found=0 就是这个门槛卡住）。
+        # 面积门槛 2026-09-26 下调: 10000 -> 4000（我们机位目标更小, 且运动模糊会先
+        # 啃掉边缘一圈 —— 调参页看得见(只要 area>=200)但主流程 found=0 就是它卡住）。
         # 与 scan_scale 叠加时按 scale² 折算(0.5 -> 小图 1000 像素), 物理口径不变。
         # 精调: 静止读调参页 `max:{area}px` 取 40~50%; 背景成块误检时往回加, 或先收紧 A/B 轴。
         "pixels_threshold": 4000,
         "area_threshold": 4000,
-        # 顺序来源 / 未见者补位, 语义同 rescue: 2025 方案 task1 也是"首次检出先后 +
-        # 缺色用 6-a-b 推出来"。2026-09-24 台架决策: 排爆**使用推断**(infer_missing: tail,
-        # 与 2025 方案一致) —— 见到 2 色即锁, 未见者补到顺序尾部。
+        # 顺序来源 / 未见者补位, 语义同 rescue: "首次检出先后 + 缺色用 6-a-b 推出来"。
+        # 排爆**使用推断**(infer_missing: tail) —— 见到 2 色即锁, 未见者补到顺序尾部。
         # ⚠ 代价(台架必核对): 补位只推出"是什么"、推不出"在第几坑"; 一旦"未见者 =
         #   最后一个坑"不成立, 会**静默锁错坑 -> 转台打错坑 -> 抓错**, 比锁不上更危险。
         #   核对手段: 日志 `latch … inferred=True` 出现时必须拿实物核对 PIT/POS。
@@ -184,31 +176,19 @@ _DEFAULT_CONFIG = {
         "order_by": "first_seen",
         "infer_missing": "tail",
         # 排爆扫描降采样系数: 1.0 = 原分辨率(640x480) 全帧扫描; 0.5 = 320x240。
-        # 全帧三色串行 find_blobs 是排爆帧率瓶颈(台架实测 12~19fps, 慢于 50ms 推流节奏)。
-        # 降采样后: 面积门槛按 scale² 折算, cx/框按 1/scale 还原到全帧坐标。
-        # 置 1.0 即回到原分辨率。
+        # 降采样后: 面积门槛按 scale² 折算, cx/框按 1/scale 还原到全帧坐标。置 1.0 即回原分辨率。
         "scan_scale": 1.0,
-        # 兜底 LAB 阈值（阈值文件缺失时用）; 2026-09-23 台架回写, 与设备
-        # /my-threshold/my_64threshold.txt 逐字一致 —— 文件在时以文件为准, 两者同值。
+        # 兜底 LAB 阈值（阈值文件缺失时用）; 与设备 /my-threshold/my_64threshold.txt
+        # 逐字一致 —— 文件在时以文件为准, 两者同值。
         # 取值原则（纯色目标）: A/B 负责色相与饱和度判别, L 只当噪声地板 ——
         # 不用 L 上限去排除高光（白/高光 a*≈b*≈0, 靠 A/B 天然排除; 用 L 上限切
         # 只会连物体亮面一起切掉, 色块被切成半块 -> 面积/质心双失准）。
         # ⚠ 这组值偏保守, 已知代价（现场"看得见却锁不上 / 色块切半"时按下表放开）:
-        #   1) L 上限 red 80 / green 85 / blue 60: 高饱和纯色本身 L 就高(纯绿 87.7,
-        #      受光面 74+; 实测绿球亮面 L 到 81) —— 绿球高光面仍可能出界, 可放到 95;
-        #      蓝 60 是"只要深蓝"的代价, 蓝目标受光变亮时先放开到 80;
+        #   1) L 上限 red 80 / green 85 / blue 60: 高饱和纯色本身 L 就高, 绿球高光面
+        #      仍可能出界, 可放到 95; 蓝 60 是"只要深蓝"的代价, 蓝目标受光变亮时先
+        #      放开到 80;
         #   2) 红 A 下界 40: 砍掉红暗面(实测 A=37);
         #   3) 靶标段与本段逐字同值 —— 改这里记得同步 target["lab"]。
-        # 绿(2026-09-26 收紧): 旧 [8,67,-83,-10,-47,71] 太松 —— 全帧误命中 18570 px 中
-        #   15658 px 是低饱和淡绿/灰绿(A -10~-25、B 0~35)。现靠两根色度轴收口:
-        #   Amax -10→-25(同时挡哑光黄 A≈-12~-20)、Bmin -47→30(挡低饱和偏青绿);
-        #   代价用 Lmax 67→85 补回(球心 ROI 覆盖 28→48px, 正检 548→525 基本不掉)。
-        #   要更狠的选择性: [8,67,-83,-25,30,71](误命中 954, 但球内少约 20%)。
-        # 蓝(2026-09-26 收紧): 旧 [0,80,-110,100,-66,-10] 只靠 B 一维且 Bmax=-10 离中性灰
-        #   只有 10 —— 全帧误命中 5365 px 中 3644 px 是浅蓝/淡蓝(B -25~-5)。现按"只要深蓝"
-        #   收口: Bmax -10→-25、Lmax 80→60、A 由全开 [-110,100] 收到 [-8,45](挡紫/青,
-        #   让 A 参与判别)、Bmin -66→-75(补住暗面 -69)。代价: 球内 401→341(-15%),
-        #   换误命中 -69% 且淡蓝归零。蓝目标受光变亮导致切块时先放开 Lmax 到 80。
         # 排爆扫描 ROI: 帧比例 (x0, y0, x1, y1); None/缺省 = 全帧(与改动前逐字节一致)。
         # 纯提速视窗: 只缩小 find_blobs 搜索域, 不改定序语义。
         # ⚠ 定序靠"首次检出先后 + 同帧内按画面左右" ⇒ **三坑必须同时落在 ROI 内**,
@@ -229,21 +209,20 @@ _DEFAULT_CONFIG = {
         "err_deadband": 0,
         "confirm_frames": 1,
         # merge_margin: find_blobs 的 margin（形态学膨胀半径, 加重连通域重标记）。
-        #   ⚠ 0/None = **不传该 kwarg**（2026-10-07 台架修正）。本项此前硬编码
-        #   margin=1, 但去年基准 main.py:390 是裸 `merge=True` 不传 margin。
-        #   CAM1 算力弱一个量级, 带 margin 时订阅后实测只有 5.3fps(189ms/帧),
-        #   是"比去年明显滞后"的主要嫌疑。默认回到与去年逐字节一致的调用形态。
+        #   ⚠ 0/None = **不传该 kwarg**。去年基准 main.py:390 是裸 `merge=True`
+        #   不传 margin；margin 在 OpenMV 系 find_blobs 里会触发形态学膨胀 +
+        #   连通域重标记, CAM1 上尤其贵（实测带 margin=1 订阅后只有 5.3fps）。
         #   需要 margin 时填整数(如 1), 会走有 margin 的分支, 固件不认仍降级到无 margin。
         "merge_margin": 0,
         # ROI 帧比例 (x0, y0, x1, y1); 默认值 = main.py [0,169,640,197] @640x480
         "roi": [0.0, 169 / 480, 1.0, 366 / 480],
-        # 靶标扫描降采样（2026-10-07）: 1.0 = 640x480 全帧扫, 0.5 = 320x240 扫。
+        # 靶标扫描降采样: 1.0 = 640x480 全帧扫, 0.5 = 320x240 扫。
         #   降采样是**两段式**（见 _process_target 注释）: 小图只定位"有没有/在哪"
         #   （门槛 ×scale²、ROI 面积降到 1/scale², 省时间的大头），再在贴着粗框的
         #   全分辨率窄窗上按原门槛复扫一次, 由该次结果算 cx 与 err_fixed。
         #   ⚠ 不能只降采样了就算误差: cx 是像素级量, 小图 ±1 像素还原到全帧
-        #   就是 ±1/scale 像素, scale=0.5 时偏差可达 30+ LSB(实测 7031 vs 7062)。
-        #   打靶是云台闭环、误差即控制量, 这点精度不能省 —— 故精修那一步不可删。
+        #   就是 ±1/scale 像素, scale=0.5 时偏差可达 30+ LSB。打靶是云台闭环、
+        #   误差即控制量, 这点精度不能省 —— 故精修那一步不可删。
         "scan_scale": 1.0,
         # 精修窗口相对粗框的外扩像素（全分辨率口径, 640 宽下 24 ≈ 3.75% 画面宽）。
         #   取小了追不上目标一帧内的位移 -> 窄窗扫不到、回落粗结果（精度打折）;
@@ -264,7 +243,7 @@ _DEFAULT_CONFIG = {
         "fill_min": 0.0,
         "fill_max": 1.0,
         # 与 explosive 段同值（"什么是红/绿/蓝"不随任务变）; 现场可按 ROI 内实际光比
-        # 分头标定 —— 物理条件不同（爆: 全帧三坑 + 10000 面积门槛; 靶: 窄 ROI + 1000）,
+        # 分头标定 —— 物理条件不同（爆: 全帧三坑 + 4000 面积门槛; 靶: 窄 ROI + 1000）,
         # 同一组值只是起点而非最优; 要分开标定先改这里。
         "lab": {
             "red":   [0, 80, 40, 80, 10, 80],
@@ -285,10 +264,8 @@ _DEFAULT_CONFIG = {
         "min_area": 8,
         "max_area": 4000,
         # ---- 亮环境/白背景签名扩展（判据链见 laser_calib_tuner.py 文件头）----
-        # 台架实测(bbcf8e0): 白背景 50cm 远距光斑泛白成"白点+一点红晕", 晕 dom
-        # 25~45 在 dom_min=40 门限两侧抖动 -> 概率性丢点; 暗背景/近距旧判据够用。
-        # 白核(R,G,B 全>=prom_min)膨胀 halo_pad 作第二候选入口 + 逐块"白核+淡晕"
-        # 确认修复之; 判据链细节与 HUD 标定读数见 laser_calib_tuner.py 文件头。
+        # 白背景远距光斑泛白成"白点+一点红晕", 晕 dom 在 dom_min 门限两侧抖动 ->
+        # 概率性丢点; 故加"白核+淡晕"第二候选入口 + 逐块确认修复之。
         "dom_faint": 12,
         # 白核膨胀半径 / 确认窗口外扩。0 = 关闭签名扩展（旧"绝对红"单入口）。
         "halo_pad": 3,
@@ -300,21 +277,19 @@ _DEFAULT_CONFIG = {
         "conf_th": 0.7,
         "iou_th": 0.45,
         # 只信画面左 3/4: `obj.x`(左边缘) 超过此值的框丢弃。0 = 不裁剪（未标定机位时的
-        # 安全值）。现场值见 eod_config.yaml（480 = 640 宽下的 0.75W，等价于 25 版
-        # main.py:257 / 26 版 main.py:435 的 `obj.x > 240` —— 模型同一份，320 图与
-        # 640 图 letterbox 到模型输入后等价）。
-        # 这是**入画区抑制**，不是"复现旧行为"的开关: 目标从右边缘入画时半出画 +
-        # 运动模糊，首帧容易被判成邻类，等它走进稳定区再入表。
+        # 安全值）。现场值见 eod_config.yaml（480 = 640 宽下的 0.75W）。
+        # 这是**入画区抑制**: 目标从右边缘入画时半出画 + 运动模糊, 首帧容易被判成邻类,
+        # 等它走进稳定区再入表。
         "x_crop_px": 0,
         # 未见形状的补位规则（三坑形状互不相同, 见到 2 个即可推出第 3 个"是什么"）:
-        #   "tail" = 未见者就是顺序上的最后一个 = 最后遇到的那个坑, 补在顺序尾部（默认）;
+        #   "tail" = 未见者就是顺序上的最后一个坑, 补在顺序尾部（默认）;
         #   "none"/"" = 不补位, 必须三形状齐见才锁存（旧 main.py 语义, 退路）。
         # 补位只能推出"是什么", 推不出"在第几坑" —— 位置靠 order_by 给。
         "infer_missing": "tail",
         # 坑位顺序的来源:
         #   "first_seen" (默认) = 首次被检测到的先后。比赛流程固定、相机按 pit1→pit3
         #       方向扫过, 所以"最先看见的那个就在 pit1"; 该顺序是物理顺序, 与图像左右
-        #       无关, 故 **pit_left_is_1 不参与跨帧定序**（它只用于同帧内的左右定序, 见下）。
+        #       无关, 故 **pit_left_is_1 不参与跨帧定序**（它只用于同帧内的左右定序）。
         #   "x" = 按画面 x 从左到右排序（旧 main.py 语义; 三坑同屏时用; 背装镜像需
         #       把 pit_left_is_1 置 false 做整体翻转）。
         "order_by": "first_seen",
@@ -404,14 +379,10 @@ def _lab_to_cv_range(lab: list):
 def _as_numpy(frame):
     """把帧物化成真 BGR numpy（是 LazyFrame 就取其缓存的真数组, 否则原样返回）。
 
-    为什么需要（2026-10-09, 懒转换配套）: OpenCV 的 `src` 参数**不吃 `__array__`
-    协议** —— `cv2.cvtColor(lazy, ...)` / `cv2.resize(lazy, ...)` 会直接报
-    "src is not a numpy array"。而 LazyFrame 只在**真用像素**时才转, 于是凡是
-    "要把像素交给 cv2"的地方都必须显式物化。
-
-    代价可控: LazyFrame 内部缓存结果, 同一帧调多少次都只 image2cv 一次;
-    而真机走 C++ find_blobs 快路径时这些地方根本执行不到（一次都不转）。
-
+    OpenCV 的 `src` 参数**不吃 `__array__` 协议** —— `cv2.cvtColor(lazy, ...)` 会
+    直接报 "src is not a numpy array"。凡是"要把像素交给 cv2"的地方都必须显式物化。
+    代价可控: LazyFrame 内部缓存结果, 同一帧调多少次都只 image2cv 一次; 真机走
+    C++ find_blobs 快路径时这些地方根本执行不到。
     判定用"有没有 numpy() 方法"的鸭子类型, 因此对真 numpy / None / 其它类型
     一律保持原行为, 不引入任何新语义。
     """
@@ -578,8 +549,7 @@ class GksTaskProcessor(Processor):
         self._shape_seen = {}     # 形状号 -> 最近一次画面中心 x（跨帧刷新）
         # 入表门槛（shape_hits）的两个辅助表, 必须与 _shape_seen 同生命周期:
         #   _shape_streak: 形状号 -> **连续**在场帧数, 本帧缺席即清零。与"累计帧数"
-        #     的区别是关键的 —— 累计计数会被 30 帧后的真实同名目标救活
-        #     (文档 §3.1 的反例), 连续计数不会。
+        #     的区别是关键的 —— 累计计数会被 30 帧后的真实同名目标救活, 连续计数不会。
         #   _shape_first: 形状号 -> 首次出现序号。达标入表时按它重排 _shape_seen,
         #     否则"先入画的坑漏检几帧、后入画的先达标"会把坑位顺序排反。
         #   _shape_peak: 形状号 -> **历史最长**连续帧数（只增不减）。诊断用:
@@ -642,19 +612,12 @@ class GksTaskProcessor(Processor):
     def _maybe_reload_thresholds(self) -> None:
         """每帧检查阈值文件内容签名 —— 但**限频到 2Hz**。
 
-        台架真机实测（2026-10-08, 未订阅/画面无目标）: `[PERF] vision ... task=1.1ms`。
-        那个状态下 `process()` 只跑 `_maybe_reload_thresholds()` + 拼结果 dict，
-        识别分支一个都没进（`_mode` 为 None）—— 也就是说 **1.1ms 基本全是这次
-        `os.stat()`**，一次每帧都发生的文件系统调用。
-
         阈值文件是人手在调参页上写出来的，2Hz 轮询远远够用（人手不可能更快），
-        换来每帧省 ~1ms：在 40fps 上约 4% 的整帧预算，而在 20ms 的短帧预算里就是 5%+。
+        换来每帧省一次 `os.stat()`（在 20ms 的短帧预算里就是 5%+）。
         ⚠ 不要为了"省一次 stat"改成只在订阅时检查一次：调参页是**订阅中**用的，
         改语义会让热重载失效。
 
-        2026-10-10: 人质参数文件（rescue_params_file）共用本闸门 —— SAVE 产物
-        同样是人手频率的落盘, 2Hz 足够; 但**两个文件各一次 stat**, 任一存在才进入。
-        2026-10-15: 激光校准文件共用本闸门（LASER 页 SAVE 产物, 同语义）。
+        人质参数文件与激光校准文件共用本闸门（都是调参页 SAVE 产物, 同语义）。
         """
         if (not self._thresholds_file and not self._rescue_params_file
                 and not self._laser_calib_file):
@@ -727,10 +690,10 @@ class GksTaskProcessor(Processor):
     def _log_lab_slots(self) -> None:
         """订阅切换时打一条"色号 -> 实际生效的 LAB 盒"日志（每次 set_task 一条）。
 
-        为什么需要: 阈值文件只按**行序**绑定颜色（`load_threshold_file` 忽略 name
-        前缀: row0→红/row1→绿/row2→蓝, 靶标 3~5）。文件若被别的工具按其它顺序写出,
-        "C1 槽跑着蓝色的阈值"这种错位是静默的 —— 屏幕上看蓝色被框成 C1, 与
-        R/B 通道序错误症状极像。有这行日志, 一眼就能分辨是文件行序问题还是通道序问题。
+        阈值文件只按**行序**绑定颜色（`load_threshold_file` 忽略 name 前缀:
+        row0→红/row1→绿/row2→蓝, 靶标 3~5）。文件若被别的工具按其它顺序写出,
+        "C1 槽跑着蓝色的阈值"这种错位是静默的 —— 与 R/B 通道序错误症状极像。
+        有这行日志, 一眼就能分辨是文件行序问题还是通道序问题。
         """
         if self._mode == MODE_EXPLOSIVE:
             slots = []
@@ -787,7 +750,6 @@ class GksTaskProcessor(Processor):
         """`merge_margin` -> find_blobs 的 margin kwarg 值。
 
         0 / None / 缺省 / 非法 -> **None = 不传该 kwarg**（与去年基准一致）。
-        去年 main.py 的 task1/task2 都是裸 `merge=True`, 没有 margin ——
         margin 在 OpenMV 系 find_blobs 里会触发形态学膨胀 + 连通域重标记,
         比 merge 本身重得多, CAM1 上尤其明显（见 _DEFAULT_CONFIG["target"] 注释）。
         """
@@ -881,13 +843,10 @@ class GksTaskProcessor(Processor):
         }
         return VisionResult(task_name=self.name, success=True, result_data=data)
 
-    # ---- 坑位定序（task1 爆炸物 / task3 人质 共用一套, 与 2025 视觉方案一致）----
+    # ---- 坑位定序（task1 爆炸物 / task3 人质 共用一套）----
     #
-    # 2025 方案 task1/task3 的坑位映射是同一个套路：
-    #   task3: `found_shapes` 累积, 第 1 个 -> position2[0], 第 2 个 -> position2[1],
-    #          第 3 个直接算出来 position2[2] = 6 - sum(found_shapes)
-    #   task1: `position_count` 累积, 同理 position[2] = 6 - position[0] - position[1]
-    # 即：**顺序 = 首次检出先后**（相机按 pit1→pit3 扫过, 最先看见的那个就在 pit1）,
+    # 2025 方案 task1/task3 的坑位映射是同一个套路: **顺序 = 首次检出先后**
+    # （相机按 pit1→pit3 扫过, 最先看见的那个就在 pit1）,
     # 且**三色/三形状互不相同 -> 见到 2 个即可推出第 3 个"是什么"**, 补在顺序尾部。
     #
     # 补位只解决"是什么"、不解决"在第几坑"——位置由顺序来源给出。某帧同时检出多个时,
@@ -957,7 +916,7 @@ class GksTaskProcessor(Processor):
         INTER_NEAREST: 不插值 —— 双线性会把目标边缘像素与背景混成中间色, 那正是
         运动模糊让色块掉出阈值的同一机理。maix 缩放失败时返回 None(自动走 cv2 回退)。
 
-        ⚠ 通道序（2026-09-26 台架实测踩坑, 见 AGENTS.md「已知边界」）: 交给 C++
+        ⚠ 通道序（台架实测踩坑, 见 AGENTS.md「已知边界」）: 交给 C++
         find_blobs 的小图必须是 **RGB 字节序 + FMT_RGB888 标记**。MaixCDK 的
         convert_to_imlib_image()（components/vision/src/maix_image_ops.cpp）把
         FMT_BGR888 直接 fall-through 成 PIXFORMAT_RGB888、**不做通道交换**，
@@ -976,17 +935,12 @@ class GksTaskProcessor(Processor):
                            interpolation=cv2.INTER_NEAREST)
         # 小图重新包成 maix Image: 走 C++ find_blobs 快路径且像素与上面 NEAREST 结果
         # 逐字节一致（不用 img.resize(): 固件默认插值会把边缘混成中间色）。
-        #
-        # import 探测结果模块级缓存（2026-10-07）: 这里的 `import maix.image` 是
-        # **函数内**import, PC 端(无 maix) 每次调用都要走一遍 sys.modules 查找 +
-        # 抛 ImportError, 实测单帧 0.92ms —— 而 _downscale 的有效工作只有 0.07ms,
-        # 即 93% 的时间花在重复失败的 import 上（设备端 import 命中缓存, 开销小,
-        # 但缓存对两端都只有好处）。
-        #
+        # import 探测结果模块级缓存: PC 端(无 maix) 每次调用都要走一遍 sys.modules
+        # 查找 + 抛 ImportError, 实测单帧 0.92ms —— 而 _downscale 的有效工作只有
+        # 0.07ms, 即 93% 的时间花在重复失败的 import 上。
         # ⚠ 只缓存"是否可用"(_maix_image_ok), **每次仍重新 import 取模块对象**:
-        #   sys.modules 命中是纳秒级的字典查找, 而缓存模块对象会与测试的
-        #   monkeypatch.setitem(sys.modules, "maix.image", fake) 冲突 ——
-        #   先前缓存成 False 的实例会让后续注入的假 maix 永远拿不到。
+        #   缓存模块对象会与测试的 monkeypatch.setitem(sys.modules, "maix.image", fake)
+        #   冲突 —— 先前缓存成 False 的实例会让后续注入的假 maix 永远拿不到。
         global _maix_image_ok
         image_mod = None
         if _maix_image_ok is not False:
@@ -1089,18 +1043,18 @@ class GksTaskProcessor(Processor):
         roi_px = self._roi_px(cfg["roi"], w, h)
         scale = self._scan_scale(cfg)
 
-        # ---- 降采样两段式（2026-10-07）----
+        # ---- 降采样两段式 ----
         #
         # 只降采样会把 cx 的精度也降下来：cx 是**像素级**量, 小图上 ±1 小图像素
-        # 还原到全帧就是 ±1/scale 个像素 —— scale=0.5 时误差能偏 30+ 个 LSB
-        # (实测 7031 vs 7062)。打靶是云台闭环, 误差就是控制量, 这点偏差不能省。
+        # 还原到全帧就是 ±1/scale 个像素 —— scale=0.5 时误差能偏 30+ 个 LSB。
+        # 打靶是云台闭环, 误差就是控制量, 这点偏差不能省。
         #
         # 故拆成两段: ①**小图只负责"有没有、在哪"**（面积门槛按 scale² 折算）,
         # ROI 面积直接降到 1/scale², 这是省时间的大头; ②拿小图给出的粗位置,
         # 在**全分辨率**上开一个贴着它的窄窗再扫一次, 门槛用原值, 由这一次
         # 的结果算 cx 与 err_fixed —— 与全分辨率逐位一致, 精度不打折。
         # ②的窗口很小(靶标 bbox 外扩 pad), 扫的像素量远小于①, 净收益仍为正。
-        # ---- 跨帧跟踪窄窗（2026-10-09, 默认关闭）----
+        # ---- 跨帧跟踪窄窗（默认关闭）----
         #
         # 打靶是**云台闭环**: 目标在帧间只移动少量像素。于是可以用上一帧的 cx 开一个
         # 窄窗, 命中就直接用; 未命中**当帧回退全 ROI 复扫**。这个"当帧回退"是关键:
@@ -1160,7 +1114,7 @@ class GksTaskProcessor(Processor):
             return {"err_fixed": err_fixed, "found": True}, hits, True
         return {"err_fixed": 0, "found": False}, hits, True
 
-    # ---- task2 候选选择与时序（防误检, 2026-10-08）----
+    # ---- task2 候选选择与时序（防误检）----
     def _target_tracked_scan(self, frame, maix_img, lab, roi_px, cfg, scale):
         """跨帧跟踪窄窗扫描(track_mode: fixed/dynamic)。返回 blob 列表 = 命中;
         **None = 调用方应走全 ROI 路径**。
@@ -1329,10 +1283,9 @@ class GksTaskProcessor(Processor):
         桶 = err // deadband(死区关闭时桶退化为 err 本身, 即要求逐帧完全相同 ——
         那太苛刻, 所以 confirm_frames > 1 时**必须**同时给 err_deadband > 0)。
 
-        ⚠ **基准写入必须在两条 early-return 之外**(2026-10-08 修正): 此前
-        `_target_last_err = err_fixed` 只写在函数末尾, 于是 confirm_frames=1(默认)
-        时函数在第一行就return True —— 基准**永远不更新**, 死区恒等形同关闭,
-        配了 err_deadband 也毫无效果。现在两条 return 之前都写。
+        ⚠ **基准写入必须在两条 early-return 之外**: `_target_last_err = err_fixed`
+        若只写在函数末尾, confirm_frames=1(默认) 时函数第一行就 return True ——
+        基准**永远不更新**, 死区恒等形同关闭。现在两条 return 之前都写。
         被丢弃的帧不写基准(否则污染死区), 故确认通过后才更新。
 
         未确认时按秒汇总打一条, 不逐帧刷屏; 现场判读看: 连续丢弃计数涨 =
@@ -1454,12 +1407,11 @@ class GksTaskProcessor(Processor):
             return ({"pos": 0, "found": False, "inferred": self._latch_inferred},
                     hits, list(self._position2), self._pending_count2)
 
-        # ---- 零拷贝推理（2026-10-09）----
+        # ---- 零拷贝推理 ----
         # maix Image 可用时走 `_raw=True`: NPU 直接吃原始图, **省掉两次拷贝**
         # —— ① 相机的 image2cv(BGR numpy) ② detect() 内的 cv2image(numpy→maix)。
-        # 这是"干掉白做的 image2cv"在人质任务上的同款收益。
-        # ⚠ 两条平台的 `ai.detect` 都认 `_raw`
-        #   (maixcam1/ai.py:235、maixcam2/ai.py:179, 均 pop 掉该 kwarg)。
+        # ⚠ 两条平台的 `ai.detect` 都认 `_raw` (maixcam1/ai.py、maixcam2/ai.py,
+        #   均 pop 掉该 kwarg)。
         # maix_img 缺失(PC/无 maix)时退回 numpy 路径, 行为与改前逐位一致。
         if maix_img is not None:
             objs = ai.detect(maix_img, conf_th=self._cfg["rescue"]["conf_th"],
@@ -1498,11 +1450,10 @@ class GksTaskProcessor(Processor):
             # 行为与改前不一致, 失去"默认值即回归开关"的性质。
             frame_shapes[shape_num] = obj.x + obj.w / 2.0
         # ---- 入表门槛: 连续 shape_hits 帧才占坑 ----
-        # 现场根因（docs/eod/rescue_shape_identity.md）: 目标从画面右侧入画时,
-        # 首帧半出画+运动模糊, YOLO 判成邻类（yuan_zhu 0.59 而非 yuan_tai）,
-        # 下一帧起 0.80~0.92 全对 —— 但旧代码首帧就写 _shape_seen、永久占位,
-        # 后续正确帧只能新增另一个键, 集合凭空多一个形状 -> 三形状"齐见" ->
-        # 静默锁死错误坑位（Brain 侧首次收到非零 pos 即锁死, 事后无法纠正）。
+        # 根因（docs/eod/rescue_shape_identity.md）: 目标从画面右侧入画时首帧半出画
+        # + 运动模糊, YOLO 判成邻类, 下一帧起全对 —— 但旧代码首帧就写 _shape_seen、
+        # 永久占位, 集合凭空多一个形状 -> 三形状"齐见" -> 静默锁死错误坑位
+        # （Brain 侧首次收到非零 pos 即锁死, 事后无法纠正）。
         for s in self._shape_streak:
             if s not in frame_shapes:
                 self._shape_streak[s] = 0       # 只改值不增删键, 无迭代中改字典异常
@@ -1547,9 +1498,9 @@ class GksTaskProcessor(Processor):
                     # 这是**幽灵的指纹**: 幽灵在锁存前早已缺席清零, 锁存那一刻的
                     # streak 是 0, 只有峰值能证明它曾经连续出现过几帧。
                     # peak={} = 第三个坑根本没进视野(正常两坑路径);
-                    # peak={1: 1} = 形状 1 只连续露了 1 帧就被门槛挡掉（正是 03:37 段）;
+                    # peak={1: 1} = 形状 1 只连续露了 1 帧就被门槛挡掉;
                     # peak={1: 3} 且 hits=3 = 它已经占坑了, 该看 seen。
-                    # 现场调 shape_hits 只看这一个数：所有未占坑形状的 peak 都比 hits
+                    # 现场调 shape_hits 只看这一个数: 所有未占坑形状的 peak 都比 hits
                     # 小 1 以上 = 门槛有余量; 有 peak 逼近 hits = 该抬门槛或查模型。
                     peak = {s: n for s, n in self._shape_peak.items()
                             if s not in self._shape_seen and n > 0}

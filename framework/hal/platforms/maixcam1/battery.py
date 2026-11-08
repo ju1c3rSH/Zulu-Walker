@@ -8,9 +8,7 @@
 - 构造要跑一次芯片 ID 校验（~2.4ms），所以句柄常驻、全工程只在这里构造
   （C 层是进程内单例，但并发读没有锁）。
 
-⚠ 这里**不打日志**：失败原因写进 `BatteryReading.reason`，由主循环那一个出口统一
-打印。否则同一个 `percent=-1` 会在 HAL 和模块里各说一遍，而且 `app/main.py` 的
-`basicConfig` 只挂 FileHandler —— logger 打的字在设备控制台本来就看不见。
+⚠ 这里**不打日志**：失败原因写进 `BatteryReading.reason`，由主循环那一个出口统一打印。
 """
 from __future__ import annotations
 

@@ -125,13 +125,11 @@ def find_blobs_maix(img, thresholds: list, roi=None,
     and dropped gracefully when the firmware build does not accept the kwarg
     (official docs only pin thresholds/invert/roi/area_threshold/pixels_threshold).
 
-    ⚠ `margin` 默认 **None = 不传该 kwarg**（2026-10-07 台架修正）。
-    此前本函数硬编码 `margin=1`，但去年基准 `工科赛上端/main.py` 的 task1/task2
-    都是**裸 `merge=True`、不传 margin**（main.py:390）。margin 在 OpenMV 系
-    find_blobs 里会触发形态学膨胀 + 连通域重标记，比 merge 本身重得多。
-    CAM1(cv181x) 算力比 CAM2 弱一个量级，2026-10-07 台架实测带 margin=1 时
-    订阅后帧率只有 5.3fps（189ms/帧），是"比去年明显滞后"的主要嫌疑之一。
-    不传 margin 即回到与去年逐字节一致的调用形态。
+    ⚠ `margin` 默认 **None = 不传该 kwarg**。去年基准 `工科赛上端/main.py` 的
+    task1/task2 都是**裸 `merge=True`、不传 margin**（main.py:390）。margin 在
+    OpenMV 系 find_blobs 里会触发形态学膨胀 + 连通域重标记，比 merge 本身重得多；
+    CAM1(cv181x) 算力比 CAM2 弱一个量级，带 margin=1 时订阅后帧率只有 5.3fps，
+    是"比去年明显滞后"的主要嫌疑之一。不传 margin 即回到与去年一致的调用形态。
     需要 margin 时显式传 int（走有 margin 的分支，失败仍降级到无 margin）。
     """
     if not _HAVE_MAIX or img is None:
@@ -176,7 +174,7 @@ def find_blobs_maix(img, thresholds: list, roi=None,
             "cx": cx, "cy": b.cy(),
             "pixels": b.pixels(),
         }
-        # ---- 形状判据（2026-10-08）----
+        # ---- 形状判据 ----
         # 这些是 blob 的**预存字段**(OpenMV imlib 在 blob_analysis 里已算好),
         # 读getter 不产生额外计算, 故无条件透出供 bench 脚本观察。
         # 上层当前**不用**它们做判定 —— 靶标是圆环, 实心球那套阈值会误杀真环,

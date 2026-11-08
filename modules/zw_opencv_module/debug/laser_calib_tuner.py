@@ -15,11 +15,10 @@ Line 按钮切换手动校零竖线(画面中心 x): 检测失效时物理调整
   3. 质心校正: R 通道加权质心; 权重和为 0 时退回连通域几何质心。
 激光点仅 3~30px, **必须全分辨率**运行, 不进主管线(主管线暂停期间页内自算)。
 
-亮环境/白背景签名扩展(2026-10-25; 本页只用于标定激光零点, 与 TARGET 主链路无关):
-  台架实测(bbcf8e0): 白背景 + ~50cm 远距时光斑过曝泛白成"亮度极高的白点 + 一点
-  红晕", 晕的 dom≈25~45 落在逐像素 dom_min=40 门限两侧, 随 AE 抖动/噪声概率性
-  丢失(蒙特卡洛 37/100); 暗背景/近距 dom 富余, 旧判据本来就够 —— 与台架
-  "白色背景不行、暗一点就行"的观察一致。
+亮环境/白背景签名扩展(本页只用于标定激光零点, 与 TARGET 主链路无关):
+  白背景 + ~50cm 远距时光斑过曝泛白成"亮度极高的白点 + 一点红晕", 晕的
+  dom≈25~45 落在逐像素 dom_min=40 门限两侧, 随 AE 抖动/噪声概率性丢失;
+  暗背景/近距 dom 富余, 旧判据本来就够。
   签名方案: 激光点的指纹 = "三通道全饱和的白核(R,G,B>=prom_min) + 核周淡红晕"。
     1. 第二入口: 白核掩码膨胀 halo_pad 后, 允许核周边亮像素(R>=lum_min)免红判据
        进候选 —— 白化光斑的芯+晕整体进掩码。halo_pad=0 或帧内无白核时整段跳过,
@@ -193,7 +192,7 @@ class GksLaserCalibTuner:
         # ---- 签名第二入口: 三通道全饱和的白核膨胀 halo_pad 后, 核周边亮像素免红
         # 判据进候选 —— 远距白化光斑(白核+淡晕)由此复活。halo_pad=0 或帧内无白核时
         # 整段跳过, 掩码与旧实现逐像素一致。白核膨胀区这道门本身就是抗噪闸:
-        # 白墙/纹理噪声没有白核, 不会因签名入口涌入候选(百分位方案曾因此 32ms)。
+        # 白墙/纹理噪声没有白核, 不会因签名入口涌入候选。
         if halo_pad > 0:
             core = ((r >= prom_min) & (g >= prom_min)
                     & (b >= prom_min)).astype(np.uint8) * 255
@@ -206,8 +205,8 @@ class GksLaserCalibTuner:
         else:
             mask = cv2.bitwise_and(lum_term, dom_term)
         # 空掩码占绝大多数帧（激光没开/没打进视场）: 一次 countNonZero 就能整段
-        # 短路掉 morphologyEx + CC + 那张 1.2MB 的 label 图。实测这条快路径
-        # 把"无点"帧的检测成本压到 ~1/6。
+        # 短路掉 morphologyEx + CC + 那张 1.2MB 的 label 图, 实测把"无点"帧的
+        # 检测成本压到 ~1/6。
         if cv2.countNonZero(mask) == 0:
             return None
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -395,9 +394,8 @@ class GksLaserCalibTuner:
             time.time() + 1.2)
 
     def step(self, disp, ts, frame_bgr) -> None:
-        # 分项归因（2026-10-15）: 调试页每轮 ~150ms 而 show 只占 ~18ms, 剩下必须
-        # 拆开看。四项全部是墙钟 ms, 每秒汇总一条 [PERF] laser page。
-        # flag 把 dump 挪到 show 之后再做（show 由上层代理计时, 这里不重复计）。
+        # 分项归因: 调试页每轮 ~150ms 而 show 只占 ~18ms, 剩下必须拆开看。
+        # 全部是墙钟 ms, 每秒汇总一条 [PERF] laser page。
         _t = time.perf_counter()
         self._dot = self.detect_dot(frame_bgr)
         self._note_phase("detect", time.perf_counter() - _t)

@@ -142,10 +142,8 @@ class DebugConsole:
                     self._stop_event.wait(timeout=_UPDATE_INTERVAL)
         except Exception as e:
             # ⚠ 原来这里是裸 `except Exception: pass` —— 整个 TUI 起不来会**静默死掉**,
-            # 台架既看不到"停 了"也看不到"为什么停", 只能靠"日志里没有 ANSI 重绘"
-            # 这种间接证据去猜（2026-10-08 就是这么猜的）。这与 DebugPageFactory.reset()
-            # 缺失是同一类问题: 异常被吞 + 状态不可见。
-            # 不重抛（TUI 起不来不该拖垮应用）, 但必须留痕。
+            # 台架既看不到"停 了"也看不到"为什么停"。不重抛（TUI 起不来不该拖垮应用）,
+            # 但必须留痕。
             from utils.log_util import log_print
             log_print(f"[DCONSOLE] ⚠ rich 渲染线程已退出（TUI 不再刷新）: "
                       f"{type(e).__name__}: {e}")

@@ -73,9 +73,7 @@ class VisionManager:
 
         # 分项计时汇总（每 `perf_interval_s()` 秒一条 [PERF], 默认 10s）。用途见 _note_perf:
         # 真机帧周期如果明显大于 read+tasks+disp 之和, 差额就是被其它线程的
-        # GIL 占用吞掉的时间 —— 2026-10-08 台架实测 CAM1: 识别链路单独跑能到
-        # 59.7Hz(取帧0ms+find_blobs 8.9ms), 而带显示线程的真机只有 20.3Hz,
-        # 差额 ~35ms/帧 必须能被归因, 否则只能靠猜。
+        # GIL 占用吞掉的时间 —— 该差额必须能被归因, 否则只能靠猜。
         self._perf_log = True
         self._perf = {"t0": 0.0, "n": 0,
                       "read": 0.0, "read_cpu": 0.0, "convert": 0.0,
@@ -342,12 +340,11 @@ class VisionManager:
                 continue
             if self._render_enabled:
                 # HUD 绘制按 _hud_draw_interval_s 节流（0 = 每帧）。
-                # ⚠⚠ 节流跳过绘制的帧**必须连 _display_frame 一起跳过**（只发布
-                # 画过 HUD 的帧）。此前注释声称"只跳过重画, 发布照旧, 叠加层以
-                # 10Hz 刷新" —— 那是错的: 46Hz 发布 vs 10Hz 画 HUD, 显示线程
-                # show 到的 ~78% 是**裸帧**, 真机表现就是"顶部信息时有时无"
-                # （2026-10-09 用户报告）。发布节流到与绘制同频后, show 到的
-                # 每一帧都带 HUD; 触摸退出判定只读宽高, 不受影响。
+                # ⚠ 节流跳过绘制的帧**必须连 _display_frame 一起跳过**（只发布
+                # 画过 HUD 的帧）—— 否则会出现"46Hz 发布 vs 10Hz 画 HUD",
+                # 显示线程 show 到的大半是**裸帧**, 真机表现就是"顶部信息时有时无"。
+                # 发布节流到与绘制同频后, show 到的每一帧都带 HUD;
+                # 触摸退出判定只读宽高, 不受影响。
                 _now = time.monotonic()
                 if (self._hud_draw_interval_s <= 0.0
                         or _now - self._last_hud_draw >= self._hud_draw_interval_s):

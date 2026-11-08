@@ -4,13 +4,10 @@
 ## 为什么需要
 
 设备端相机每帧都做 `maix.image.image2cv(raw, copy=True)` —— 640x480x3 一次拷
-921KB。台架真机实测这份拷贝在 `[PERF] vision ... conv=` 里占 **9~16ms**, 是
-除 find_blobs 之外最大的一块。
-
-但**它大多数时候是白做的**: TARGET/EXPLOSIVE 走 C++ `find_blobs` 直接吃
-`camera.last_raw`(零拷贝), RESCUE 走 `_raw=True` 也直接吃 maix Image。这份 BGR
-numpy 只服务两处 —— cv2 回退路径(maix 不可用) 与调参页。真机上 maix 可用时,
-这份拷贝属于"算了不用"。
+921KB, 台架真机实测这份拷贝占 9~16ms, 是除 find_blobs 之外最大的一块。但它大多数
+时候是白做的: TARGET/EXPLOSIVE 走 C++ `find_blobs` 直接吃 `camera.last_raw`
+(零拷贝), RESCUE 走 `_raw=True` 也直接吃 maix Image。这份 BGR numpy 只服务
+cv2 回退路径(maix 不可用) 与调参页 —— 真机上 maix 可用时, 这份拷贝属于"算了不用"。
 
 ## 做法
 
@@ -31,11 +28,10 @@ numpy 只服务两处 —— cv2 回退路径(maix 不可用) 与调参页。真
 - 鸭子类型: 只要不 `isinstance(frame, np.ndarray)`。全局搜过: 处理器/协处理器
   都没有对 frame 做 isinstance 判断（`frame is None` / `.shape` / 切片 / 传库）。
 - `np.asarray(lazy)` 等价于 `lazy.numpy()` —— 供第三方库吞 numpy 的场合。
-- ⚠⚠ **OpenCV 的 Python 绑定不收本代理**（2026-10-09 真机+PC 实测,
-  OpenCV 4.9/5.0 同样报 "src is not a numpy array, neither a scalar"）:
-  `cv2.resize/cvtColor` 等函数的入参转换**不走** `__array__` /
-  `__array_interface__`, 只认 `PyArray_Check` 为真的真 ndarray。
-  所以"把 LazyFrame 直接喂 cv2"是错的 —— 需要 cv2 的消费者（调参页）
+- ⚠⚠ **OpenCV 的 Python 绑定不收本代理**（OpenCV 4.9/5.0 同样报
+  "src is not a numpy array, neither a scalar"）: `cv2.resize/cvtColor` 等函数的
+  入参转换**不走** `__array__` / `__array_interface__`, 只认 `PyArray_Check` 为真的
+  真 ndarray。所以"把 LazyFrame 直接喂 cv2"是错的 —— 需要 cv2 的消费者（调参页）
   必须先 `.numpy()`/`.copy()` 拿真数组; 相机侧 `read()`（调参页入口）
   已按返回契约收敛为真 numpy。
 
@@ -87,13 +83,10 @@ class LazyFrame:
     def copy(self) -> np.ndarray:
         """ndarray.copy() 透传 —— 转换一次并返回其副本。
 
-        ⚠ 这是 2026-10-09 CAM1 真机"按键切到调参页 LCD 直接冻住"的根因修复:
-        调参页 `threshold_tuner._highlight` 第一行就是 `frame_bgr.copy()`,
-        LazyFrame 没这个方法 -> 主循环 tick 里每帧抛 AttributeError, 被
-        module_manager 的 `except Exception: logger.exception(...)` 吞进
-        logs/app.log（控制台看不见）-> 页面的 disp.show() 永远执行不到,
-        而显示线程对非 MAIN 页整体让位 -> LCD 冻结在按键前最后一帧。
-        修法: 补上代理方法, 语义与 ndarray.copy() 一致（独立副本）。
+        ⚠ 缺这个方法会让调参页 LCD 直接冻住: 调参页 `threshold_tuner._highlight`
+        第一行就是 `frame_bgr.copy()`, 缺方法 -> 每帧抛 AttributeError 被吞进
+        logs/app.log（控制台看不见）-> disp.show() 永远执行不到 -> LCD 冻结在
+        按键前最后一帧。语义与 ndarray.copy() 一致（独立副本）。
         """
         return self.numpy().copy()
 
@@ -104,13 +97,12 @@ class LazyFrame:
             try:
                 arr = self._convert(self._raw)
             except Exception:
-                # 转换抛异常也退化为空数组 —— 理由同下: 这帧"没有像素可用"是
-                # 可降级状态, 不该把整帧打断（单任务 try 兜底会记 error 并丢结果）。
+                # 转换抛异常也退化为空数组 —— 这帧"没有像素可用"是可降级状态,
+                # 不该把整帧打断（单任务 try 兜底会记 error 并丢结果）。
                 arr = None
             if arr is None:
-                # 转换失败: 退化成空数组而非抛异常 —— 处理器里对 None 的处理是
-                # "零值心跳不断流", 而抛异常会打断整帧(单任务 try 兜底会记 error)。
-                # 空数组让 `.shape[:2]` 与切片都安全返回, 等价于"这一帧没有像素可用"。
+                # 转换失败: 退化成空数组而非抛异常 —— 空数组让 `.shape[:2]` 与
+                # 切片都安全返回, 等价于"这一帧没有像素可用"。
                 arr = np.zeros((0, 0, 3), np.uint8)
             self._numpy = arr
             # 转换后若拿到了真实尺寸, 用它校正 shape（初值可能来自估算/缺失）

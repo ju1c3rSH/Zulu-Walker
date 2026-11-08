@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 # ⚠ **不要用别的类兜底缺失的类型**：固件缺 YOLOv8/YOLO11 时若回退到 YOLOv5，
 #   会用 YOLOv5 的后处理去解 YOLOv8/YOLO11 的输出——**不抛异常、直接吐错误坐标**，
 #   比"加载失败"危险得多。缺失一律置None，由 _resolve_class → switch 显式失败。
-#   （CAM1 固件其实支持 yolov8/yolo11，见 docs/doc/zh/ai_model_converter/maixcam.md
-#     的 model_type 列表；只是有版本门槛，YOLOv8≥4.3.0 / YOLO11 ≥4.7.0。）
 _SLOT_CLASSES = {
     "yolov5": maix.nn.YOLOv5,
     "yolov8": getattr(maix.nn, "YOLOv8", None),
@@ -32,7 +30,7 @@ _DEFAULT_TYPE = "yolov5"
 class MaixCam1AI:
     """MaixCAM / MaixCAM-Pro NPU 推理（人质形状识别）。
 
-    与 MaixCam2AI 的差异（2026-10-07 回移植）:
+    与 MaixCam2AI 的差异:
 
     1. **模型格式**: CAM2 用 Axera 的 `.axmodel`（mud 键`model_npu`），
        CAM1 只认 CVITEK 的 `.cvimodel`（mud 键 `model`）。当前部署
@@ -125,8 +123,7 @@ class MaixCam1AI:
         # detect() 返回上一次调用的图结果 —— 人质坑位 first_seen 定序与
         # x_crop 像素判断会因此吃到一帧延迟（约 33ms @30fps）。关掉换实时性。
         # 旧固件若不认该 kwarg，用 TypeError 消息特征区分"签名不兼容"与
-        # "模型本身坏了"（后者常以 TypeError/ValueError 冒泡），避免无谓重试
-        # 一次 NPU 加载（200-500ms）并掩盖真实错误。
+        # "模型本身坏了"，避免无谓重试一次 NPU 加载并掩盖真实错误。
         kwargs.setdefault("dual_buff", False)
         try:
             self._model = slot_cls(model=path, **kwargs)
@@ -260,8 +257,8 @@ class MaixCam1AI:
             objects = self._model.detect(img, conf_th=conf_th, iou_th=iou_th, **kwargs)
         except Exception as e:
             # 不做"丢掉 iou_th 重试"：CAM1 官方 nn_yolov5.py / yolov5.md 都带
-            # iou_th，TypeError 更可能来自 detect 内部（numpy 转换、pts 越界等），
-            # 吞掉它再重试只会掩盖真实错误、并悄悄改掉检测语义。
+            # iou_th，TypeError 更可能来自 detect 内部，吞掉它再重试只会掩盖
+            # 真实错误、并悄悄改掉检测语义。
             logger.error("Model detect() failed: %s", e)
             return []
 
@@ -372,7 +369,6 @@ class MaixCam1AI:
         """返回 CAM1 上对应的 MaixPy NN 类；None = 不支持。
 
         "auto" 在 CAM1 上解析为 yolov5（当前唯一实际模型类型）。
-        老固件缺 YOLOv8/YOLO11 时 getattr 已回退到 YOLOv5。
         """
         if model_type == "auto":
             return _SLOT_CLASSES[_DEFAULT_TYPE]

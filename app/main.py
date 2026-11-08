@@ -48,39 +48,18 @@ _ICON_HIT_PAD = 4
 _WDT_WINDOW_MS = 10000
 _WDT_FEED_PERIOD_S = 1.0
 
-# ⚠⚠ **是否武装硬件看门狗**（2026-10-09 重大修正，默认 **False**）。
-#
-# 起因: 台架现象"运行期正常, 一退出设备就重启"。查 MaixCDK 源码
-#   `components/peripheral/port/linux_common/maix_wdt.cpp` 得到决定性事实:
-#
-#     WDT::WDT(id, feed_ms) → open("/dev/watchdog") + WDIOC_SETTIMEOUT(feed_ms/1000)
-#                             + close ⇒ **构造即启动**, 硬件倒计时立刻开始
-#     WDT::feed()           → open + WDIOC_KEEPALIVE + close（喂一次 = 重置倒计时）
-#     WDT::stop()           → 只打一行 "this operation is not supported", **return 0**
-#     WDT::restart()        → 同上, 也是空实现
-#
-# 也就是说: **MaixCAM(MaixPy) 上的 `wdt.stop()` 是个空壳** —— 它返回 0(=ERR_NONE) 却
-# 什么都没做, 调用方**无法从返回值分辨**"真关了"还是"没关"。而 Linux watchdog 的
-# 语义是: close 时不写魔法字符 'V' 就保持运行, 内核还会明确 print
-# `watchdog0: watchdog did not stop!` —— 所以进程退出**不会**让它停。
-#
-# 于是逻辑闭环了: 喂狗只来自三个 Python 线程（主循环/协调器/视觉），进程一退出
-# 三者全没 ⇒ 窗口(10s)到点 ⇒ SoC 硬复位。**这就是"退出即重启"的全部原因。**
-# （第一版修复只加了 `stop()` 调用 + 日志, 所以日志打了 "[WDT] stopped" 却照样重启 ——
-#  被那个空实现骗了。现在的 `_wdt_stop` 会用 sysfs 倒计时与 raw ioctl 双重验证。）
-#
-# 规避手段只有两条（见 _wdt_stop）:
-#   ① 退出前绕过 MaixPy, 直接对 /dev/watchdog 下 `WDIOS_DISABLECARD`；
-#      若驱动带 nowayout（内核禁止停止看门狗）则返回 EBUSY —— 此路不通；
-#   ② **压根别武装它**。这是 CAM1 上的默认选择: 代价是失去"线程死锁自动复位"兜底,
-#      收益是**退出不再莫名重启**（台架每次收工都省一次 10s 掉线, 且 MaixVision/
-#      SSH 不会莫名断线）。需要死锁兜底时把 `project_config.yaml` 的
-#      `wdt_enabled` 置 true —— 但必须接受"每次退出后 ~10s 设备重启"。
+# ⚠ 是否武装硬件看门狗（默认 False）。
+# MaixPy 的 `wdt.stop()` 是空实现（只打一行 unsupported 就 return 0），而 Linux
+# watchdog 在 close 时不写 'V' 就保持运行 ⇒ 进程退出后设备仍会重启（~10s 硬复位），
+# 且调用方无法从返回值分辨"真关了"还是"没关"。所以 CAM1 上默认**不武装**：
+# 代价是失去死锁→硬件复位兜底，收益是退出不再莫名重启。
+# 需要死锁兜底时把 `project_config.yaml` 的 `wdt_enabled` 置 true ——
+# 但必须接受"每次退出后 ~10s 设备重启"。
 _WDT_ENABLED_DEFAULT = False
 
 # Linux watchdog uapi（绕过 MaixPy 空实现时用）
-# ⚠ ioctl 码要按**有符号 32 位**传: 0x80045704 作为 C int 是负数(-2147199228)。
-#   2026-10-09 设备实测: 传正数时内核回 errno=14 EFAULT(Bad address) —— 请求码不认。
+# ⚠ ioctl 码要按**有符号 32 位**传: 0x80045704 作为 C int 是负数(-2147199228);
+#   传正数内核回 errno=14 EFAULT，请求码不认。
 # ⚠ 打开 /dev/watchdog 必须带 O_NONBLOCK: 看门狗已启动时, 不带 nonblock 的 open
 #   会在 watchdog_open() 里**阻塞等标志位**, 表现为进程挂死。
 _WATCHDOG_DEV = "/dev/watchdog"
@@ -109,12 +88,9 @@ from app.page_sm import STATE_MAIN
 def _push_coordinator_status(coordinator) -> None:
     """把协调器状态推给调试台（调试台没在跑就整段跳过）。
 
-    ⚠ 这里原本**无条件** `from utils.debug_console import DebugConsole`, 两个问题:
-      ① 每次调用一次模块导入（sys.modules 查找, 便宜但不是零）;
-      ② 更糟的是: 若调试台从未被启动（启动器按 `debug_console_enabled: false`
-         禁用了它）, 这句导入会把 **rich 整个模块拉进内存**, 只为往一个不存在的
-         TUI 里塞几个键值 —— 而 CAM1 只有 128MB 用户内存（实测已占 80%）。
-    先用 `debug_console_active()`（纯 sys.modules 判定）挡一道。
+    ⚠ 这句 import 必须放在 `debug_console_active()` 判定之后：调试台被
+    `debug_console_enabled: false` 禁用时，导入会把整个 rich 拉进内存
+    （CAM1 只有 128MB 用户内存），只为往一个不存在的 TUI 里塞几个键值。
     """
     if not debug_console_active():
         return
@@ -152,11 +128,7 @@ class DebugPageFactory:
         self._laser_sender = None
         # 上屏策略与节流状态都在 PresenterService 里 —— MAIN 页与调试页共用同一个出口。
         self._presenter = None
-        # ---- 调试页迭代归因（2026-10-15）----
-        # 为什么需要: 台架实测调试页"每轮 ~150ms, 其中 show 只占 18ms", 剩下 ~130ms
-        # 完全无法归因 —— 而 MAIN 页的视觉线程有 [PERF] vision 的 read/conv/task/disp
-        # 四项打点, 调试页这条路径却是黑盒。没有归因就只能靠猜, 所以先补打点再谈重构。
-        # 分项语义（全部是"墙钟", 单位 ms）:
+        # 调试页迭代归因打点（全部是"墙钟", 单位 ms）:
         #   read = cam.read()（含 image2cv 拷贝与负步长视图生成）
         #   step = page.step() 全程（show 计入 step, presenter 单独计时）
         #   show = 真正进入 display.show() 的那一段（编码 + 上屏）
@@ -172,8 +144,7 @@ class DebugPageFactory:
 
         读法: iter 是 step_active 自身耗时, 1/Hz 是真实周期,
         `iter外 = 周期 - iter` = 主循环里**非调试页**的开销
-        （coordinator.loop + 视觉线程抢 GIL + display_callback + MAIN_LOOP_DELAY）——
-        这一项才是"每轮还有 130ms"的答案。
+        （coordinator.loop + 视觉线程抢 GIL + display_callback + MAIN_LOOP_DELAY）。
         """
         it = self._iter
         if it["t0"] == 0.0:
@@ -289,18 +260,16 @@ class DebugPageFactory:
         frame_bgr = cam.read()
         self._note_page_iter("read", time.perf_counter() - _t_read)
         if frame_bgr is None:
-            # 停帧/取帧失败：**必须退让**, 否则这里会以主循环上限 500Hz 空转
-            # （MAIN_LOOP_DELAY=2ms 是唯一节拍）, 白吃 CPU 且与视觉线程抢 GIL,
-            # 而且控制台一行提示都没有 —— 用户只看到 LCD 冻住。
+            # 停帧/取帧失败：**必须退让**, 否则这里会以主循环上限 500Hz 空转,
+            # 白吃 CPU 且与视觉线程抢 GIL, 而控制台一行提示都没有（用户只看到 LCD 冻住）。
             # 节拍取 5ms: 远快于任何相机帧率, 又比 2ms 自旋少一半唤醒。
             self._iter["none"] += 1
             time.sleep(0.005)
             return
-        # ⚠ 页面渲染抛异常绝不能静默: run_main_loop 的 tick_callback 兜底只把
-        # traceback 写进 logs/app.log（控制台看不见）, 而显示线程对非 MAIN 页
-        # 整体让位 —— 结果就是"切到调试页 LCD 直接冻住, 控制台毫无声息"
-        # （2026-10-09 真机现象, 根因是 LazyFrame 缺 .copy()）。这里改为:
-        # 控制台留痕一次 + 自动回 MAIN 页恢复显示, 别让用户对着一帧死画面猜。
+        # ⚠ 页面渲染抛异常绝不能静默: tick_callback 兜底只把 traceback 写进
+        # logs/app.log（控制台看不见）, 而显示线程对非 MAIN 页整体让位 ——
+        # 结果就是"切到调试页 LCD 直接冻住, 控制台毫无声息"。这里改为:
+        # 控制台留痕一次 + 自动回 MAIN 页恢复显示。
         try:
             # ⚠ 只拦 show, 不拦 step: 触摸/识别必须每帧照跑, 否则页面变成死的。
             _presenter = self.presenter
@@ -332,25 +301,12 @@ class DebugPageFactory:
     def reset(self) -> None:
         """回到 MAIN 页时清掉"当前激活的调试页"标记（install 见 MainUiShell.tick）。
 
-        语义: 页面**实例**留在 _instances 里（共享会话数据不丢, 见类 docstring）,
-        只清激活标记, 于是下次切入同一页时 ensure_entered 会重新走一遍 begin()
-        （重置滑条等交互态, 不重建页面）。
+        语义: 页面**实例**留在 _instances 里（共享会话数据不丢）, 只清激活标记,
+        于是下次切入同一页时 ensure_entered 会重新走一遍 begin()（重置交互态）。
+        清标记前先 _leave_page 通知旧页收尾（LASER 页关激光）。
 
-        ⚠⚠ 这个方法曾经不存在, 而 MainUiShell.tick() 每拍都调它 —— 于是每拍抛
-        AttributeError, 被 run_main_loop 的 except 吞掉。两个后果都不报错:
-
-          ① 每拍格式化一次**完整 traceback** 再写盘。台架实测 `[PERF] mainloop`
-             里 tick=27.7ms, 而 coord=0.17 / touch=0.17 / wdt=0.04ms —— 主循环
-             99% 的耗时都堆在这个回调上, 主因就是它（traceback 格式化是纯 Python
-             字符串工作, 正好对上"CPU 不高但墙上很高"）。
-          ② 紧随其后的 `_push_coordinator_status()` **永远执行不到** ——
-             DebugConsole 状态栏一直是 "-", 台架在控制台上看不到任何状态。
-             也就是说: 这个 bug 让"给台架看状态"的功能整个失效, 同时还在拖慢主循环。
-
-        修法取最小语义(清激活标记), 与 step_active 里页面自请求退出时一致。
         ⚠ 调用点必须是**页面切换边沿**（见 tick）: 每 tick 调一次会连带
           清掉节流相位, 让 interval_ms 当场失效。
-        2026-10-15: 清标记前先 _leave_page 通知旧页收尾（LASER 页关激光）。
         """
         if self._active is not None:
             self._leave_page(self._active)
@@ -405,12 +361,9 @@ class MainUiShell:
     """
 
     # 向 DebugConsole 灌状态的周期（秒）。
-    # ⚠ 必须限频: 台架真机实测 `[PERF] mainloop ... tick=27.7ms`（对比
-    #   coord=0.17ms / touch=0.17ms / wdt=0.04ms）—— 主循环 99% 的阻塞都发生在
-    #   这个 tick 回调里, 而整个主循环的 CPU 只有 205ms/s, 说明它不是在算, 是在**等**
-    #   （被 show() 与 rich 重绘持着 GIL）。功能上它只是喂一个 10Hz 的文字控制台,
-    #   按主循环 2ms 的节奏喂=每秒喂几百次, 没有任何收益。
-    #   0.5s => 2Hz, 肉眼对控制台读数无感, 争用点少一个数量级。
+    # ⚠ 必须限频: 主循环 2ms 一拍, 不限频就是每秒喂几百次 10Hz 文字控制台。
+    #   tick 回调里的阻塞（被 show() 与 rich 重绘持着 GIL）是主循环最大开销,
+    #   0.5s => 2Hz 肉眼对控制台读数无感, 争用点少一个数量级。
     _STATUS_PUSH_INTERVAL_S = 0.5
 
     def __init__(self, machine, pages, factory: DebugPageFactory, vision_manager,
@@ -482,8 +435,8 @@ class MainUiShell:
             frame = self._vm.take_display_frame() if self._vm else None
             if frame is not None:
                 self.presenter.submit(frame, source="main")
-            # 原为 1ms 自旋: 每秒 1000 次唤醒抢 GIL, 对视觉线程是纯干扰。
-            # 显示侧只需要"有新帧就上屏", 5ms 轮询(200Hz) 远快于任何帧率。
+            # 显示侧只需要"有新帧就上屏", 5ms 轮询(200Hz) 远快于任何帧率;
+            # 原为 1ms 自旋, 每秒 1000 次唤醒抢 GIL, 对视觉线程是纯干扰。
             time.sleep(0.005)
 
     def _consume_main_touch(self) -> None:
@@ -539,11 +492,10 @@ def _make_wdt_feed(enabled: bool = True):
     （见 _WDT_ENABLED_DEFAULT 的注释）, 之后**没有任何用户态办法叫停它**（nowayout 时
     连 raw ioctl 都会被内核拒绝）。所以"不重启"这件事只能在"别武装"这一步做。
 
-    # CAM1(MaixCAM-Pro) 的模块布局是 `maix.wdt`，CAM2 才是 `maix.peripheral.wdt`
-    # （docs/doc/zh/peripheral/wdt.md:15 官方示例 `from maix import wdt`）。
-    # 两条路径都试：只写 CAM2 那条会让 CAM1 上 ImportError 被下面的 except 吞掉，
-    # 看门狗**静默失效** —— 应用照常跑、协议照常通，只有日志一行不起眼的 FAIL，
-    # 视觉/串口线程死锁时没有硬件复位兜底，现场表现为"设备卡死需断电"。
+    ⚠ CAM1(MaixCAM-Pro) 的模块布局是 `maix.wdt`，CAM2 才是 `maix.peripheral.wdt`。
+    两条路径都试：只写 CAM2 那条会让 CAM1 上 ImportError 被下面的 except 吞掉，
+    看门狗**静默失效** —— 应用照常跑、协议照常通，只有日志一行不起眼的 FAIL，
+    视觉/串口线程死锁时没有硬件复位兜底。
     """
     if not enabled:
         log_print("[WDT] 未武装（wdt_enabled=false）—— 退出不会触发硬件复位；"
@@ -599,7 +551,7 @@ def _make_wdt_feed(enabled: bool = True):
 def _wdt_timeleft_s():
     """内核报告的看门狗剩余秒数；读不到（PC 端 / 无该 sysfs）返回 None。
 
-    ⚠ 属性名并非总是 `timeleft`（2026-10-09 设备上就是读不到的）, 所以逐个试。
+    ⚠ 属性名并非总是 `timeleft`, 所以逐个试。
     """
     for name in _WATCHDOG_TIMELEFT_FILES:
         try:
@@ -632,7 +584,7 @@ def _wdt_disarm_raw() -> str:
     返回人类可读结果串（只进日志, 不抛）。带 nowayout 的驱动会回 EBUSY(16) ——
     那是内核层面禁止停止看门狗, 此时**没有任何用户态办法能关**, 只能"别武装"。
 
-    ⚠ 两个实测坑（2026-10-09）: ① open 必须 O_NONBLOCK, 否则已启动时挂死;
+    ⚠ 两个实测坑: ① open 必须 O_NONBLOCK, 否则已启动时挂死;
     ② ioctl 码必须传有符号 32 位, 否则 EFAULT(14)。
     """
     try:
@@ -659,15 +611,8 @@ def _wdt_disarm_raw() -> str:
 def _wdt_stop() -> None:
     """退出前尽力解除硬件看门狗 —— 并**如实回报**到底解开了没有。
 
-    ⚠⚠ 2026-10-09 二次修正。第一版只调了 `wdt.stop()` 就打印 "stopped", 台架
-    反馈**照样重启**。原因是 MaixCDK 的实现
-    （`components/peripheral/port/linux_common/maix_wdt.cpp`）:
-
-        int WDT::stop() { log::warn("this operation is not supported"); return 0; }
-        int WDT::restart() { 同上, 也是空实现 }
-
-    **空实现**: 什么都不做却 `return 0`(=ERR_NONE)。调用方从返回值分辨不出,
-    所以第一版日志是一句善意的谎话。现在的流程是"调用 + **验证**":
+    ⚠ MaixCDK 的 `WDT::stop()` 是**空实现**: 打一行 "this operation is not supported"
+    却 `return 0`(=ERR_NONE), 调用方从返回值分辨不出。所以流程是"调用 + **验证**":
 
       1. 调 `maix stop()`（记下 rc, 但不再信它）;
       2. 采样 `/sys/class/watchdog/watchdog0/timeleft` 两次: 递减 ⇒ 还武装着;
@@ -676,8 +621,7 @@ def _wdt_stop() -> None:
          绝不再输出"已解除"这种会被当成结论的日志。
 
     根治办法见 `_WDT_ENABLED_DEFAULT` 的注释: **CAM1 上默认不武装**。本函数保留
-    是因为 `wdt_enabled: true` 时若固件支持 DISABLECARD, 退出仍能干净收场; 同时它
-    把"这台机器到底能不能关看门狗"的答案直接打进日志, 台架一眼可见。
+    是因为 `wdt_enabled: true` 时若固件支持 DISABLECARD, 退出仍能干净收场。
     """
     state = globals().get("_WDT_SHARED_STATE")
     if not state or state.get("stopped"):
@@ -746,13 +690,10 @@ def _apply_render_policy(vision_manager, config: dict) -> None:
     """把 `competition_mode:` 注入 VisionManager（缺省即渲染全开 = 台架行为）。
 
     比赛模式关掉的是**显示侧**每帧开销: HUD 约 20 次 maix draw_string/draw_rect
-    （CAM1 纯软件渲染, TARGET 模式额外 6 个误差刻度标签）+ wifi JPEG 编码, 都在
-    视觉线程取帧→处理→推流的同一拍里串行跑。去年 main.py task2 只画 1 个框 +
-    1 行字, 当前实现多出的这些直接表现为打靶误差滞后。
+    （CAM1 纯软件渲染）+ wifi JPEG 编码, 都在视觉线程取帧→处理→推流的同一拍里串行跑。
 
     **日志与协议推流完全不受影响**: log_print 走独立写盘线程, coordinator 的
-    UART DATA_STREAM 走主循环, 两者都不经过渲染路径。台架验收看
-    `[FPS] pipeline` / `[UART TX] DATA_STREAM` 的 Hz 是否上抬, 日志照旧可查。
+    UART DATA_STREAM 走主循环, 两者都不经过渲染路径。
     """
     if vision_manager is None:
         return
@@ -835,21 +776,16 @@ def main():
     start_log_writer()
 
     # ---- 高频性能日志闸门（project_config.yaml `perf_log:`）----
-    # 必须在 `log_print("0xfb709394")`/DCONSOLE 之外最早生效: 闸门在 log_util 层,
-    # 设完之后下面所有线程的 `[PERF]`/`[MEM]`/`[WDT]`/`[UART TX] CMD_ACK` 等
-    # 高频行都被吞掉, 台架调试只剩事件类日志。
+    # 闸门在 log_util 层, 设完之后所有线程的 `[PERF]`/`[MEM]`/`[WDT]` 等高频行
+    # 都被吞掉, 台架调试只剩事件类日志。
     # 兼容旧的布尔写法 (`perf_log: true/false`) 与新的映射写法;
     # `observability.perf/perf_detail` 优先决定 `[PERF] ` 行。
     _apply_perf_log_config(config.get("perf_log"), config.get("observability"))
 
     # ---- 调试台（rich TUI）----
     # 决策权在 **run.py::_init_debug_console()**: 它在导入 app.main 之前读
-    # `debug_console_enabled`, 禁用时**连 rich 都不导入**（该模块顶层 import rich,
-    # 而 rich 是纯 Python 大包；CAM1 只有 128MB 用户内存, 实测已占 80%）。
-    # 这里**不再无条件 `from utils.debug_console import DebugConsole`** ——
-    # 那会把 rich 拉回来, 让"禁用"只剩一半效果。
-    # 用 log_util.debug_console_active() 廉价判定；只有"配置说关、但它确实已经被
-    # 导入并启动过"这种不一致情况才需要在这里补一次真正生效的关闭。
+    # `debug_console_enabled`, 禁用时**连 rich 都不导入**（CAM1 只有 128MB 用户内存）。
+    # 这里只处理"配置说关、但它确实已经被导入并启动过"这种不一致情况。
     if config.get("debug_console_enabled", True):
         dc_mod = sys.modules.get("utils.debug_console")
         if dc_mod is not None:
@@ -865,8 +801,7 @@ def main():
                 log_print(f"[DCONSOLE] 关闭失败: {type(e).__name__}: {e}")
 
     # 看门狗是否武装: 由 project_config.yaml `wdt_enabled` 决定（缺键用默认,
-    # CAM1 默认 **False** —— MaixPy 的 stop() 是空实现, 武装了就关不掉, 退出即重启。
-    # 详见 _WDT_ENABLED_DEFAULT 的注释与 scripts/wdt_probe.py）。
+    # CAM1 默认 **False** —— 详见 _WDT_ENABLED_DEFAULT 的注释）。
     wdt_feed = _make_wdt_feed(bool(config.get("wdt_enabled", _WDT_ENABLED_DEFAULT)))
 
     from framework.event_bus import EventBus
@@ -901,7 +836,6 @@ def main():
     if vision_manager:
         coordinator.connect_vision(vision_manager)
         # battery_stale_s=30: 正常 10s 一更，30s 没刷新就说明采样卡住/总线坏了，数字转灰。
-        # 退避到 60s 时数字确实已经旧了 —— 那时转灰是正确表现，不需要跟着放大阈值。
         vision_manager.set_hud(DisplayHUD(
             status_fn=coordinator.get_info,
             battery_fn=battery_sampler.snapshot if battery_sampler else None,
@@ -924,7 +858,7 @@ def main():
     _apply_render_policy(vision_manager, config)
     # ⚠ 全系统唯一的 display.show() 出口: MAIN 与调试页共用
     presenter = _make_presenter(machine.display)
-    # competition_mode 关推流（原先由视觉线程跳过来实现, 现在归 presenter 管）
+    # competition_mode 关推流（归 presenter 管）
     presenter.set_policy(stream_enabled=not bool(config.get("competition_mode")))
     _init_streamer(presenter, config)
 
@@ -947,17 +881,17 @@ def main():
     factory = DebugPageFactory(machine, vision_manager, pages)
     factory.set_presenter(presenter)
     factory.set_laser_sender(_send_laser)
-    # 调试页上屏与 MAIN 页同口径（同一组配置键）; 缺键即保持改前行为
+    # 调试页上屏与 MAIN 页同口径（同一组配置键）; 缺键即保持默认行为
     factory.set_display_policy(config.get("display_enabled"),
                                config.get("display_show_interval_ms"))
     ui = MainUiShell(machine, pages, factory, vision_manager, presenter=presenter)
-    # 显示策略与分项计时的配置入口（缺键即保持改前行为, 可一键回退）
+    # 显示策略与分项计时的配置入口（缺键即保持默认行为）
     ui.set_display_policy(config.get("display_enabled"),
                           config.get("display_show_interval_ms"))
     if vision_manager is not None:
         # [PERF] vision 的静音统一由 log_util 层的 perf_log 闸门处理（见
         # _apply_perf_log_config）。这里保留 set_perf_log(True) 作为**兜底**:
-        # 万一闸门没被配置（缺键）, 视觉线程的分项计时照旧输出, 不会因缺配置变哑。
+        # 万一闸门没被配置（缺键）, 视觉线程的分项计时照旧输出。
         vision_manager.set_perf_log(True)
 
     coordinator.start()
@@ -971,8 +905,7 @@ def main():
     finally:
         factory.send_laser_off()   # 激光兜底关（os._exit 路径已单独处理）
         # ⚠ **必须在任何退出路径上 disarm 硬件看门狗**（含异常路径与
-        # `app.need_exit()` 正常收工）。漏掉这一步 = 每次退出后 ~10s 设备重启,
-        # 详见 _wdt_stop 的说明。
+        # `app.need_exit()` 正常收工），否则每次退出后 ~10s 设备重启。
         _wdt_stop()
 
 

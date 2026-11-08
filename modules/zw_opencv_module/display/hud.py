@@ -2,9 +2,8 @@
 """
 工科赛近端显示 HUD — 在相机原始 maix Image 上叠加状态与检测结果。
 
-重构自旧 VisionManager._draw_header/_draw_detections:
-- 旧显示路径强依赖 AI 模型已加载（self._ai.loaded 门控）, 色块任务无模型时黑屏;
-  新路径始终可显示, 且叠加内容来自 gks_task 的 VisionResult（单来源）。
+- 始终可显示（不依赖 AI 模型已加载, 色块任务无模型时也能出画面）;
+  叠加内容来自 gks_task 的 VisionResult（单来源）。
 - 顶部状态栏: 模式 / 链路 / FPS; 第二行: 任务码 + 锁存进度 + 坑位结果;
   检测叠加（bbox+标签）来自处理器 hits（RGB 色, maix Image 为 RGB888）。
 - 引导叠加: 靶标 ROI 两条横线 + 水平中线/误差刻度（读 get_info().target_roi）。

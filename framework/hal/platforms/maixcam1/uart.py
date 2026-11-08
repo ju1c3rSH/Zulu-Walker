@@ -22,16 +22,14 @@ except (ImportError, ModuleNotFoundError):
         logger.warning("maix UART module not available, UART will be a stub")
 
 
-# 非默认引脚必须先 set_pin_function 复用，否则打不开/无收发。
-# 依据 MaixPy docs/doc/zh/peripheral/uart.md「常见代码错误」：不设引脚功能直接
-# `uart.UART("/dev/ttyS1", 115200)` 是官方点名的错误写法。
+# 非默认引脚必须先 set_pin_function 复用，否则打不开/无收发
+# （MaixPy docs/doc/zh/peripheral/uart.md「常见代码错误」点名过这种写法）。
 # ⚠ TX 与 RX **都要设**，只设 TX 是常见漏项。
 #
-# **ttyS0 故意不设 pinmap**（2026-10-07）：本项目改用 UART0 对接Brain，
-# 而 A16/A17 **出厂默认就是 UART0_TX/UART0_RX**（docs/doc/zh/peripheral/pinmap.md:42
-# 「A17... 默认功能是 UART0_RX」）。对已是默认功能的引脚再调 set_pin_function
-# 属于多此一举，且部分固件会返回非 ERR_NONE 造成误告警。真正需要复用的只有
-# 非默认引脚的串口（UART1 A19/A18、UART2 B0/B1）。
+# **ttyS0 故意不设 pinmap**：A16/A17 **出厂默认就是 UART0_TX/UART0_RX**
+# （pinmap.md:42），对已是默认功能的引脚再调 set_pin_function 多此一举，
+# 且部分固件会返回非 ERR_NONE 造成误告警。真正需要复用的只有非默认引脚的
+# 串口（UART1 A19/A18、UART2 B0/B1）。
 _UART_PINMAP = {
     # 出厂默认即UART0 功能，**不要**调 set_pin_function（见上）
     "ttyS0": (),
@@ -79,21 +77,21 @@ def _ensure_pinmap(port: str) -> None:
 class MaixCam1Uart:
     """MaixCAM 串口（对接 panzer_Brain USART1）。
 
-    端口说明（MaixPy 官方引脚表，2026-10-07核对）:
+    端口说明（MaixPy 官方引脚表）:
 
     | 串口   | TX      | RX      | 设备         | 备注                |
     |--------|---------|---------|--------------|---------------------|
-    | UART0  | A16     | A17     | /dev/ttyS0   | **本项目在用**（2026-10-07 改）|
+    | UART0  | A16     | A17     | /dev/ttyS0   | **本项目在用**     |
     | UART1  | A19     | A18     | /dev/ttyS1   | 官方推荐自定义通信   |
 
-    **本项目用 UART0（/dev/ttyS0, A16/A17）对接 Brain**，理由：接线已固定/按现场
-    需求选择。A16/A17 出厂默认即 UART0_TX/UART0_RX（pinmap.md:42），**无需 pinmap**
-    —— 见 _ensure_pinmap 里 ttyS0 故意留空的说明。
+    本项目用 UART0（/dev/ttyS0, A16/A17）对接 Brain，接线已固定。A16/A17
+    出厂默认即 UART0_TX/UART0_RX（pinmap.md:42），**无需 pinmap** —— 见
+    _ensure_pinmap 里 ttyS0 故意留空的说明。
 
     ⚠ **UART0 的三个已知限制**（MaixPy uart.md「MaixCAM/MaixCAM-Pro 串口使用注意点」）:
 
     1. **开机打印日志**直到出现 `serial ready`。Brain 侧应丢弃开机段数据，
-       否则可能把启动日志当协议帧（协议有 AA55 帧头，一般能丢弃，但建议显式丢弃）。
+       否则可能把启动日志当协议帧。
     2. ⚠⚠ **TX(A16) 是启动模式检测引脚，拉低 = 无法开机**。做 3.3V↔5V 电平转换
        电路时务必确保 TX 默认不拉低（保持浮空或用电平转换芯片）。若上电起不来，
        **先查 A16 是否被拉低**。
@@ -115,14 +113,11 @@ class MaixCam1Uart:
         # 非默认引脚需先复用（A16/A17 出厂已是 UART0 功能，函数内会跳过）
         if not _ensure_pinmap(port):
             logger.warning("UART %s 未能确认引脚复用，链路可能不通", port)
-        # ⚠ **UART0 抢线计时段（2026-10-08 启动打点）**:
-        #   系统 Maix Comm Protocol 原本占着 /dev/serial0，本项目 2026-10-07
-        #   改用 UART0 后，这里 open 会把系统服务踢掉、触发一遍退出握手才把
-        #   串口交回来 —— 台架日志里 `[Maix Comm Protocol] exit... / exit
-        #   success` 正好夹在 VO 启动与 UART 初始化之间。**这一段是固件行为,
-        #   代码侧消不掉**, 只能测出来评估是否值得换 UART1(A19/A18)。
-        #   分pinmap / open 两段计时: 若耗时集中在 open, 基本可确认是抢线
-        #   握手而非串口配置本身。
+        # ⚠ **UART0 抢线计时段**：系统 Maix Comm Protocol 原本占着 /dev/serial0，
+        #   本项目改用 UART0 后，这里 open 会把系统服务踢掉、触发一遍退出握手才把
+        #   串口交回来 —— **这一段是固件行为, 代码侧消不掉**, 只能测出来评估是否
+        #   值得换 UART1(A19/A18)。分 pinmap / open 两段计时便于区分是抢线握手
+        #   还是串口配置本身。
         with boot_stage("uart.pinmap"):
             pass  # _ensure_pinmap 已在上面同步调用, 这里只借它划出时间边界
         try:
@@ -194,8 +189,7 @@ class MaixCam1Uart:
         if not self._connected or self._uart is None:
             return None
         # 回调模式与 read 混用会读出错（MaixPy UART FAQ 第6 条明确警告
-        # "设置了 callback 就不要再用 read"）。当前 uart_driver 只用回调，
-        # 这里加守卫堵住"两个模式同时打开"的口子。
+        # "设置了 callback 就不要再用 read"）。这里加守卫堵住"两个模式同时打开"的口子。
         if self._receiver_callback is not None:
             return None
         try:

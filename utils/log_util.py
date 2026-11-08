@@ -20,14 +20,10 @@ _DROP_COUNT: int = 0  # queue full 丢包累计计数，GIL 保护，无需额�
 _CONSOLE_MODULE = "utils.debug_console"
 
 # ---- 高频性能日志闸门（默认全开, 保持既有行为）--------------------------------
-# 为什么需要: 台架调试时 `[PERF] vision/mainloop/lcd`、`[UART TX] DATA_STREAM`、
-# `/CMD_ACK`、`[FPS] pipeline`、`[WDT] ... feed`、`[MEM]` 这些行**按各自节拍反复刷**,
-# 合起来把真正想看的信息淹掉。它们全是性能观测/心跳痕迹, 与协议语义无关。
-#
-# 关掉之后**只少打印, 不改变任何行为**:
-#   · 推流帧照发（`_send` 不受影响）;  `log_print` 依旧非阻塞（队列照投, 只是 no-op）;
-#   · 计数器照累加（`_result_seq` / `_tx_window_count` / `_wdt_count` …）。
-# 唯一的副作用: 被吞掉的行不会进 logs/debug.log —— 这是刻意的（debug.log 也是刷屏源）。
+# 台架调试时 `[PERF] vision/mainloop/lcd`、`[UART TX] DATA_STREAM`、`[FPS]`、
+# `[WDT] ... feed`、`[MEM]` 这些行按各自节拍反复刷, 把真正想看的信息淹掉。
+# 关掉之后**只少打印, 不改变任何行为**（推流帧照发, 计数器照累加）; 唯一的
+# 副作用是被吞的行不进 logs/debug.log —— 这是刻意的（debug.log 也是刷屏源）。
 #
 # 用模块级 name **列表而非字符串常量**: 配置里写 `[PERF] vision` 或 `PERF vision`
 # 都能命中; 且用普通 `in` 判断（不是 startswith），子串误伤面可控。
@@ -58,9 +54,8 @@ _PERF_NAMES_MUTE_ALL = False  # 默认组被整组静音 -> 未列名的 `[PERF]
 _PERF_DEFAULT_SET = frozenset(_DEFAULT_PERF_NAMES)
 
 # 汇总窗口（秒）: 常驻 `[PERF]` 行与 detail 探针的统计周期。
-#   10.0 = 台架/赛场默认（1s 一条太刷屏, 每秒 ~6 行把事件类日志淹掉）;
-#   1.0  = 旧行为, 定位"这一秒时间花在哪"时临时改回。
-# 早前是各发射点硬编码 1.0, 现在统一从这里读, 避免"vision 10s / mainloop 1s"分叉。
+#   10.0 = 台架/赛场默认（1s 一条太刷屏）; 1.0 = 定位"这一秒时间花在哪"时临时改回。
+# 统一从这里读, 避免"vision 10s / mainloop 1s"分叉。
 DEFAULT_PERF_INTERVAL_S = 10.0
 _PERF_INTERVAL_S = DEFAULT_PERF_INTERVAL_S
 
@@ -122,8 +117,8 @@ def set_perf_interval(seconds=None) -> None:
       · inf 则永远等不到窗口 -> `[PERF]` 全部静默, 比不配更糟（失明且无提示）。
     ⚠ bool 是 int 子类（True == 1）: 配置写成 `perf_interval_s: true` 时
       不能把它当成"1 秒"悄悄生效。
-    `<= 0` 视为写错（保持现值）, 不当成"越快越好": 0 秒窗口等于每秒打 N 条。
-    正数下限 0.5s: 再快就回到刷屏区间, 真要逐帧看就该用 detail 探针而不是汇总行。
+    `<= 0` 视为写错（保持现值）; 正数下限 0.5s: 再快就回到刷屏区间, 真要逐帧看
+    就该用 detail 探针而不是汇总行。
     """
     global _PERF_INTERVAL_S
     if seconds is None or isinstance(seconds, bool):
@@ -186,7 +181,7 @@ def _is_perf_log(msg: str) -> bool:
     # ⚠ 自检/配置行描述闸门本身, 绝不能被闸门吞掉。
     # `perf_log_summary()` 会把自定义名单原文带进 "[PERFLOG] perf_log=custom([WDT] )",
     # 而 "[WDT] " 正是被静音的子串 -> 不做这个豁免就会"自我审查", 改完配置连
-    # "改成了什么"都看不到（2026-11 实测踩到, [PERFLOG] 行整个消失）。
+    # "改成了什么"都看不到。
     if msg.startswith("[PERFLOG]"):
         return False
     if msg.startswith(_PERF_TAG):
@@ -363,7 +358,6 @@ def log_print(msg: str = "", *args, **kwargs) -> None:
     # 变量, 于是"队列满"这条本应只丢日志的路径会抛 UnboundLocalError —— 而调用点
     # 遍布 coordinator 主循环（module_manager 对 coordinator.loop() **没有** try/except,
     # 只有外层兜底), 结果是主循环整轮被拖停 1s、期间一个 DATA_STREAM 都推不出去。
-    # 只在 queue 满的瞬间才触发, 所以能潜伏很久（2026-10-09 台架实测）。
     global _DROP_COUNT
     ts = datetime.now().strftime("[%H:%M:%S] ")
     if args:
