@@ -318,6 +318,15 @@ _DEFAULT_CONFIG = {
         #   "x" = 按画面 x 从左到右排序（旧 main.py 语义; 三坑同屏时用; 背装镜像需
         #       把 pit_left_is_1 置 false 做整体翻转）。
         "order_by": "first_seen",
+        # 新形状"入表"所需的**连续在场帧数**（缺席一帧即清零重计）。
+        #   1 = 旧语义: 首帧检出即写 _shape_seen 定案（测试基线, 也是回归开关）;
+        #   ≥2 = 挡住入画瞬态的类别误判: 幽灵必须连续错 N 帧才能占坑。
+        #   ⚠ 现场值在 eod_config.yaml（3）; 这里留 1 是为了让不读 YAML 的单测
+        #     保持旧时序（tests 用 load_gks_config("/nonexistent")）。
+        #   ⚠ 代价: 锁存最早推迟到第 shape_hits + pit_latch_frames - 1 帧。
+        #   不进 _RESCUE_PARAM_KEYS: 该文件热重载只 merge cfg、不清状态,
+        #   把门槛改小会让已攒够 streak 的幽灵立刻入表。
+        "shape_hits": 1,
         # 模型标签 -> 形状号（model.mud labels: yao_gu, yuan_zhu, yuan_tai）
         "labels": {"yuan_zhu": 1, "yuan_tai": 2, "yao_gu": 3},
     },
@@ -567,6 +576,18 @@ class GksTaskProcessor(Processor):
         # task3 人质坑位状态
         self._position2 = [0, 0, 0]
         self._shape_seen = {}     # 形状号 -> 最近一次画面中心 x（跨帧刷新）
+        # 入表门槛（shape_hits）的两个辅助表, 必须与 _shape_seen 同生命周期:
+        #   _shape_streak: 形状号 -> **连续**在场帧数, 本帧缺席即清零。与"累计帧数"
+        #     的区别是关键的 —— 累计计数会被 30 帧后的真实同名目标救活
+        #     (文档 §3.1 的反例), 连续计数不会。
+        #   _shape_first: 形状号 -> 首次出现序号。达标入表时按它重排 _shape_seen,
+        #     否则"先入画的坑漏检几帧、后入画的先达标"会把坑位顺序排反。
+        #   _shape_peak: 形状号 -> **历史最长**连续帧数（只增不减）。诊断用:
+        #     幽灵在锁存前通常早已缺席清零, 那一刻 streak=0, 只有峰值能证明
+        #     "它曾经连续出现过几帧" —— 这是判断 shape_hits 该定几的唯一现场依据。
+        self._shape_streak: dict = {}
+        self._shape_first: dict = {}
+        self._shape_peak: dict = {}
         self._latch_inferred = False   # 本次锁存是否用了"未见形状补位"（现场核对用）
         # 人质检出日志的去重基准（label -> (score, cx, cy)），见 _log_rescue_dets。
         # 换任务/STOP 后清一次: 重订阅后首个检出帧重新打一行, 便于对时间轴。
@@ -1453,6 +1474,11 @@ class GksTaskProcessor(Processor):
         labels = getattr(ai, "labels", None) or []
         label_map = self._cfg["rescue"]["labels"]
         x_crop = int(self._cfg["rescue"].get("x_crop_px") or 0)
+        shape_hits = max(1, int(self._cfg["rescue"].get("shape_hits", 1) or 1))
+        # 本帧出现的形状（shape -> cx）。先聚合成帧、再走连续帧门槛, 而不是在下面的
+        # 循环里直接写 _shape_seen —— 同一帧同形状出现两个框时, 逐框累加会让
+        # streak 一帧 +2, 门槛形同虚设。
+        frame_shapes: dict = {}
         det_log = []    # (label, score, cx, cy) —— "变化才打"检出日志的数据源
         for obj in objs:
             if x_crop > 0 and obj.x > x_crop:
@@ -1467,7 +1493,36 @@ class GksTaskProcessor(Processor):
                             int(obj.x + obj.w / 2.0), int(obj.y + obj.h / 2.0)))
             if shape_num == 0:
                 continue
-            self._shape_seen[shape_num] = obj.x + obj.w / 2.0   # 形状中心 x, 跨帧刷新
+            # 后写覆盖 = 旧语义（objs 已按 x 排序, 旧代码也是最后一次赋值生效）。
+            # 不要改成"取最高分": 那是没必要的语义漂移, 且会让 shape_hits=1 时的
+            # 行为与改前不一致, 失去"默认值即回归开关"的性质。
+            frame_shapes[shape_num] = obj.x + obj.w / 2.0
+        # ---- 入表门槛: 连续 shape_hits 帧才占坑 ----
+        # 现场根因（docs/eod/rescue_shape_identity.md）: 目标从画面右侧入画时,
+        # 首帧半出画+运动模糊, YOLO 判成邻类（yuan_zhu 0.59 而非 yuan_tai）,
+        # 下一帧起 0.80~0.92 全对 —— 但旧代码首帧就写 _shape_seen、永久占位,
+        # 后续正确帧只能新增另一个键, 集合凭空多一个形状 -> 三形状"齐见" ->
+        # 静默锁死错误坑位（Brain 侧首次收到非零 pos 即锁死, 事后无法纠正）。
+        for s in self._shape_streak:
+            if s not in frame_shapes:
+                self._shape_streak[s] = 0       # 只改值不增删键, 无迭代中改字典异常
+        for s, cx in frame_shapes.items():
+            self._shape_first.setdefault(s, len(self._shape_first))
+            n = self._shape_streak.get(s, 0) + 1
+            self._shape_streak[s] = n
+            if n > self._shape_peak.get(s, 0):
+                self._shape_peak[s] = n
+            if n < shape_hits:
+                continue                        # 证据不够: 不占坑, 也不刷新 cx
+            is_new = s not in self._shape_seen
+            self._shape_seen[s] = cx            # 已入表者每帧刷新 cx（HUD / order_by:x 语义不变）
+            if is_new and len(self._shape_seen) > 1:
+                # 按"首次出现"重排, 而不是按"达标先后": 先入画的坑若中途漏检一两帧,
+                # 它的 streak 会清零重计, 可能比后入画的坑更晚达标 —— 按达标顺序
+                # 会把它排到后面, 坑位顺序整体反掉。shape_hits=1 时两者等价。
+                self._shape_seen = dict(sorted(
+                    self._shape_seen.items(),
+                    key=lambda kv: self._shape_first.get(kv[0], 0)))
         self._log_rescue_dets(det_log)
         # ---- 顺序映射（定序规则与补位见上方"坑位定序"共用段）----
         if self._position2[0] == 0:
@@ -1488,8 +1543,19 @@ class GksTaskProcessor(Processor):
                         self._position2[j] = shape_num
                     # 只反映"真正锁存那一帧"是否用了补位(现场核对: True=锁存时有形状没看到)
                     self._latch_inferred = inferred
+                    # peak = "见过、但没攒够门槛"的形状及其历史最长连续帧数。
+                    # 这是**幽灵的指纹**: 幽灵在锁存前早已缺席清零, 锁存那一刻的
+                    # streak 是 0, 只有峰值能证明它曾经连续出现过几帧。
+                    # peak={} = 第三个坑根本没进视野(正常两坑路径);
+                    # peak={1: 1} = 形状 1 只连续露了 1 帧就被门槛挡掉（正是 03:37 段）;
+                    # peak={1: 3} 且 hits=3 = 它已经占坑了, 该看 seen。
+                    # 现场调 shape_hits 只看这一个数：所有未占坑形状的 peak 都比 hits
+                    # 小 1 以上 = 门槛有余量; 有 peak 逼近 hits = 该抬门槛或查模型。
+                    peak = {s: n for s, n in self._shape_peak.items()
+                            if s not in self._shape_seen and n > 0}
                     log_print(f"[GKS] latch pos2={self._position2} "
                               f"seen={list(self._shape_seen)} "
+                              f"hits={shape_hits} peak={peak} "
                               f"order_by={'x' if self._order_by_x('rescue') else 'first_seen'} "
                               f"codes={list(self._codes)} inferred={self._latch_inferred}")
         pos2 = 0
