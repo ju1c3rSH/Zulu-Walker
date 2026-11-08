@@ -1,7 +1,7 @@
 id: gks_nearcam
 name: gks_nearcam
 name[zh]: 工科赛近端视觉
-version: 2.13.4
+version: 2.13.6
 icon: app.png
 author: GongKeSai 2026
 desc: >-
@@ -28,6 +28,8 @@ files:
   - app\page_router.py
   - app\page_sm.py
   - app\subscription_sm.py
+  - assets\models\hostage_yolo11n\eod_hostage_320.axmodel
+  - assets\models\hostage_yolo11n\eod_hostage_320.mud
   - assets\restart.png
   - framework\display\taps\__init__.py
   - framework\display\taps\base.py
