@@ -13,7 +13,7 @@
 
 触屏 API 依 MaixPy 官方文档 touchscreen.md。绘图颜色依官方 image_ops.md:
 draw_rect/draw_string 的 color 需传入 image.Color.from_rgb(...) /
-maix.image.COLOR_* 构造值, 不接受 RGB 元组 — 元组会抛异常且被绘制兜底
+maix.image.COLOR_* 构造值, 不接受 RGB 元组 — 元组会抛异常且被绘制时的异常处理
 吞掉, 表现为界面静默空白。
 """
 import time
@@ -377,7 +377,7 @@ class GksThresholdTuner:
     def _to_maix(bgr):
         """BGR numpy -> FMT_RGB888 原生画布, 免 show() 内部整帧转换。"""
         # RGB 字节本就正确; ascontiguousarray 只保证连续(防 pybind11 拒收/镜像)。
-        # ⚠ 若去掉 copy=True, 负步长视图会 OOB 或整帧镜像 —— 不是换色通道。
+        # 若去掉 copy=True, 负步长视图会 OOB 或整帧镜像 —— 不是换色通道。
         import maix.image
         rgb = np.ascontiguousarray(bgr[:, :, ::-1])
         return maix.image.cv2image(rgb, bgr=False, copy=True)
@@ -387,23 +387,23 @@ class GksThresholdTuner:
                  min_area_px: int = 200):
         """返回 (mask, blobs); blobs = [{x,y,w,h,area}] 按面积降序前 5。
 
-        **降采样分析（CAM1 卡顿修复）**：
+        降采样分析（CAM1 卡顿修复）：
 
         实测热点是 `findContours` —— 耗时随命中噪点数量爆炸（PC 端低噪声 0.08ms /
-        高噪声 11854 轮廓 10.1ms，**差 126 倍**）。这正是调参时"有时候卡有时候不卡"
+        高噪声 11854 轮廓 10.1ms，差 126 倍）。这正是调参时"有时候卡有时候不卡"
         的来源。CAM1(cv181x) 算力比 CAM2 弱一个量级，叠加 30+ms 取图延时，手感更差。
 
         对策与主程序排爆 `explosive.scan_scale` 同一套办法：降采样后分析。
 
-        - INTER_NEAREST **不插值**：插值会把边缘像素与背景混成中间色，
+        - INTER_NEAREST 不插值：插值会把边缘像素与背景混成中间色，
           那正是色块掉出阈值的同一机理（与 gks_task_processor._downscale 同因）。
-        - 面积门槛按 `scale²` 折算（`min_area_px * scale²`）—— 保持"物理口径"
+        - 面积门槛按 `scale²` 折算（`min_area_px * scale²`）—— 保持"实际面积"
           不变，200px@全帧 等价 50px@0.5，与主程序面积折算一致。
-        - bbox 坐标与 area 按 `1/scale` / `1/scale²` **还原到全帧坐标**，
+        - bbox 坐标与 area 按 `1/scale` / `1/scale²` 还原到全帧坐标，
           调用方（_draw_info 画框、_pixel_lab 取色）拿到的仍是原坐标系。
         - mask 升回全帧尺寸：_highlight 要在原图上叠加高亮。
 
-        ⚠ 调参页语义是"看颜色命中在哪"，不需要全分辨率；降采样不改变判定结果，
+        调参页要的是"看颜色命中在哪"，不需要全分辨率；降采样不改变判定结果，
           只影响零碎噪点的可见粒度（1/scale 像素级）。
         """
         import cv2
@@ -431,7 +431,7 @@ class GksThresholdTuner:
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # 面积门槛折算到小图口径（小图像素数少 scale² 倍）
+        # 面积门槛折算到小图尺寸（小图像素数少 scale² 倍）
         min_area_small = max(1, int(round(min_area_px * scale * scale)))
         inv = 1.0 / scale
         blobs = []
@@ -441,8 +441,8 @@ class GksThresholdTuner:
                 continue
             bx, by, bw, bh = cv2.boundingRect(c)
             # 还原到全帧坐标，调用方无需知道降采样存在。
-            # ⚠ 面积是**放大** inv²（1/scale²）而非缩小 scale²：小图像素数少
-            #   scale² 倍，要回到全帧口径必须乘回去。之前误乘 scale² 导致
+            # 面积是放大 inv²（1/scale²）而非缩小 scale²：小图像素数少
+            #   scale² 倍，要回到全帧尺寸必须乘回去。之前误乘 scale² 导致
             #   0.5 档把 10000px 的色块报成 625px，台架上读 `max:{area}px`
             #   会被严重误导（排爆面积门槛正是按调参页读数取 40~50% 反推的）。
             blobs.append({

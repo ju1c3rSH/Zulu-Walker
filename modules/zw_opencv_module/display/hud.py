@@ -1,18 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-工科赛近端显示 HUD — 在相机原始 maix Image 上叠加状态与检测结果。
-
-- 始终可显示（不依赖 AI 模型已加载, 色块任务无模型时也能出画面）;
-  叠加内容来自 gks_task 的 VisionResult（单来源）。
-- 顶部状态栏: 模式 / 链路 / FPS; 第二行: 任务码 + 锁存进度 + 坑位结果;
-  检测叠加（bbox+标签）来自处理器 hits（RGB 色, maix Image 为 RGB888）。
-- 引导叠加: 靶标 ROI 两条横线 + 水平中线/误差刻度（读 get_info().target_roi）。
-- 告警横幅: 模型未加载/阈值缺失/推流停摆/NACK 文案, 单行红/黄色条。
-- 电量: 第二行右对齐, 只读 BatterySampler 的快照（无 I/O）。
-
-HUD 不解释像素, 只做呈现; 状态来自 status_fn（coordinator.get_info）。
-PC 无 maix 时所有绘制静默跳过（pytest 不受影响）。
-"""
 import time
 from typing import Callable, Dict, Optional
 
@@ -237,8 +223,8 @@ class DisplayHUD:
         """每帧 1 次 draw_string; 文本与宽度只在百分比变化时重算。
 
         放第二行而不放第一行: 第一行右侧已被 T:FOUND / FPS 占满, 只剩 ~130px。
-        ⚠ 这里跑的线程是**视觉线程**（同线程在跑 find_blobs）: 任何异常都会冒到
-        `vision_manager` 的兜底 except → traceback 走 stderr + sleep(1.0) 停帧。
+        这里跑的线程是视觉线程（同线程在跑 find_blobs）: 任何异常都会冒到
+        `vision_manager` 的保底 except → traceback 走 stderr + sleep(1.0) 停帧。
         所以失败一次就把输入断开, 与 `_fetch_status` 同约定。
         """
         if self._battery_fn is None:

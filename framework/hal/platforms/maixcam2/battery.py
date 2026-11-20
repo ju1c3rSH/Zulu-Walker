@@ -3,7 +3,7 @@
 
 官方 pmu 内部读的是同一个 `capacity`（百分比一致），但它构造时会把 B29 复用成
 GPIO、且 `get_bat_vol()` 恒 0，所以这里直读 sysfs。capacity 只标定到 90，按官方
-口径放大到 100。
+数值放大到 100。
 """
 from __future__ import annotations
 

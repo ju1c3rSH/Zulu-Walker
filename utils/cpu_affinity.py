@@ -8,9 +8,9 @@ from typing import Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-# ⚠ 这些默认值是按 **MaixCAM2（AX630C）** 的多核拓扑写的（视觉线程独占核 1，
-# 其余绑核 0）。MaixCAM-Pro(cv181x) 核数与拓扑都不同：项目配置里若没有
-# `cpu_affinity:` 段（CAM1 分支即如此），下面这组默认会**静默按 CAM2 拓扑绑核**，
+# 下面这组默认值是照 MaixCAM2（AX630C）的核数定的：视觉线程独占核 1，
+# 其余线程绑核 0。MaixCAM-Pro(cv181x) 的核数和排布都不一样，项目配置里
+# 没有 `cpu_affinity:` 段时（CAM1 分支就是这样），仍会照 CAM2 的核数绑核，
 # 目标核不存在时 os.sched_setaffinity 抛 OSError 被吞 -> 绑核全废、只剩warning。
 # 故在 configure() 里按实际 os.cpu_count() 校验，非法则整体禁用并明确告警。
 _DEFAULT_VISION_PROCESSING = {1}
@@ -52,7 +52,7 @@ def _parse_cores(value, default: Set[int]) -> Set[int]:
 def _validate_cores(cfg: "CpuAffinityConfig") -> Optional[str]:
     """校验所有角色的核号是否都在本机范围内。
 
-    返回问题描述（None = 全部合法）。**默认核号是按 CAM2 拓扑写的**，
+    返回问题描述（None = 全部合法）。默认核号是按 CAM2 的核数写的，
     换到核数更少的板子（MaixCAM-Pro cv181x）后核 1 可能不存在—— 那时
     静默失败只剩一串warning，绑核等于没做。这里提前拦下并说明原因。
     """
@@ -85,7 +85,7 @@ def configure(config_dict: Optional[dict]) -> None:
     if _global_config.enabled:
         problem = _validate_cores(_global_config)
         if problem:
-            # 默认值是 CAM2 拓扑；板子核数不同就必须整体禁用，否则绑核静默全废
+            # 默认值是 CAM2 的核数；板子核数不同就必须整体禁用，否则绑核静默全废
             _global_config.enabled = False
             logger.warning("CPU affinity DISABLED: %s", problem)
     if _global_config.enabled:

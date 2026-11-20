@@ -14,4 +14,4 @@ class PresentPolicy:
     interval_ms: float = 0.0        # 0 = 每 frame_skip 帧一次
     hud_interval_ms: float = 0.0
     frame_skip: int = DEFAULT_FRAME_SKIP
-    stream_enabled: bool = True     # competition_mode 关推流, 与关显示解耦
+    stream_enabled: bool = True     # competition_mode 关推流, 不受关显示影响

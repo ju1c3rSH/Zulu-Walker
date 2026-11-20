@@ -2,7 +2,7 @@
 """UI 页面状态机（framework/state_machine 引擎承载）。
 
 五态: MAIN 正常运行 / EXPLOSIVE / TARGET / RESCUE / LASER 四调试页。
-页面语义: 调试页独占相机（enter 暂停视觉采集）, 回 MAIN 恢复;
+页面规则: 调试页独占相机（enter 暂停视觉采集）, 回 MAIN 恢复;
 页面切换由 app.main DebugPageFactory 驱动, UI 实例由其懒建。
 """
 from framework.state_machine.base import BaseStateMachine, State
@@ -14,7 +14,7 @@ PAGE_CYCLE = (STATE_MAIN,) + _DEBUG_STATES
 
 
 class PageContext:
-    """页面上下文: 持 VisionManager（暂停/恢复采集的执行者）。"""
+    """页面共用数据: 持 VisionManager（暂停/恢复采集的执行者）。"""
 
     def __init__(self, vision_manager):
         self.vision_manager = vision_manager

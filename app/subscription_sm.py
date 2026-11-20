@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""订阅门控状态机。
+"""订阅开关状态机，用 framework/state_machine/base.py 的引擎管 GKS 从站的四种状态。
 
-以 framework/state_machine/base.py 引擎承载 GKS 从站门控四态:
-IDLE / EXPLOSIVE / TARGET / RESCUE 单激活。门控变更（enable_task/disable_task/
-set_task/reset）在各状态 on_enter 与同状态重订阅/已 IDLE 的 STOP 直接落地执行;
-推送流控（seq/interval/零值心跳）不属于本状态机。
+IDLE / EXPLOSIVE / TARGET / RESCUE 同时只激活一个。enable_task、disable_task、
+set_task、reset 这些动作在各状态的 on_enter 里执行；同状态再发一次订阅，或者已经在
+IDLE 时又收到 STOP，就直接落地，不走状态转换。seq、interval、零值心跳这些推送节流
+不归本状态机管。
 """
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -24,10 +24,10 @@ def request_event_name(state_name: str) -> str:
 
 @dataclass
 class GateSignal:
-    """门控指令: 订阅(REQ)或停推(STOP), 附任务码快照。
+    """开关指令：订阅(REQ)或停推(STOP)，带上当时的任务码。
 
-    has_codes 标识本次订阅帧是否携带任务码(5B 完整帧)。它是锁存清理判据的
-    组成部分: 短帧重订阅沿用旧任务码、不清锁存(幂等), 只有完整帧才可能清。
+    has_codes 说明这一帧有没有带任务码（5B 完整帧）。清理锁存时要看它：短帧重订阅
+    沿用旧任务码、不清锁存，重复发也一样；只有完整帧才可能清。
     """
     state_name: Optional[str] = None
     codes: Tuple[int, int, int] = (0, 0, 0)
@@ -36,7 +36,7 @@ class GateSignal:
 
 
 class SubscriptionContext:
-    """状态机上下文: 持 coordinator 与最近一次门控信号。"""
+    """状态机里存的东西：coordinator 和最近一次开关信号。"""
 
     def __init__(self, coordinator):
         self.coordinator = coordinator
@@ -76,7 +76,7 @@ class TaskGateState(State):
 
 
 class SubscriptionStateMachine(BaseStateMachine):
-    """GKS 订阅门控四态机, 事件驱动, 跨任务态互切与 STOP 均 直达转换。"""
+    """GKS 订阅开关四态机, 事件驱动, 跨任务态互切与 STOP 均 直达转换。"""
 
     def __init__(self, coordinator):
         super().__init__()
@@ -92,7 +92,7 @@ class SubscriptionStateMachine(BaseStateMachine):
         self.set_initial_state(STATE_IDLE)
 
     def dispatch(self, signal: GateSignal) -> None:
-        """应用一条门控信号; 同状态重订阅/已 IDLE 的 STOP 直接落地。"""
+        """应用一条开关信号; 同状态重订阅/已 IDLE 的 STOP 直接落地。"""
         self.context.signal = signal
         if signal.is_stop:
             if self.current_state == STATE_IDLE:

@@ -10,7 +10,7 @@ from utils.log_util import log_print
 
 
 class Task:
-    """任务类，封装Processor并提供生命周期管理"""
+    """任务类，封装 Processor 并管创建到销毁"""
 
     def __init__(self, name: str, processor: Processor, enabled: bool = True):
         self.name = name
@@ -45,7 +45,7 @@ class Task:
 
         try:
             result = self.processor.process(frame, context)
-        except Exception as e:   # noqa: BLE001 — 设备端必须兜底（审查 P1-2）
+        except Exception as e:   # noqa: BLE001 — 设备端必须保底（审查 P1-2）
             from utils.log_util import log_print
             log_print(f"[TASK] '{self.name}' process error: {e}")
             result = VisionResult(self.name, result_data=None,

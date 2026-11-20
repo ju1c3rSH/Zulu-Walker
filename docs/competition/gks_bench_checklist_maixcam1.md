@@ -16,7 +16,7 @@
 | 镜头 | 固定焦距 | M12 手动调焦（靶标/爆炸物几何需重标） |
 | 屏幕/触屏 | 有 | 有（调参页与四页路由原样保留） |
 
-⚠ **模型格式互不通用**：`.axmodel`（Axera）在 CAM1 上跑不了，`.cvimodel`（CVITEK）在 CAM2 上跑不了。
+**模型格式互不通用**：`.axmodel`（Axera）在 CAM1 上跑不了，`.cvimodel`（CVITEK）在 CAM2 上跑不了。
 CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同义，别照抄。
 
 ## 1. 部署
@@ -32,12 +32,12 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
    - A16/A17 **出厂默认即 UART0_TX/UART0_RX**（`pinmap.md:42`），代码会**跳过** pinmap
      复用。启动日志出现 `[CAM1] UART /dev/ttyS0 使用出厂默认引脚功能(A16/A17)，跳过 pinmap`
      属正常，不是告警。
-   - ⚠⚠ **TX(A16) 是启动模式检测引脚，拉低 = 无法开机**。做 3.3V↔5V 电平转换时
+   - **TX(A16) 是启动模式检测引脚，拉低 = 无法开机**。做 3.3V↔5V 电平转换时
      **务必确保 TX 默认不拉低**（保持浮空或用电平转换芯片）。
      **上电起不来时第一件事：查 A16 是否被拉低。**
-   - ⚠ **开机日志干扰**：UART0 开机打印日志直到出现 `serial ready`。Brain 侧应丢弃
+   - **开机日志干扰**：UART0 开机打印日志直到出现 `serial ready`。Brain 侧应丢弃
      开机段数据（协议有 `AA 55` 帧头，一般能自动丢弃，但建议显式丢弃前若干秒）。
-   - ⚠ **与 maix protocol 抢线**：UART0 同时是系统默认 maix protocol 串口，占用后
+   - **与 maix protocol 抢线**：UART0 同时是系统默认 maix protocol 串口，占用后
      MaixVision IDE 调试通道会与本链路冲突。台架调试改用 **SSH**（`ssh root@<设备IP>`）
      或断开 IDE。`app.need_exit()` 走 maix通道，占用 UART0 时应用**可能无法从 IDE
      正常停止** —— 急停直接断电。
@@ -47,7 +47,7 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
 3. 阈值文件 `/my-threshold/my_64threshold.txt`:组序 = 爆红/爆绿/爆蓝/靶红/靶绿/靶蓝。
    **CAM1 传感器与 CAM2 不同，LAB 阈值必须现场重标，不可直接拷 CAM2 的值。**
    现场用 KEY_OK 切调参页（爆/靶页）或 `python run.py debug color` 触屏调参后 SAVE 生成。
-   - ⚠ **调参页已默认降采样分析**（`gks.tuner.scan_scale: 0.5`）以解决 CAM1 卡顿，
+   - **调参页已默认降采样分析**（`gks.tuner.scan_scale: 0.5`）以解决 CAM1 卡顿，
      信息栏末尾显示 `s:0.5x`。`max:{area}px` 已是**全帧口径**（已还原，可照常按
      40~50% 反推 `explosive.area_threshold`）。要退回全帧对照改成 `1.0`。
 4. `project_config.yaml` 已切为 `platform: maixcam1`; 打包清单 `app.yaml` 已含 maixcam1 五个文件与 cvimodel。
@@ -79,7 +79,7 @@ CAM1 的 mud 用 `model =` 键（CAM2 是 `model_npu =`），两者同名不同�
 | 4 | STOP `0x23` | 停推流，HUD 回 `MODE:IDLE` |
 | 5 | 拔线/主站停发 | 1s 内停止推流 |
 
-⚠ **帧率预期**：CAM1 出帧 60fps 实测可达（`[FPS] pipeline` 同源证据）；但每帧**帧龄
+**帧率预期**：CAM1 出帧 60fps 实测可达（`[FPS] pipeline` 同源证据）；但每帧**帧龄
 仍 ~30ms**（固件取图延时，不随帧率下降）——时延敏感的下游按帧龄算账。
 
 ## 3.1 Brain 侧 0x06 事件泵核对（2026-10-25 落地，需联机）

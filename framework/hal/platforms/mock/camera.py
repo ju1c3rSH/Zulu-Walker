@@ -47,7 +47,7 @@ class MockCamera:
         return None
 
     def read_raw(self) -> Optional[np.ndarray]:
-        """委托 read()：合成帧即 BGR numpy；与 read() 同语义。"""
+        """委托 read()：合成帧即 BGR numpy；跟 read() 一样。"""
         return self.read()
 
     def release(self) -> None:

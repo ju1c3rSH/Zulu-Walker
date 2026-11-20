@@ -113,14 +113,14 @@ class MaixCam2Camera:
     def _ingest_raw(self, raw) -> Optional[np.ndarray]:
         """新 raw 帧 -> 更新 last_raw/_last_frame 并返回 BGR numpy; None = 停帧。
 
-        停帧必须返回 None（**不得回退 _last_frame**）: 接口契约见
+        停帧必须返回 None（不得回退 _last_frame）: 接口约定见
         framework/hal/interface/camera.py::read_raw，mock/linux 两个平台都按此实现。
         这里曾经在空队列时返回上一帧 numpy，后果是 pipeline_camera 的"停帧不复用
         旧帧"早退在设备上失效 —— 视觉线程会把同一帧反复当新帧算（any_fresh 恒真、
         只 sleep(0) 忙转），推流侧据此认为"一直有新结果"，1s 陈旧归零永远不触发，
-        相机真的挂死时会以冻结误差持续喂主站。2026-09-28 修正为与契约一致。
+        相机真的挂死时会以冻结误差持续喂主站。2026-09-28 修正为跟约定一致。
 
-        **延迟转换（2026-10-09, `_lazy_convert` 为真时）**: 同 CAM1 —— 不在这里
+        延迟转换（2026-10-09, `_lazy_convert` 为真时）: 同 CAM1 —— 不在这里
         做 image2cv, 交 LazyFrame 代理, 只有真用像素时才转（见 maixcam1 同款实现）。
         """
         if raw is None:
@@ -133,14 +133,14 @@ class MaixCam2Camera:
         return self._last_frame
 
     def _ingest_lazy(self, raw):
-        """延迟转换路径（同 CAM1 语义，见 maixcam1/camera.py::_ingest_lazy）。"""
+        """延迟转换路径（跟 CAM1 一样，见 maixcam1/camera.py::_ingest_lazy）。"""
         from framework.hal.platforms.lazy_frame import LazyFrame
 
         def _convert(img):
             np_img = maix.image.image2cv(img, ensure_bgr=False, copy=True)
             if np_img is None:
                 # 转换失败: 交回 None 由 LazyFrame 退化为空数组, 不在此抛异常
-                # （见 lazy_frame.py::numpy 的降级说明, 与 CAM1 同款处理）。
+                # （见 lazy_frame.py::numpy 的回退处理说明, 与 CAM1 同款处理）。
                 return None
             return np_img[:, :, ::-1]
 
@@ -154,7 +154,7 @@ class MaixCam2Camera:
         return frame
 
     def set_lazy_convert(self, enabled: bool) -> None:
-        """开关延迟转换（默认关 = 保持 `read_raw()` 急切转 numpy 的旧契约）。"""
+        """开关延迟转换（默认关 = 保持 `read_raw()` 急切转 numpy 的老约定）。"""
         self._lazy_convert = bool(enabled)
 
     def read_raw(self):

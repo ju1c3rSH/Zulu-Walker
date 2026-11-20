@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""显示前台公共层: 类型 / 格式闸门 / 上屏服务 / taps。"""
+"""显示前台公共层: 类型 / 格式检查 / 上屏服务 / taps。"""
 from framework.display.gate import warn_slow_format
 from framework.display.policy import PresentPolicy
 from framework.display.service import PresenterService

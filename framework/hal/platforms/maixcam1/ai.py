@@ -13,8 +13,8 @@ from framework.hal.interface.ai import Detection, Keypoint, MaskStats, SegmentRe
 logger = logging.getLogger(__name__)
 
 # MaixCAM (cv181x) 的模型类。人质模型走 YOLOv5 + .cvimodel（CVITEK 格式）。
-# ⚠ **不要用别的类兜底缺失的类型**：固件缺 YOLOv8/YOLO11 时若回退到 YOLOv5，
-#   会用 YOLOv5 的后处理去解 YOLOv8/YOLO11 的输出——**不抛异常、直接吐错误坐标**，
+# 缺哪个类型就直接报错, 别拿别的类顶：固件缺 YOLOv8/YOLO11 时若回退到 YOLOv5，
+#   会用 YOLOv5 的后处理去解 YOLOv8/YOLO11 的输出——不抛异常、直接吐错误坐标，
 #   比"加载失败"危险得多。缺失一律置None，由 _resolve_class → switch 显式失败。
 _SLOT_CLASSES = {
     "yolov5": maix.nn.YOLOv5,
@@ -32,17 +32,17 @@ class MaixCam1AI:
 
     与 MaixCam2AI 的差异:
 
-    1. **模型格式**: CAM2 用 Axera 的 `.axmodel`（mud 键`model_npu`），
+    1. 模型格式: CAM2 用 Axera 的 `.axmodel`（mud 键`model_npu`），
        CAM1 只认 CVITEK 的 `.cvimodel`（mud 键 `model`）。当前部署
        `model_239147.cvimodel`（YOLOv5，三类 yao_gu/yuan_zhu/yuan_tai）。
-    2. **模型类**: `nn.YOLOv5`（CAM2 是 `nn.YOLO11`）。老固件可能没有
-       YOLOv8/YOLO11 —— 缺失时显式失败而非跨类型兜底，见 _SLOT_CLASSES 注释。
-    3. **构造参数**: YOLOv5 用 `model=<mud路径>` 关键字。⚠ `dual_buff`
-       **CAM1 是支持的**（官方 docs/doc/zh/vision/dual_buff.md 就是 MaixCAM 文档），
-       且默认开启；但它会让 `detect()` 返回**上一次**调用的图结果 → 人质坑位
+    2. 模型类: `nn.YOLOv5`（CAM2 是 `nn.YOLO11`）。老固件可能没有
+       YOLOv8/YOLO11 —— 缺失时显式失败, 不拿别的类型顶上，见 _SLOT_CLASSES 注释。
+    3. 构造参数: YOLOv5 用 `model=<mud路径>` 关键字。`dual_buff`
+       CAM1 是支持的（官方 docs/doc/zh/vision/dual_buff.md 就是 MaixCAM 文档），
+       且默认开启；但它会让 `detect()` 返回上一次调用的图结果 → 人质坑位
        `first_seen` 定序引入一帧延迟（CAM1 约 30fps，即~33ms 机械位移）。
        故显式关掉，见 switch()。
-    4. **性能**: CAM1 NPU 算力与内存都显著低于 CAM2，人质任务 320x240
+    4. 性能: CAM1 NPU 算力与内存都显著低于 CAM2，人质任务 320x240
        输入是可接受的既有配置，勿盲目上640。
     """
 
@@ -78,7 +78,7 @@ class MaixCam1AI:
             "kwargs": kwargs,
         }
         # 关键状态走 warning 而非 info: app/main.py 的 basicConfig 把 root
-        # logger 钉在 WARNING，logger.info 在设备上**根本不会打印**，台架
+        # logger 钉在 WARNING，logger.info 在设备上根本不会打印，台架
         # 就grep 不到"模型是否注册/切换成功"这类最需要的信息。
         logger.warning("[CAM1] Registered model '%s' -> %s (type=%s)",
                        nick_name, model_path, model_type)
@@ -119,7 +119,7 @@ class MaixCam1AI:
             return False
 
         # CAM1: YOLOv5(model=<mud>, dual_buff=False)
-        # 显式 dual_buff=False：CAM1 支持该参数且**默认为 True**，而它会让
+        # 显式 dual_buff=False：CAM1 支持该参数且默认为 True，而它会让
         # detect() 返回上一次调用的图结果 —— 人质坑位 first_seen 定序与
         # x_crop 像素判断会因此吃到一帧延迟（约 33ms @30fps）。关掉换实时性。
         # 旧固件若不认该 kwarg，用 TypeError 消息特征区分"签名不兼容"与
@@ -225,7 +225,7 @@ class MaixCam1AI:
         （零拷贝路径，传`_raw=True`）。人质任务当前走 numpy 路径。
 
         无模型/推理失败时返回空 list —— 上层 gks_task_processor 据此
-        优雅降级（零值心跳），不崩溃。
+        出错也不中断（零值心跳）, 不崩。
         """
         conf_th = kwargs.pop("conf_th", 0.48)
         iou_th = kwargs.pop("iou_th", 0.5)
@@ -258,14 +258,14 @@ class MaixCam1AI:
         except Exception as e:
             # 不做"丢掉 iou_th 重试"：CAM1 官方 nn_yolov5.py / yolov5.md 都带
             # iou_th，TypeError 更可能来自 detect 内部，吞掉它再重试只会掩盖
-            # 真实错误、并悄悄改掉检测语义。
+            # 真实错误、并悄悄改掉检测结果。
             logger.error("Model detect() failed: %s", e)
             return []
 
-        # ⚠ 必须在 try 之外做`or []`：部分固件无目标时 detect() 返回 None 而非
+        # 必须在 try 之外做`or []`：部分固件无目标时 detect() 返回 None 而非
         #   空 list，`for o in None` 会抛 TypeError 逃出本函数直达
         #   gks_task_processor._process_rescue（该处无 try 包裹）→ 打断整帧处理，
-        #   违反上面"返回空 list 供上层优雅降级"的承诺。
+        #   违反上面"返回空 list 让上层自己处理"的承诺。
         objects = [o for o in (objects or []) if o.score >= conf_th]
         if not objects:
             logger.debug("detect() returned 0 objects")

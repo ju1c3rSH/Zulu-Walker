@@ -6,7 +6,7 @@
 负载变 —— 计数器不是时间单位。详见 docs/architecture/battery_hal_hud.md。
 采样那一拍 1.02ms（含 is_charging 约 1.30ms），落在主循环里，推流推迟 ≤1ms、不丢帧。
 
-日志策略: **快照发布就打印**。`BatterySampler.poll()` 返回新快照或 None，这里只做
+日志策略: 快照发布就打印。`BatterySampler.poll()` 返回新快照或 None，这里只做
 `if snap is not None: log_print(...)` —— 不记"上次是多少"、不判"值变没变"、不限流。
 所以模块里没有任何日志状态，也不会在读失败时把旧值当新值重打一遍。
 `log_print` 一次调用同时进控制台与 logs/debug.log，存档与控制台因此天然一致。

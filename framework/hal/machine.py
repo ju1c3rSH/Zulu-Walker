@@ -35,8 +35,8 @@ class Machine:
 
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
-        # 启动打点: 这段串行构造在 MaixCAM-Pro 上曾耗时约 8 秒, 而改造前**全程
-        # 无打点**, 导致无法判断是相机/显示/UART0 抢线/模型加载哪一段吃掉了时间。
+        # 启动打点: 这段串行构造在 MaixCAM-Pro 上曾耗时约 8 秒, 而改造前全程
+        # 无打点, 导致无法判断是相机/显示/UART0 抢线/模型加载哪一段吃掉了时间。
         # 五步逐段打点后, 台架一次启动就能定位到段。零风险: 打点只读时钟。
         bt = BootTimer("machine")
         path = Path(config_path)
@@ -141,7 +141,7 @@ class Machine:
                             ai.models,
                         )
                 # 单独一段: NPU 从 flash 加载 .cvimodel 是本函数里最可能
-                # 出现"几百毫秒级"的一段, 且**完全可延后** —— 人质任务在
+                # 出现"几百毫秒级"的一段, 且完全可延后 —— 人质任务在
                 # RESCUE 订阅才需要, 排爆/打靶阶段用不到。拆出来是为了让
                 # "启动慢"能区分出是模型加载慢还是别的慢。
                 bt.mark("ai.switch(load)")

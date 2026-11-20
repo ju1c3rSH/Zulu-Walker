@@ -3,19 +3,19 @@
 
 ## 为什么要这个脚本
 
-现象: MaixCAM-Pro 上程序**运行期一切正常，一退出设备就重启**。
+现象: MaixCAM-Pro 上程序运行期一切正常，一退出设备就重启。
 已确认的机制（MaixCDK 源码 `components/peripheral/port/linux_common/maix_wdt.cpp`）:
 
     WDT::WDT(id, feed_ms) → open("/dev/watchdog") + WDIOC_SETTIMEOUT(feed_ms/1000 秒) + close
                             ⇒ 一旦构造，硬件倒计时就开始跑（构造即自动启动）
     WDT::feed()           → open + WDIOC_KEEPALIVE + close   （每喂一次就重启倒计时）
-    WDT::stop()           → 只打一行 "this operation is not supported"，**return 0**（空实现！）
+    WDT::stop()           → 只打一行 "this operation is not supported"，return 0（空实现！）
 
 于是: 程序退出后没人喂狗 ⇒ 窗口(本项目 10s)到点 ⇒ SoC 硬复位。
-又因为 stop() 是空实现，**在 Python 里调 `wdt.stop()` 关不掉它** —— 日志打印
+又因为 stop() 是空实现，在 Python 里调 `wdt.stop()` 关不掉它 —— 日志打印
 "stopped" 是假的（它返回 0=成功，代码无从分辨）。
 
-本脚本用**最少的重启次数**把剩下的问题问清楚:
+本脚本用最少的重启次数把剩下的问题问清楚:
   ① 这台机器的看门狗是什么驱动、能不能被关（nowayout?）;
   ② 绕过 MaixPy、直接对 /dev/watchdog 下 `WDIOS_DISABLECARD` 能不能真正关掉;
   ③ 确认 `stop()` 确实是空实现。
@@ -23,18 +23,18 @@
 ## 用法（设备上、仓库根目录）
 
     python scripts/wdt_probe.py info      # 只读，不武装任何东西（安全，随时可跑）
-    python scripts/wdt_probe.py stopapi   # 证明 maix 的 stop() 是空实现（**结束后设备会重启**）
-    python scripts/wdt_probe.py disarm    # 试真正 disarm（**若失败, 结束后设备会重启**）
+    python scripts/wdt_probe.py stopapi   # 证明 maix 的 stop() 是空实现（结束后设备会重启）
+    python scripts/wdt_probe.py disarm    # 试真正 disarm（若失败, 结束后设备会重启）
     python scripts/wdt_probe.py arm       # 对照实验: 武装后直接退出 ⇒ 预期 ~10s 后重启
 
 预期结论怎么读:
-  · `info` 里 `parameters/nowayout` = 1 ⇒ 内核层**禁止**停止看门狗（DISABLECARD 会 EBUSY）,
+  · `info` 里 `parameters/nowayout` = 1 ⇒ 内核层禁止停止看门狗（DISABLECARD 会 EBUSY）,
     唯一出路是"别武装它"（`project_config.yaml: wdt_enabled: false`）。
-  · `disarm` 跑完设备**没有**重启 ⇒ DISABLECARD 有效，可以把它做进退出路径。
-  · `arm` 跑完设备**重启了** ⇒ 机制确认（这一步是阴性对照, 可以不做, 省一次重启）。
+  · `disarm` 跑完设备没有重启 ⇒ DISABLECARD 有效，可以把它做进退出路径。
+  · `arm` 跑完设备重启了 ⇒ 机制确认（这一步是阴性对照, 可以不做, 省一次重启）。
 
-⚠ 本脚本只读 sysfs / 只用标准 Linux watchdog ioctl，不依赖 maix 其它模块。
-⚠ `arm` / `stopapi` / `disarm` 在**武装之后**无论怎么退出都会走到"关不掉就 10s 后重启"，
+本脚本只读 sysfs / 只用标准 Linux watchdog ioctl，不依赖 maix 其它模块。
+`arm` / `stopapi` / `disarm` 在武装之后无论怎么退出都会走到"关不掉就 10s 后重启"，
    这是被测对象本身的行为，不是脚本的 bug。
 """
 from __future__ import annotations
@@ -51,9 +51,9 @@ import time
 WATCHDOG_DEV = "/dev/watchdog"
 WDT_SYSFS = "/sys/class/watchdog/watchdog0"
 
-# ⚠ ioctl 码必须按**有符号 32 位**交给 fcntl / ioctl。
-#   典型码 0x80045707 最高位是 1 ⇒ 作为 C int 其实是**负数**(-2147199225)。
-#   传正数时内核回 **errno=14 EFAULT Bad address** —— 不是权限、也不是 nowayout,
+# ioctl 码必须按有符号 32 位交给 fcntl / ioctl。
+#   典型码 0x80045707 最高位是 1 ⇒ 作为 C int 其实是负数(-2147199225)。
+#   传正数时内核回 errno=14 EFAULT Bad address —— 不是权限、也不是 nowayout,
 #   纯粹是请求码不认（把它当另一个 ioctl 解了）。
 WDIOC_GETTIMEOUT = 0x80045707      # _IOR('W', 7, int)
 WDIOC_KEEPALIVE = 0x80045705       # _IOR('W', 5, int)
@@ -74,7 +74,7 @@ def _i32(value: int) -> int:
 def _ioctl(fd: int, request: int, arg) -> int:
     """对 fd 下 ioctl, 兼容 CPython 的 method-vs-function 两种签名。
 
-    `fcntl.ioctl(fd, req, arg)` 在部分平台上要求 arg 是**可变缓冲区**
+    `fcntl.ioctl(fd, req, arg)` 在部分平台上要求 arg 是可变缓冲区
     （用于 _IOR/_IOWR 的回填），整数会被拒（TypeError/OverflowError）。
     这里统一用 `ioctl(fd, req, buf, True)` 的 mutate 形式, 并返回 buf 里的 int。
     """
@@ -99,7 +99,7 @@ def _read(path: str):
 def _timeleft():
     """看门狗剩余秒数。递减 ⇒ 倒计时在跑(= 武装中)。
 
-    ⚠ sysfs 属性名在不同内核上不一样, 别只试 `timeleft`:
+    sysfs 属性名在不同内核上不一样, 别只试 `timeleft`:
     早先只读 `timeleft` 导致全读到 FileNotFoundError, 结论直接成了"判不了"。
     """
     for name in ("timeleft", "watchdog0_timeleft", "wd_timeleft"):
@@ -201,11 +201,11 @@ def cmd_info() -> None:
 
 
 def cmd_leave() -> None:
-    """**决定性实验**: 用 maix 的 stop() 关狗, 然后退出, 看设备是否真的不再重启。
+    """决定性实验: 用 maix 的 stop() 关狗, 然后退出, 看设备是否真的不再重启。
 
     这是唯一能一次回答"到底能不能关掉"的实验。判定:
-      · 退出后设备**没有**重启 ⇒ stop() 能干活（或 raw fallback 生效）, 可用 `stop_after` 方案;
-      · 退出后设备**重启了** ⇒ 只能用 project_config.yaml 的 `wdt_enabled: false` 规避。
+      · 退出后设备没有重启 ⇒ stop() 能干活（或 raw fallback 生效）, 可用 `stop_after` 方案;
+      · 退出后设备重启了 ⇒ 只能用 project_config.yaml 的 `wdt_enabled: false` 规避。
     两种结果都是有效信息, 不会白跑。
     """
     _banner("实验 D（决定性）: stop() 关狗后退出，观察是否重启")
@@ -215,7 +215,7 @@ def cmd_leave() -> None:
     time.sleep(1.0)
     _say(f"  武装后: timeleft={_timeleft()}  armed={_armed()}")
 
-    # 关狗前**先建立带外信号**: 写一条内核日志。
+    # 关狗前先建立带外信号: 写一条内核日志。
     # 重启是否发生就能用 `dmesg | grep WDTLEAVE` 一眼判定 ——
     # 比"重启后 uptime 归零"更可靠: uptime 归零也可能是你手动断的电。
     _say("\n  写一条带外时间戳标记（重启后可用 `dmesg | grep WDT_LEAVE` 判定）")
@@ -252,12 +252,12 @@ def cmd_leave() -> None:
 def _disarm_raw(verbose: bool = False) -> str:
     """绕过 MaixPy, 直接对 /dev/watchdog 下 WDIOS_DISABLECARD。
 
-    这是 `WDT::stop()` 本该做却**没做**的事（MaixCDK 里它是空实现）。
+    这是 `WDT::stop()` 本该做却没做的事（MaixCDK 里它是空实现）。
     内核层面 nowayout=1 时会返回 EBUSY(=16) —— 那就说明没有任何用户态办法能关。
 
-    ⚠ 打开时**必须带 O_NONBLOCK**（2026-10-09 实测教训）: 该驱动在
-    「看门狗已启动」的状态下, 不带 nonblock 的 open 会**阻塞在
-    watchdog_open() 里等标志位**, 表现为脚本挂死（而不是报错）。
+    打开时必须带 O_NONBLOCK（2026-10-09 实测教训）: 该驱动在
+    「看门狗已启动」的状态下, 不带 nonblock 的 open 会阻塞在
+    watchdog_open() 里等标志位, 表现为脚本挂死（而不是报错）。
     """
     fd = None
     try:
@@ -294,9 +294,9 @@ def _disarm_raw(verbose: bool = False) -> str:
 
 
 def _read_kernel_wdt_info():
-    """用标准 watchdog ioctl 取内核的窗口/状态（脚本自带 sysfs 缺属性时的兜底）。
+    """用标准 watchdog ioctl 取内核的窗口/状态（脚本自带 sysfs 缺属性时的备用读法）。
 
-    ⚠ sysfs 属性在多数内核上是 `<name>_timeout` / `<name>_timeleft` / `status`
+    sysfs 属性在多数内核上是 `<name>_timeout` / `<name>_timeleft` / `status`
     / `identity`，而不是 `timeout` / `timeleft` —— 见 info 模式里的多路径尝试。
     这里再补一条完全绕过 sysfs 的路。
     """
@@ -341,7 +341,7 @@ def _exit_now(why: str) -> None:
 def cmd_stopapi() -> None:
     """证明 `wdt.stop()` 是空实现: 调用它之后再采样 timeleft。
 
-    预期: 调用后倒计时**仍在递减** ⇒ stop() 没生效（源码也印证: 空实现 return 0）。
+    预期: 调用后倒计时仍在递减 ⇒ stop() 没生效（源码也印证: 空实现 return 0）。
     为了让脚本自己能跑完，全程持续喂狗；跑完把狗停掉再退出（大概率停不掉 ⇒ 重启）。
     """
     _banner("实验 A: maix 的 stop() 到底有没有用")

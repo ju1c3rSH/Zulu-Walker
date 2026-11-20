@@ -155,7 +155,7 @@ rescue 三形状互不相同、坑间距 ~400px、框宽 ~80px，同类之间 Io
 ```python
 self._rescue_seq  = 0      # 帧序号，单调递增，仅用于定序比较
 self._shape_runs  = {}     # shape -> {first_seq, last_seq, first_cx, last_cx, n, confirmed}
-                           #   ⚠ 必须有 last_seq: 判"上一帧也出现"只能用它 == seq-1,
+                           #   必须有 last_seq: 判"上一帧也出现"只能用它 == seq-1,
                            #   不能用 _shape_seen（后者每帧刷新、永不清空, 会把幽灵
                            #   和 30 帧后的真目标续成同一段 = §3.1 否掉的累计式）
 self._shape_order = []     # 已确认形状，按 first_seq 升序（order_by:x 时按 last_cx）

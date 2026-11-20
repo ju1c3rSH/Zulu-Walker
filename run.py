@@ -47,7 +47,7 @@ def run_debug(args):
 def _console_enabled_from_config() -> bool:
     """project_config.yaml 的 `debug_console_enabled`（缺省/读不到 -> True）。
 
-    ⚠ **必须在启动任何东西之前判定**。若先无条件 `DebugConsole().start()` +
+    必须在启动任何东西之前判定。若先无条件 `DebugConsole().start()` +
     `ConsoleCapture.install()`, 则 `debug_console_enabled: false` 完全无效:
     rich 的 10Hz 全屏重绘照跑, 且 sys.stdout 被换成 Python 对象, 此后每一行
     print 都变成一次 log_print + 一次文件 open/close。

@@ -148,7 +148,7 @@ MAIN THREAD  — coordinator.loop() 内 (~300Hz tick 边界)
                                    uart.send(frame)
 
   延迟: ~1.7ms (半 tick avg) ~ 3.33ms (整 tick worst)
-  ⚠️ 注意: 视觉伺服数据经过主循环 tick 边界发送，非直发。
+  注意: 视觉伺服数据经过主循环 tick 边界发送，非直发。
      这是当前架构的已知瓶颈，若需更低延迟需改为相机线程直发。
 ```
 

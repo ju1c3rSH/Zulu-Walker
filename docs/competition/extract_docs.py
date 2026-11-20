@@ -186,6 +186,6 @@ final_md = f"""# H题 车载平衡滚球运动控制系统
 """
 
 OUT_MD.write_text(final_md, encoding="utf-8")
-print(f"\n✅ 完成! 输出文件: {OUT_MD}")
+print(f"\n完成! 输出文件: {OUT_MD}")
 print(f"   图片目录: {OUT_IMAGE_DIR}")
 print(f"   共 {len(docx_image_map)} 张 DOCX 图片 + {len(pdf_image_refs)} 张 PDF 图片")

@@ -36,12 +36,8 @@ class PipelineCamera:
         self._last_frame: Optional[np.ndarray] = None
         self._last_results: Dict[str, VisionResult] = {}
         self._ai: Optional[AIInference] = ai
-        # 上一帧的分项耗时(ms)。**墙上与 CPU 两个口径都要**, 因为两者的差值含义完全不同:
-        #   read  / convert        = 墙上（含等硬件、等 GIL）
-        #   read_cpu / tasks_cpu   = thread_time（真正的 CPU 消耗）
-        # ⚠ read 墙上远大于 read_cpu -> 那段是**在驱动里等硬件**, 不是框架在算;
-        #   反之若 read_cpu 接近 read, 才是真的在拷/在算。
-        # 这是回答"到底谁最耗性能（驱动调用 vs 框架本身）"的关键一格。
+        # 分项耗时(ms): 墙上(read/convert)含等硬件与 GIL, CPU(read_cpu/tasks_cpu)是真消耗。
+        # 两者差大 = 在等硬件; 接近 = 真在算。
         self.stage_ms: Dict[str, float] = {
             "read": 0.0, "read_cpu": 0.0, "convert": 0.0,
             "tasks": 0.0, "tasks_cpu": 0.0,
@@ -102,7 +98,7 @@ class PipelineCamera:
 
         为什么安全: 色块任务(EXPLOSIVE/TARGET) 走 C++ find_blobs 直接吃
         `camera.last_raw`, 人质任务走 `_raw=True` 也是直接吃 maix Image ——
-        三个任务在**设备 + maix 可用**时都不需要那份 BGR numpy。只有 cv2 回退
+        三个任务在设备 + maix 可用时都不需要那份 BGR numpy。只有 cv2 回退
         路径(maix 不可用)与调参页需要, 而 LazyFrame 会在真正切片/传库时才转一次。
 
         平台无 `set_lazy_convert`（linux/mock, 它们本就返回真实 numpy）时静默跳过
@@ -135,7 +131,7 @@ class PipelineCamera:
         """(read_ms, convert_ms) —— 优先用相机 HAL 自己拆好的分项。
 
         HAL 没提供 `stage_ms`（linux/mock/旧实现）时退回"整段都算取帧、转换为 0"，
-        语义与拆分前一致，不改变任何判据。
+        判断跟拆分前一样，不改变任何判断条件。
         """
         st = getattr(self.camera, "stage_ms", None)
         if isinstance(st, dict):
@@ -152,7 +148,7 @@ class PipelineCamera:
         if raw_img is None:
             # 相机停帧: 不复用旧帧加工、不产出结果。
             # 显示侧仍用 camera.last_raw 画旧画面；coordinator 侧无新结果，
-            # _latest_task_ts 不更新，1s 后归零心跳兜底（零值不断流）。
+            # _latest_task_ts 不更新，1s 后归零心跳补上（零值不断流）。
             self.stage_ms = {"read": read_ms, "read_cpu": read_cpu, "convert": conv_ms,
                              "tasks": 0.0, "tasks_cpu": 0.0}
             return None, {}

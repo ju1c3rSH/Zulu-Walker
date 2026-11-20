@@ -6,7 +6,7 @@ class CmdRequestEvent:
     """CMD_REQUEST(0x20) 订阅事件。
 
     5B 完整订阅帧携带任务码 (爆色/靶色/形状)；短帧 = 重订阅,
-    codes 为 None 表示沿用上次任务码（幂等，不得清视觉锁存）。
+    codes 为 None 表示沿用上次任务码（重复发也不要清视觉锁存）。
     """
     data_type: int
     min_interval_ms: int

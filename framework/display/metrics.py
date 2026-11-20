@@ -35,7 +35,7 @@ class Metrics:
     def add(self, wall_ms: float, cpu_ms: float = 0.0) -> bool:
         """记一次 show; 返回 True 表示该打一条汇总了（每秒最多一次）。
 
-        ⚠ 报告后**必须**清空本窗口的计数/累计, 否则窗口一过就每次调用都返回
+        报告后必须清空本窗口的计数/累计, 否则窗口一过就每次调用都返回
           True（日志洪水）, 且 avg= 变成累计均值而不可与历史日志比较。
         """
         self._shows += 1

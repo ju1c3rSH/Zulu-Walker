@@ -1,29 +1,29 @@
 """
-工科赛近端视觉协调器（panzer_links_protocol.md v2.1 订阅制从站）。
+工科赛近端视觉协调器，按 panzer_links_protocol.md v2.1 做订阅制从站。
 
-Brain (panzer_Brain, 主站) 通过 USART1 驱动本端:
-  CMD_REQUEST [data_id, min_interval_ms, 爆色, 靶色, 形状] -> ACK [did,60,10] -> 流
-  CMD_STOP -> 停推（门控 idle, 处理器清锁存）
+Brain（panzer_Brain，主站）走 USART1 指挥本端：
+  CMD_REQUEST [data_id, min_interval_ms, 爆色, 靶色, 形状] -> ACK [did,60,10] -> 开始推流
+  CMD_STOP -> 停推，开关回 idle，处理器清锁存
 
-不设主机静默自动 idle: Brain 的看门狗是"收不到 CAM 数据 >1s 才重订阅",
-健康推流期间主站本就静默, 若从站按静默判掉线会周期性断流并清锁存。
-Brain 侧异常退出由 STOP 缺失 + 人质/视觉超时兜底。
+这里故意不按"主站静默"判掉线。Brain 的看门狗要收不到 CAM 数据超过 1s 才重订阅，
+正常推流时主站本来就不说话；从站要是按静默判掉线，就会周期性断流、把锁存清掉。
+Brain 异常退出时收不到 STOP，靠人质/视觉超时收场。
 
-v2.1 关键语义:
-- 订阅期**零值心跳不断流**: 阈值缺失/无结果也按 interval 推全零帧,
-  否则 Brain 1s 帧龄 stale 判定 + 1s 看门狗重订阅; 结果陈旧 >1s 同样归零。
-- **结果驱动推流**: 视觉每产出一帧结果立即推一帧, 不受 min_interval_ms 限制;
-  interval 语义降级为"无新结果时的心跳周期", 见 _push_allowed。策略可用
-  project_config.yaml `gks_stream.push_on_new_result` 回退到纯 interval 限速。
-- 同 data_id 同任务码的重订阅幂等, 不清视觉锁存（set_task 内部判重）;
-  换 data_id / 换任务码才清。
-- ACK [did,60,10] / NACK [did,reason] 照发保协议一致性
-  （Brain on_cam1 只消费 0x24 DATA_STREAM, ACK/NACK 不被消费）。
-- DATA_STREAM payload 恒 10B = seq + data_id + 8B 子载荷。
+v2.1 定下的几条：
+- 订阅期间零值心跳不断流。阈值缺失或没结果，也按 interval 推全零帧；否则 Brain
+  会因为 1s 帧龄 stale 判定和 1s 看门狗重订阅。结果陈旧超过 1s 同样归零。
+- 每算出一帧结果就推一帧，min_interval_ms 不再拦它。interval 现在只管没有新结果时
+  多久补一帧心跳，见 _push_allowed。想回到纯 interval 限速，把 project_config.yaml
+  里的 `gks_stream.push_on_new_result` 关掉即可。
+- data_id 和任务码都没变的重订阅，再来多少次也不会重新生效，更不会清视觉锁存，
+  set_task 内部会判重。只有换了 data_id 或任务码才清。
+- ACK [did,60,10] 和 NACK [did,reason] 照发，协议上保持一致。Brain on_cam1 只消费
+  0x24 DATA_STREAM，ACK/NACK 它并不看。
+- DATA_STREAM 的 payload 固定 10B：seq + data_id + 8B 子载荷。
 
-本类不解释像素（只消费 VisionResult dict）; 锁存/识别在 GksTaskProcessor。
-线程模型: UART RX 回调线程只做事件入队; 门控变更在主循环应用,
-视觉线程只见原子布尔翻转与单写者 set_task。
+本类不碰像素，只消费 VisionResult dict；锁存和识别都在 GksTaskProcessor。
+线程上，UART RX 回调只负责把事件入队，开关变化留到主循环里生效；视觉线程只看得到
+布尔标志翻转，set_task 也只有一处会写。
 """
 import threading
 import time
@@ -78,7 +78,7 @@ _DATA_ID_MODES = {
     DATA_RESCUE:    "RESCUE",
 }
 
-# 反查: 模式 -> data_id（锁存清理判据需要以 data_id 比较, 见 _latch_reset_needed）
+# 反查: 模式 -> data_id（清理锁存的条件需要以 data_id 比较, 见 _latch_reset_needed）
 _MODE_DATA_IDS = {v: k for k, v in _DATA_ID_MODES.items()}
 
 # data_id -> (optional) AI model nickname to hot-switch before ACKing
@@ -88,7 +88,7 @@ _DATA_ID_MODEL = {
 
 
 class GksCoordinator:
-    """订阅门控 + 流控推送 + v2.1 协议应答。"""
+    """订阅开关 + 推送限速 + v2.1 协议应答。"""
 
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
@@ -113,7 +113,7 @@ class GksCoordinator:
         self._gate_lock = threading.Lock()
         self._gating = SubscriptionStateMachine(self)
 
-        # 推流策略（结果驱动 + 心跳兜底, 见 _push_allowed）:
+        # 推流策略（每帧结果都推 + 没结果时按心跳补一帧, 见 _push_allowed）:
         #   视觉每产出一帧结果 -> _result_seq 前进 -> 立即推一帧（不受 interval 限制）
         #   无新结果 -> 按 interval 推心跳（保 Brain 1s stale 判定 / 1s 看门狗）
         # main.py 从 project_config.yaml `gks_stream:` 段注入（缺省即本处默认值）。
@@ -122,7 +122,7 @@ class GksCoordinator:
         self._push_on_new_result = True
         self._min_push_interval_s = 0.0  # 两条放行路径的硬保护, 0 = 不限
 
-        # 推流统计窗口（按秒汇总打一条; 结果驱动后可达相机帧率, 逐帧打印会刷屏）
+        # 推流统计窗口（按秒汇总打一条; 改成有结果就推之后, 可达相机帧率, 逐帧打印会刷屏）
         self._tx_window_start = 0.0
         self._tx_window_count = 0
         self._tx_hz = 0.0                # 最近一个统计窗口的实测推流率（HUD/台架对拍）
@@ -130,7 +130,7 @@ class GksCoordinator:
         # task gating cache (avoid redundant TaskManager calls)
         self._task_enabled = False
 
-        # 上次订阅门控快照: 锁存清理判据的"上一次"基准。
+        # 上次订阅开关的值: 清理锁存时拿来对比的"上一次"基准。
         # STOP 时 _prev_gate_id 归零(等价 main.py 的 sub_id=0), 使 STOP 之后的
         # 完整帧重订阅必定命中"data_id 变了"而清锁存; 短帧重订阅则保留。
         self._prev_gate_id = 0
@@ -171,8 +171,8 @@ class GksCoordinator:
                           min_push_interval_ms: Optional[float] = None) -> None:
         """注入推流策略（main.py 从 project_config.yaml `gks_stream:` 读取）。
 
-        None = 保持当前值（配置缺段/缺键时即用类内默认: 结果驱动、无硬保护间隔），
-        push_on_new_result=False 可一键回到旧的"纯 interval 限速"语义。
+        None = 保持当前值（配置缺段/缺键时即用类内默认: 有结果就推、不设硬保护间隔），
+        push_on_new_result=False 可一键回到旧的"纯 interval 限速"的做法。
         """
         if push_on_new_result is not None:
             self._push_on_new_result = bool(push_on_new_result)
@@ -237,15 +237,15 @@ class GksCoordinator:
             self._log_memory()
 
     def _push_allowed(self, now: float) -> bool:
-        """推流闸门 —— 结果驱动 + 心跳兜底（"一帧误差一帧输出"的实现点）。
+        """推流开关 —— 有结果就推, 没结果按心跳补（"一帧误差一帧输出"的实现点）。
 
         两条放行路径, 缺一不可:
 
-        1) **新结果**: 视觉又产出了一帧结果（_result_seq 前进）-> 立即推, 不受
+        1) 新结果: 视觉又产出了一帧结果（_result_seq 前进）-> 立即推, 不受
            min_interval_ms 限制。延迟只有一个主循环 tick（MAIN_LOOP_DELAY = 2ms,
-           远小于相机帧间隔 16.7ms）, 不会被时间闸门吞掉中间帧。
+           远小于相机帧间隔 16.7ms）, 不会被时间限制吞掉中间帧。
 
-        2) **心跳**: 没有新结果时按 interval 推一帧。interval 的语义因此从
+        2) 心跳: 没有新结果时按 interval 推一帧。interval 的规则因此从
            "每帧最小间隔"变为"心跳周期"—— Brain 的 1s 帧龄 stale 判定 + 1s
            看门狗要求订阅期必须持续有帧, 停推即被重订阅。下限仍为
            MIN_INTERVAL_MS(30ms), 即心跳最快 ~33Hz（协议"建议 30~50ms"）。
@@ -264,7 +264,7 @@ class GksCoordinator:
     def _note_streamed(self, sub_id: int, now: float) -> None:
         """推流日志按秒汇总一条（含实测 Hz）。
 
-        结果驱动后推流率可达相机帧率, 逐帧打印会刷屏; 但"推流率是否等于帧率"
+        改成有结果就推之后, 推流率可达相机帧率, 逐帧打印会刷屏; 但"推流率是否等于帧率"
         是核心验收项, 所以按秒打 —— 台架上一眼就能看出是 60Hz 还是掉到 20Hz
         （`[FPS] pipeline` 可对照）。
         """
@@ -298,9 +298,9 @@ class GksCoordinator:
     # ===== vision results =====
 
     def _process_vision_results(self, all_results: dict) -> None:
-        """消费视觉结果: 覆盖最新缓存 + 结果计数前进（结果驱动推流的"有新帧"判据）。
+        """消费视觉结果: 覆盖最新缓存 + 结果计数前进（判断"有没有新帧"的条件）。
 
-        计数在**每收到一个 gks_task 结果**时 +1, 归属/新鲜度两道判据统一在
+        计数在每收到一个 gks_task 结果时 +1, 归属/新鲜度两个条件统一放在
         _active_result 里做。归属不符的结果也会消耗一个计数, 代价只是切任务
         瞬间多推一两帧零值, 不会漏推。
         """
@@ -355,7 +355,7 @@ class GksCoordinator:
                 self._codes = event.codes
             self._sub_id = data_id
             self._stream_seq = 0
-            # main.py 语义: 任何 len>=2 订阅帧都刷新 interval, 下限 30ms
+            # main.py 的做法: 任何 len>=2 订阅帧都刷新 interval, 下限 30ms
             self._interval_ms = max(event.min_interval_ms, MIN_INTERVAL_MS)
             self._last_send_time = 0.0   # 新订阅立即推一帧
             codes_snapshot = self._codes
@@ -363,7 +363,7 @@ class GksCoordinator:
         self._enqueue(GateSignal(state_name=mode, codes=codes_snapshot,
                                  has_codes=bool(event.has_codes)))
 
-        # ⚠ 先发帧再打日志: 协议 I/O 不能挂在"日志是否成功"上。日志层一旦抛异常,
+        # 先发帧再打日志: 协议 I/O 不能挂在"日志是否成功"上。日志层一旦抛异常,
         # ACK 就会被静默吞掉, Brain 收不到应答只会更猛地重订阅。
         self._send(build_cmd_ack_frame(data_id))
         log_print(f"[UART TX] CMD_ACK type={dt_name} freq={ACK_MAX_FREQ_HZ}Hz "
@@ -396,7 +396,7 @@ class GksCoordinator:
             清锁存 ⟺ 完整订阅帧(带任务码) AND (data_id 变了 OR 任务码变了)
 
         两个细节, 缺一就不等价:
-          - 短帧重订阅(无任务码)沿用旧码, **不清**锁存, 否则 Brain 1s 看门狗的
+          - 短帧重订阅(无任务码)沿用旧码, 不清锁存, 否则 Brain 1s 看门狗的
             同参重订阅会周期性清掉辛苦锁上的坑位;
           - 比较基准是"上次订阅的 data_id", 而 STOP 会把它归零(见 apply_gate_idle),
             于是 STOP 后的完整帧重订阅必然命中"data_id 变了" → 清。
@@ -408,11 +408,11 @@ class GksCoordinator:
     def apply_gate_task(self, mode: str, codes: tuple, has_codes: bool = False) -> None:
         """启用 gks_task 并切换模式（codes 为订阅帧快照）。
 
-        锁存清理的唯一决策点是 _latch_reset_needed, 且只在**完整订阅帧**上发生;
-        处理器 set_task 自身的判重只负责切模式, 不再兼任锁存语义。
+        锁存清理的唯一决策点是 _latch_reset_needed, 且只在完整订阅帧上发生;
+        处理器 set_task 自身的判重只负责切模式, 不再兼任锁存规则。
 
         注: set_task 在"mode 真的变了"时仍会自清一次, 覆盖"短帧重订阅却换了
-        data_id"这个 coordinator 判不清的边缘; 多清一次幂等无害。
+        data_id"这个 coordinator 判不清的边缘; 多清一次也没关系。
         """
         task_enabled_before = self._task_enabled
         data_id = _MODE_DATA_IDS.get(mode, 0)
@@ -442,9 +442,9 @@ class GksCoordinator:
                   f"latch={latch_desc} ({setup})")
 
     def apply_gate_idle(self) -> None:
-        """停推: 关任务门 + 清结果缓存, **不清处理器锁存**。
+        """停推: 关任务门 + 清结果缓存, 不清处理器锁存。
 
-        锁存是否作废由**下次订阅**的判据决定, 这里只把 _prev_gate_id 归零:
+        锁存是否作废由下次订阅的条件决定, 这里只把 _prev_gate_id 归零:
             完整帧重订阅 -> data_id 与 0 不同 -> 清锁存
             短帧重订阅   -> has_codes=False   -> 保留锁存继续累积
         结果缓存仍要清: 已停推, 缓存里的旧结果不该在下一次订阅的首帧被透出。
@@ -469,16 +469,16 @@ class GksCoordinator:
     def _active_result(self, data_id: int, now: Optional[float] = None) -> dict:
         """本拍可上报的视觉结果; 返回 {} 表示推零值心跳。
 
-        两道判据集中在这一个方法里, 推送与日志共用同一份, 免得两处判据分叉:
+        两个条件集中在这一个方法里, 推送与日志共用同一份, 免得两处判断条件分叉:
 
         1) 陈旧: 超过 _TASK_STREAM_STALE_S 未刷新 -> 不透传陈旧的 found=1。
         2) 归属: result_data["mode"] 必须等于"产生它的模式"。
 
         第 2 条是切任务脏帧的根治手段: 视觉结果异步产出, 切模式后仍可能落进
         _latest_task, 按新 data_id 打包会推出错模式的 found=1。
-        在**数据消费点**验归属, 而不是在切换瞬间清空缓存 —— 后者对"清空之后
+        在数据消费点验归属, 而不是在切换瞬间清空缓存 —— 后者对"清空之后
         才到达的异步残留帧"无效; 校验 mode 对任意到达时刻都成立, 且天然放行
-        同模式的幂等重订阅。
+        同模式下再发一次订阅。
         """
         expected = _DATA_ID_MODES.get(data_id)
         if expected is None or not self._task_enabled:

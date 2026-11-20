@@ -1,81 +1,56 @@
-platform: maixcam1   # MaixCAM-Pro(cv181x)；CAM2 改 maixcam2
+platform: maixcam1   # MaixCAM-Pro(cv181x)；when you use maixcam2
 
-# ---- 显示输出（只影响 LCD；日志与协议推流不受影响）----
-# false = 完全不向 LCD 输出（比赛极限榨帧率时用），触摸急停仍可用。
-display_enabled: true
+display_enabled: true   # When you set it to false, the LCD will not be initialized and used. This is useful when you want to save power or use the camera in a headless mode.
 
-# 两次 show 的最小间隔(ms)。0 = 每 2 帧一次(帧跳语义)，100 = 10Hz。
-# HUD 绘制同频节流（main.py 从本键透传），避免"画了不 show"的白做绘制。
+# 两次 show 的最小间隔(ms)。0 = 每 2 帧一次，100 = 10Hz；HUD 绘制同频节流
 display_show_interval_ms: 100
 
-# ---- 硬件看门狗（WDT）是否武装 ----
-# ⚠⚠ 安全开关，别随手打开。true 时进程退出后设备仍会重启（~10s 后硬复位）：
-#    MaixPy 的 wdt.stop() 是空实现（只打一行 unsupported 然后 return 0），
-#    Linux watchdog 在 close 时不写 'V' 就保持运行，进程退出不会让它停。
-#    判别：设备上跑 python scripts/wdt_probe.py info 看 nowayout。
-# false = 不武装，退出干净；代价 = 失去死锁→硬件复位兜底，卡死需人工断电。
+# WatchDog in MaixCAM is a stub, your systen will crack when wdt_enabled is true for Sipeed didnt 
+# implement the WDT Disable function in their firmware. So we disable it by default.
 wdt_enabled: false
 
-# ---- 观测闸门 ----
-# perf            : 所有 `[PERF] ` 行的总开关
-# perf_detail     : 细粒度探针（fmt/hud/conv/jpeg + 调试页 page 行），false 只留三条常驻行
-# perf_interval_s : 常驻汇总窗口（秒），下限 0.5；只作用于常驻行与 detail 探针
-# ⚠ 删掉整段 = perf 全开 + 代码默认窗口(10s)。
+# perf: [PERF] 行总开关 | perf_detail: 细粒度探针 | perf_interval_s: 汇总窗口(下限 0.5)
+# 删掉整段 = perf 全开 + 默认窗口(10s)
 observability:
   perf: true
   perf_detail: false
   perf_interval_s: 10
 
-# 高频日志静音名单（子串匹配）。
-# enabled: false = 只吞 names 里列出的行（其余照打）；true = 名单不生效，全部照打。
-# 保留 [MEM] / [UART TX] DATA_STREAM（推流率验收口径）/ [UART TX] CMD_ACK。
+# 高频日志静音名单（子串匹配）。enabled: true = 名单不生效，全部照打
 perf_log:
   enabled: false
   names:
     - "[WDT] "
 
-# 调试台（rich 全屏 TUI）。默认关闭：CAM1 只有 128MB 用户内存，rich 导入要付内存
-# + 启动时间两笔账，而它只是一个人看的 TUI；且它会接管 stdout 改走日志管道。
-# 台架需要 TUI 时改回 true。关闭不影响 [PERF]/[UART TX]/[FPS] 正常输出。
+# we use Rich to make a TUI (text user interface) on the LCD. It is a separate thread, and can be disabled to save both CPU and Memory resources.
 debug_console_enabled: false
 
-# 比赛模式开关（false = 台架行为，HUD 与 wifi 推流全开）。
-# true = 关掉每帧 HUD 叠加与 wifi JPEG 推流（极限榨帧率/正式比赛时用）。
-# ⚠ 只影响显示，不控制 LCD 上屏（由上面两个 display 键控制）；日志与协议推流不受影响。
+# When you set it to true, the system will run in competition mode. In this mode, the system will not print any debug information to the console, and will not use any resources for debugging. This is useful when you want to run the system in a competition environment where performance is critical.
 competition_mode: false
 
 cameras:
   - camera_id: "main"
     source: null
     width: 640
-    height: 480   # 与旧上端 main.py 标定几何一致（坑位 ROI/误差中心按 640 宽标定）
-    fps: 60       # 真机实测 [FPS] pipeline ~60fps 可达；取图延时 ~30ms 是帧龄，不限帧率
-    camera_stream_queue_size: 2   # CAM1 无需堆缓冲（延时下限由固件决定）
+    height: 480   
+    #This is to enable the camera to be used in the application. If set to false, the camera will not be initialized and used.
+    fps: 60
+    camera_stream_queue_size: 2
 
 uart_defaults:
-  # MaixCAM UART0 pins A16(TX)/A17(RX) -> Brain USART1
-  # A16/A17 出厂默认即 UART0，无需 set_pin_function。
-  # ⚠ ① TX(A16) 是启动模式检测引脚，拉低 = 无法开机（电平转换时务必别拉低）。
-  # ⚠ ② 开机打印日志直到 `serial ready`，Brain 侧必须丢弃开机段。
-  # ⚠ ③ UART0 同时是系统 maix protocol 串口，台架调试改用 SSH。
+  # This is the default UART port and baudrate used by the system. You can override these values in the specific module configuration if needed.
   port: "/dev/ttyS0"
-  baudrate: 115200     # keep 115200: official docs warn other baud rates are unreliable
+  baudrate: 115200
 
-# ---- 电量（Pro: AXP2101 / CAM2: CW2015）----
-# 采集在主循环里按 monotonic 判据降频（modules/zw_battery_module），不开线程。
-# ⚠ 不要改回"每 N 拍采一次"：主循环拍长随负载变（89Hz，11.2ms/拍），计数器不是时间单位。
-# ⚠ 首拍即采，否则开机要等满一个周期才有第一个读数。
 battery:
   enabled: true
   poll_interval_ms: 10000
-  low_percent: 20          # 低于它转红
+  low_percent: 20          # The sys will alarm when battery percent is lower than this value
 
 ai:
   models:
-    # 人质形状 YOLOv5 (yao_gu/yuan_zhu/yuan_tai) —— CVITEK .cvimodel
-    # 部署到设备: cp assets/models/hostage_yolov5_cam1/* /root/models/
-    # （mud 用 `model =` 键指向同目录 cvimodel，两者必须同目录同名配套）
-    # ⚠ CAM2 的 .axmodel / nn.YOLO11 在 CAM1 上不可用，两者互不通用。
+    # CVITEK .cvimodel；CAM2 的 .axmodel / nn.YOLO11 在 CAM1 不可用，两者不通用
+    # mud 用 `model =` 指向同目录 cvimodel，两者须同目录同名
     - nick_name: "eod_hostage"
       model: "/root/models/model_239147.mud"
       model_type: "yolov5"   # CAM1 无 YOLO11 类，显式指定避免落到 "auto" 歧义
@@ -85,22 +60,16 @@ streaming:
   wifi_ssid: ""
   wifi_password: ""
 
-# ---- HTTP JPEG 推流（浏览器预览）----
-# ⚠ MaixCAM1 的 VENC 是单例硬件资源，与 Display.show() 内部的编码互相抢，抢不到会刷
-#    CVI_VENC_GetStream failed 并把视觉线程拖到 1fps。默认关闭；开它要确保 MaixVision
-#    预览窗口已关。关闭时完全不创建 http.JpegStreamer，不占用 VENC。
+# VENC 是单例硬件资源，与 Display.show() 抢编码；默认关闭，开前先关 MaixVision 预览
 stream:
-  enabled: false      # 默认关；需要浏览器预览时改 true
-  fps: 5              # 推流频率，与 LCD 刷新频率解耦（编码很贵）
+  enabled: false
+  fps: 5              # limit the fps of the stream
   quality: 80
-  max_width: 320      # 编码前降采样到该宽度, 0 = 不降
+  max_width: 320      # Downsample to this width, keep aspect ratio. 0 = no downsample
 
-# 近端推流策略（GksCoordinator，v2.1 DATA_STREAM）
-#   push_on_new_result: true  = 结果驱动，视觉每产出一帧结果立即推一帧，不受订阅帧
-#                               min_interval_ms 限制；interval 降级为无新结果时的心跳周期
-#                               （保 Brain 1s 帧龄 stale 判定 + 1s 看门狗不重订阅）。
-#   min_push_interval_ms: 两条放行路径共用的硬保护间隔，0 = 不限。
-# 冒烟判据: `[UART TX] DATA_STREAM <Hz>Hz` 的 Hz 应 ≈ `[FPS] pipeline` 的帧率。
+# push_on_new_result: true = 结果一产出即推，interval 降级为无新结果时的心跳周期；
+#                     false = 纯 interval 限速。判据: DATA_STREAM 的 Hz 应约等于 [FPS] pipeline
+# min_push_interval_ms: 两条放行路径共用的硬保护间隔，0 = 不限
 gks_stream:
   push_on_new_result: true
   min_push_interval_ms: 0

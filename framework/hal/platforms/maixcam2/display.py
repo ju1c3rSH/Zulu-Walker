@@ -34,7 +34,7 @@ class MaixCam2Display:
         )
 
     def width(self) -> int:
-        """⚠ 打不开时退回面板物理尺寸而非 0: 0 会让调试页 resize(0,0) 直接失败。"""
+        """打不开时退回面板物理尺寸而非 0: 0 会让调试页 resize(0,0) 直接失败。"""
         try:
             return self._disp.width() or _FALLBACK_W
         except Exception:

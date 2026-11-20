@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """页面路由 — KEY_OK 循环切页 + AppPageState 门面。
 
-KEY_OK 在释放沿/未知沿循环切页（0.5s 连发兜底防抖；press 沿忽略防双翻转）。
+KEY_OK 在释放沿/未知沿循环切页（0.5s 连发保底防抖；press 沿忽略防双翻转）。
 进调试页前置条件: 流水线相机可用（调试页独占相机时相机让位为
-调试页唯一读取者, 结果 >1s 陈旧由 coordinator 归零心跳自动兜底、UART 不断流）。
+调试页唯一读取者, 结果 >1s 陈旧由 coordinator 归零心跳自动补上、UART 不断流）。
 key 回调线程只 select 页面（页面 enter/exit 在 trigger 内同步完成, 仅置暂停位）。
 """
 from app.page_sm import STATE_MAIN, PAGE_CYCLE, PageStateMachine

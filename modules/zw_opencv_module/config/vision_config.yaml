@@ -2,8 +2,7 @@ pipelines:
   - pipeline_id: "cam_main"
     camera_id: "main"
     tasks:
-      # 工科赛近端: 订阅门控单任务。默认 DISABLED，coordinator 按订阅
-      # (CMD_REQUEST data_id 0x01/0x02/0x03) 启用并切换模式（单激活规则）。
+      # enabled=false 时由 coordinator 按订阅请求启用，无需手动改
       - name: "gks_task"
         type: "GksTaskProcessor"
         enabled: false

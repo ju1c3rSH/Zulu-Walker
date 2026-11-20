@@ -48,20 +48,12 @@ _ICON_HIT_PAD = 4
 _WDT_WINDOW_MS = 10000
 _WDT_FEED_PERIOD_S = 1.0
 
-# ⚠ 是否武装硬件看门狗（默认 False）。
-# MaixPy 的 `wdt.stop()` 是空实现（只打一行 unsupported 就 return 0），而 Linux
-# watchdog 在 close 时不写 'V' 就保持运行 ⇒ 进程退出后设备仍会重启（~10s 硬复位），
-# 且调用方无法从返回值分辨"真关了"还是"没关"。所以 CAM1 上默认**不武装**：
-# 代价是失去死锁→硬件复位兜底，收益是退出不再莫名重启。
-# 需要死锁兜底时把 `project_config.yaml` 的 `wdt_enabled` 置 true ——
-# 但必须接受"每次退出后 ~10s 设备重启"。
+# 默认不武装: MaixPy 的 wdt.stop() 是空实现, 武装后每次退出都会硬复位重启(~10s)。
+# 需要死锁复位兜底时把 project_config.yaml 的 wdt_enabled 置 true。
 _WDT_ENABLED_DEFAULT = False
 
-# Linux watchdog uapi（绕过 MaixPy 空实现时用）
-# ⚠ ioctl 码要按**有符号 32 位**传: 0x80045704 作为 C int 是负数(-2147199228);
-#   传正数内核回 errno=14 EFAULT，请求码不认。
-# ⚠ 打开 /dev/watchdog 必须带 O_NONBLOCK: 看门狗已启动时, 不带 nonblock 的 open
-#   会在 watchdog_open() 里**阻塞等标志位**, 表现为进程挂死。
+# Linux watchdog uapi（绕过 MaixPy 空实现）: ioctl 码须按有符号 32 位传,
+# open 必须带 O_NONBLOCK, 否则看门狗已启动时会阻塞挂死。
 _WATCHDOG_DEV = "/dev/watchdog"
 _WATCHDOG_SYSFS = "/sys/class/watchdog/watchdog0"
 # sysfs 属性名因内核而异（多为 `<name>_timeleft`, 不是 `timeleft`）——全试一遍
@@ -88,7 +80,7 @@ from app.page_sm import STATE_MAIN
 def _push_coordinator_status(coordinator) -> None:
     """把协调器状态推给调试台（调试台没在跑就整段跳过）。
 
-    ⚠ 这句 import 必须放在 `debug_console_active()` 判定之后：调试台被
+    这句 import 必须放在 `debug_console_active()` 判定之后：调试台被
     `debug_console_enabled: false` 禁用时，导入会把整个 rich 拉进内存
     （CAM1 只有 128MB 用户内存），只为往一个不存在的 TUI 里塞几个键值。
     """
@@ -106,7 +98,7 @@ def _push_coordinator_status(coordinator) -> None:
 
 
 def _make_presenter(display):
-    """⚠ 注入晚绑定探针: 测试会 monkeypatch 模块级 _check_cmm_pressure。"""
+    """这个探针留给测试替换: 测试会 monkeypatch 模块级 _check_cmm_pressure。"""
     return PresenterService(display, cmm_probe=lambda: _check_cmm_pressure())
 
 
@@ -143,7 +135,7 @@ class DebugPageFactory:
         """每秒一条 [PERF] page: 把调试页一轮的耗时拆到 read/step/show。
 
         读法: iter 是 step_active 自身耗时, 1/Hz 是真实周期,
-        `iter外 = 周期 - iter` = 主循环里**非调试页**的开销
+        `iter外 = 周期 - iter` = 主循环里非调试页的开销
         （coordinator.loop + 视觉线程抢 GIL + display_callback + MAIN_LOOP_DELAY）。
         """
         it = self._iter
@@ -200,7 +192,7 @@ class DebugPageFactory:
                 log_print(f"[PAGE] {page_name} on_leave FAIL: {e}")
 
     def send_laser_off(self) -> None:
-        """程序退出兜底: LASER 页开过激光才发关帧（幂等, os._exit 前手动调）。"""
+        """程序退出时的收尾: LASER 页开过激光才发关帧（重复调也没事, os._exit 前手动调）。"""
         page = self._instances.get("LASER")
         if page is None or not getattr(page, "laser_is_on", lambda: False)():
             return
@@ -221,11 +213,9 @@ class DebugPageFactory:
                 return
             self._instances[page_name] = page
             log_print(f"[PAGE] built debug page: {page_name}")
-        # 进页清节流相位: 上一页残留的 _last_show_time 会把新页首帧吞掉,
-        # 而"进页第一帧"正是用户确认页面切过来了的依据。
+        # 进页清节流相位, 否则上一页残留时间会吞掉新页首帧（用户据此确认切页）。
         self._reset_show_clock()
-        # begin() 与 step() 同一条静默链路（tick 兜底只写 app.log）: 抛异常时
-        # 同样留痕 + 回 MAIN, 避免页面卡在"建好了但永远渲染不出来"的冻屏态。
+        # begin() 抛异常同样留痕 + 回 MAIN, 避免页面卡在冻屏态。
         try:
             page.begin()
         except Exception as e:
@@ -260,18 +250,15 @@ class DebugPageFactory:
         frame_bgr = cam.read()
         self._note_page_iter("read", time.perf_counter() - _t_read)
         if frame_bgr is None:
-            # 停帧/取帧失败：**必须退让**, 否则这里会以主循环上限 500Hz 空转,
-            # 白吃 CPU 且与视觉线程抢 GIL, 而控制台一行提示都没有（用户只看到 LCD 冻住）。
-            # 节拍取 5ms: 远快于任何相机帧率, 又比 2ms 自旋少一半唤醒。
+            # 取帧失败必须退让: 否则主循环 500Hz 空转抢 GIL, LCD 冻住且无提示。
+            # 5ms 远快于任何相机帧率, 又比 2ms 少一半唤醒。
             self._iter["none"] += 1
             time.sleep(0.005)
             return
-        # ⚠ 页面渲染抛异常绝不能静默: tick_callback 兜底只把 traceback 写进
-        # logs/app.log（控制台看不见）, 而显示线程对非 MAIN 页整体让位 ——
-        # 结果就是"切到调试页 LCD 直接冻住, 控制台毫无声息"。这里改为:
-        # 控制台留痕一次 + 自动回 MAIN 页恢复显示。
+        # 渲染异常不能静默: traceback 只进 app.log, 控制台看不见且 LCD 冻住。
+        # 这里控制台留痕一次 + 自动回 MAIN 恢复显示。
         try:
-            # ⚠ 只拦 show, 不拦 step: 触摸/识别必须每帧照跑, 否则页面变成死的。
+            # 只拦 show, 不拦 step: 触摸/识别必须每帧照跑, 否则页面变成死的。
             _presenter = self.presenter
             _t_step = time.perf_counter()
             try:
@@ -301,11 +288,11 @@ class DebugPageFactory:
     def reset(self) -> None:
         """回到 MAIN 页时清掉"当前激活的调试页"标记（install 见 MainUiShell.tick）。
 
-        语义: 页面**实例**留在 _instances 里（共享会话数据不丢）, 只清激活标记,
+        规则是: 页面实例留在 _instances 里（共享会话数据不丢）, 只清激活标记,
         于是下次切入同一页时 ensure_entered 会重新走一遍 begin()（重置交互态）。
         清标记前先 _leave_page 通知旧页收尾（LASER 页关激光）。
 
-        ⚠ 调用点必须是**页面切换边沿**（见 tick）: 每 tick 调一次会连带
+        调用点必须是页面切换边沿（见 tick）: 每 tick 调一次会连带
           清掉节流相位, 让 interval_ms 当场失效。
         """
         if self._active is not None:
@@ -360,10 +347,8 @@ class MainUiShell:
     非 MAIN 页所有路径短路, 与调试页触摸/显示互不干扰。
     """
 
-    # 向 DebugConsole 灌状态的周期（秒）。
-    # ⚠ 必须限频: 主循环 2ms 一拍, 不限频就是每秒喂几百次 10Hz 文字控制台。
-    #   tick 回调里的阻塞（被 show() 与 rich 重绘持着 GIL）是主循环最大开销,
-    #   0.5s => 2Hz 肉眼对控制台读数无感, 争用点少一个数量级。
+    # 向 DebugConsole 灌状态的周期（秒）。主循环 2ms 一拍, 不限频就是每秒喂几百次;
+    # 0.5s(2Hz) 肉眼无感且大幅减少 GIL 争用。
     _STATUS_PUSH_INTERVAL_S = 0.5
 
     def __init__(self, machine, pages, factory: DebugPageFactory, vision_manager,
@@ -396,8 +381,7 @@ class MainUiShell:
 
     def tick(self, coordinator) -> None:
         page_name = self._pages.name
-        # ⚠ 只在**真正的页面切换**时清节流相位: 本函数每 2ms 跑一次,
-        #   每 tick 清相会让 interval_ms 完全失效（实测 100ms->407 次/秒）。
+        # 只在真正切页时清节流相位: 每 tick 清会让 interval_ms 失效。
         if page_name != self._last_page:
             self._last_page = page_name
             if page_name == STATE_MAIN:
@@ -430,13 +414,11 @@ class MainUiShell:
             if not self._pages.is_main():
                 time.sleep(0.01)
                 continue
-            # ⚠ 用 seq 判"新帧", 不再比对象身份: 相机双缓冲会复用同一块内存,
-            #   `frame is not last` 会把真正的新帧误判成重复而整段漏掉。
+            # 用 seq 判新帧: 双缓冲复用同一块内存, 比对象身份会漏掉真新帧。
             frame = self._vm.take_display_frame() if self._vm else None
             if frame is not None:
                 self.presenter.submit(frame, source="main")
-            # 显示侧只需要"有新帧就上屏", 5ms 轮询(200Hz) 远快于任何帧率;
-            # 原为 1ms 自旋, 每秒 1000 次唤醒抢 GIL, 对视觉线程是纯干扰。
+            # 5ms 轮询(200Hz) 远快于任何帧率; 1ms 自旋会每秒 1000 次抢 GIL 干扰视觉线程。
             time.sleep(0.005)
 
     def _consume_main_touch(self) -> None:
@@ -450,8 +432,7 @@ class MainUiShell:
             elif self._touch_down:
                 self._touch_down = False
                 if self._in_exit_button(self._touch_x, self._touch_y):
-                    # ⚠ `os._exit(0)` 跳过所有 finally/atexit —— 必须**先**手动解除
-                    # 硬件看门狗, 否则用户按"退出"看到的是一次设备重启
+                    # os._exit(0) 跳过 finally/atexit, 必须先解除看门狗否则退出变重启
                     if self._factory is not None:
                         self._factory.send_laser_off()   # 同理跳过 finally, 激光先关
                     _wdt_stop()
@@ -485,17 +466,17 @@ class MainUiShell:
 
 
 def _make_wdt_feed(enabled: bool = True):
-    """返回喂狗回调；*enabled*=False 时**完全不武装**（CAM1 默认, 见 _WDT_ENABLED_DEFAULT）。
+    """返回喂狗回调；*enabled*=False 时完全不武装（CAM1 默认, 见 _WDT_ENABLED_DEFAULT）。
 
-    ⚠ 顺序很重要: `enabled=False` 必须在**构造 WDT 之前**返回 —— 一旦
+    顺序很重要: `enabled=False` 必须在构造 WDT 之前返回 —— 一旦
     `maix_wdt.WDT(...)` 被构造出来, 硬件倒计时就开始跑, 而 MaixPy 的 `stop()` 是空实现
-    （见 _WDT_ENABLED_DEFAULT 的注释）, 之后**没有任何用户态办法叫停它**（nowayout 时
+    （见 _WDT_ENABLED_DEFAULT 的注释）, 之后没有任何用户态办法叫停它（nowayout 时
     连 raw ioctl 都会被内核拒绝）。所以"不重启"这件事只能在"别武装"这一步做。
 
-    ⚠ CAM1(MaixCAM-Pro) 的模块布局是 `maix.wdt`，CAM2 才是 `maix.peripheral.wdt`。
+    CAM1(MaixCAM-Pro) 的模块布局是 `maix.wdt`，CAM2 才是 `maix.peripheral.wdt`。
     两条路径都试：只写 CAM2 那条会让 CAM1 上 ImportError 被下面的 except 吞掉，
-    看门狗**静默失效** —— 应用照常跑、协议照常通，只有日志一行不起眼的 FAIL，
-    视觉/串口线程死锁时没有硬件复位兜底。
+    看门狗静默失效 —— 应用照常跑、协议照常通，只有日志一行不起眼的 FAIL，
+    视觉/串口线程死锁时没有硬件复位保底。
     """
     if not enabled:
         log_print("[WDT] 未武装（wdt_enabled=false）—— 退出不会触发硬件复位；"
@@ -519,8 +500,7 @@ def _make_wdt_feed(enabled: bool = True):
             raise ImportError("neither maix.wdt nor maix.peripheral.wdt available")
         watchdog = maix_wdt.WDT(0, _WDT_WINDOW_MS)
         import time
-        # 多处 feed 入口(main/coord/viz)共享同一节流时钟, 全局最多 1 次/周期,
-        # 避免各自独立计时导致 C 层 WDT::feed() 刷屏 (窗口 10s 足够余量)
+        # 多处 feed 入口共享同一节流时钟, 全局最多 1 次/周期, 避免 C 层刷屏
         if "_WDT_SHARED_STATE" not in globals():
             globals()["_WDT_SHARED_STATE"] = {
                 "last": 0.0, "fails": 0, "wdt": watchdog, "stopped": False}
@@ -543,7 +523,7 @@ def _make_wdt_feed(enabled: bool = True):
                     log_print(f"[WDT] feed FAIL x{_state['fails']}: {e}")
         return _feed
     except Exception as e:
-        # 看门狗失效属于"带病上台架"级别，措辞上与普通降级区分开
+        # 看门狗失效属于"带病上台架"级别，说法上要跟一般的退回区分开
         log_print(f"[WDT] init FAIL（硬件看门狗未生效，线程死锁将无自动复位）: {e}")
         return lambda: None
 
@@ -551,7 +531,7 @@ def _make_wdt_feed(enabled: bool = True):
 def _wdt_timeleft_s():
     """内核报告的看门狗剩余秒数；读不到（PC 端 / 无该 sysfs）返回 None。
 
-    ⚠ 属性名并非总是 `timeleft`, 所以逐个试。
+    属性名并非总是 `timeleft`, 所以逐个试。
     """
     for name in _WATCHDOG_TIMELEFT_FILES:
         try:
@@ -565,7 +545,7 @@ def _wdt_timeleft_s():
 def _wdt_armed(sample_gap_s: float = 0.4):
     """采样两次 timeleft: 递减 ⇒ 倒计时仍在跑(= 没能关掉)。None = 判不了。
 
-    这是绕过 MaixPy 那个**假 stop()** 的唯一验证手段: stop() 返回 0 却什么都不做,
+    这是绕过 MaixPy 那个假 stop() 的唯一验证手段: stop() 返回 0 却什么都不做,
     只有内核自己的倒计时读数能说明真相。
     """
     a = _wdt_timeleft_s()
@@ -582,9 +562,9 @@ def _wdt_disarm_raw() -> str:
     """绕过 MaixPy, 直接对 /dev/watchdog 下 `WDIOS_DISABLECARD`（stop() 本该做的事）。
 
     返回人类可读结果串（只进日志, 不抛）。带 nowayout 的驱动会回 EBUSY(16) ——
-    那是内核层面禁止停止看门狗, 此时**没有任何用户态办法能关**, 只能"别武装"。
+    那是内核层面禁止停止看门狗, 此时没有任何用户态办法能关, 只能"别武装"。
 
-    ⚠ 两个实测坑: ① open 必须 O_NONBLOCK, 否则已启动时挂死;
+    两个实测坑: ① open 必须 O_NONBLOCK, 否则已启动时挂死;
     ② ioctl 码必须传有符号 32 位, 否则 EFAULT(14)。
     """
     try:
@@ -609,18 +589,18 @@ def _wdt_disarm_raw() -> str:
 
 
 def _wdt_stop() -> None:
-    """退出前尽力解除硬件看门狗 —— 并**如实回报**到底解开了没有。
+    """退出前尽力解除硬件看门狗 —— 并如实回报到底解开了没有。
 
-    ⚠ MaixCDK 的 `WDT::stop()` 是**空实现**: 打一行 "this operation is not supported"
-    却 `return 0`(=ERR_NONE), 调用方从返回值分辨不出。所以流程是"调用 + **验证**":
+    MaixCDK 的 `WDT::stop()` 是空实现: 打一行 "this operation is not supported"
+    却 `return 0`(=ERR_NONE), 调用方从返回值分辨不出。所以流程是"调用 + 验证":
 
       1. 调 `maix stop()`（记下 rc, 但不再信它）;
       2. 采样 `/sys/class/watchdog/watchdog0/timeleft` 两次: 递减 ⇒ 还武装着;
       3. 还武装着 ⇒ 绕过 MaixPy 直接 raw ioctl `WDIOS_DISABLECARD`;
-      4. 再采样一次: 仍递减 ⇒ **明确告警**（写明 ~Ns 后设备会重启 + 规避办法）,
+      4. 再采样一次: 仍递减 ⇒ 明确告警（写明 ~Ns 后设备会重启 + 规避办法）,
          绝不再输出"已解除"这种会被当成结论的日志。
 
-    根治办法见 `_WDT_ENABLED_DEFAULT` 的注释: **CAM1 上默认不武装**。本函数保留
+    根治办法见 `_WDT_ENABLED_DEFAULT` 的注释: CAM1 上默认不武装。本函数保留
     是因为 `wdt_enabled: true` 时若固件支持 DISABLECARD, 退出仍能干净收场。
     """
     state = globals().get("_WDT_SHARED_STATE")
@@ -652,7 +632,7 @@ def _wdt_stop() -> None:
                   f"wdt_enabled=true 时请用 scripts/wdt_probe.py 判定")
         return
     log_print(
-        f"[WDT] ⚠⚠ disarm 失败: 看门狗仍在跑, **退出后约 {_WDT_WINDOW_MS // 1000}s "
+        f"[WDT] disarm 失败: 看门狗仍在跑, **退出后约 {_WDT_WINDOW_MS // 1000}s "
         f"设备会重启**。原因: MaixPy/MaixCDK 的 WDT::stop() 是空实现（打 "
         f"'this operation is not supported' 却 return 0）; raw {detail}。"
         f"规避: project_config.yaml 设 wdt_enabled: false")
@@ -676,7 +656,7 @@ def _load_exit_icon():
 def _apply_stream_policy(coordinator, config: dict) -> None:
     """把 project_config.yaml `gks_stream:` 段注入 coordinator（缺段即用类内默认）。
 
-    默认即结果驱动（每帧结果立即推）; 现场若发现主站吃不下这个速率，改配置即可
+    默认就是每帧结果立即推; 现场若发现主站吃不下这个速率，改配置即可
     回退到旧的 interval 限速，不必重新烧固件。
     """
     section = config.get("gks_stream") or {}
@@ -689,10 +669,10 @@ def _apply_stream_policy(coordinator, config: dict) -> None:
 def _apply_render_policy(vision_manager, config: dict) -> None:
     """把 `competition_mode:` 注入 VisionManager（缺省即渲染全开 = 台架行为）。
 
-    比赛模式关掉的是**显示侧**每帧开销: HUD 约 20 次 maix draw_string/draw_rect
+    比赛模式关掉的是显示侧每帧开销: HUD 约 20 次 maix draw_string/draw_rect
     （CAM1 纯软件渲染）+ wifi JPEG 编码, 都在视觉线程取帧→处理→推流的同一拍里串行跑。
 
-    **日志与协议推流完全不受影响**: log_print 走独立写盘线程, coordinator 的
+    日志与协议推流完全不受影响: log_print 走独立写盘线程, coordinator 的
     UART DATA_STREAM 走主循环, 两者都不经过渲染路径。
     """
     if vision_manager is None:
@@ -726,7 +706,7 @@ def _project_config() -> dict:
 
 
 def _apply_perf_log_config(cfg, observability=None) -> None:
-    """把 `perf_log:` / `observability:` 配置应用到 log_util 层的闸门。
+    """把 `perf_log:` / `observability:` 配置应用到 log_util 层的开关。
 
     两种写法都认（老配置不改也不炸）:
         perf_log: true / false                     # 布尔: 全开 / 按默认组静音
@@ -746,7 +726,7 @@ def _apply_perf_log_config(cfg, observability=None) -> None:
             set_perf_log(bool(cfg.get("enabled", True)),
                          None if names is None else list(names))
         if isinstance(observability, dict):
-            # ⚠ 只认真正存在的键: 空字典/无关键必须是 no-op, 不能把闸门重置回全开。
+            # 只认真正存在的键: 空字典/无关键必须是 no-op, 不能把开关重置回全开。
             if "perf" in observability:
                 perf = bool(observability["perf"])
             if "perf_detail" in observability:
@@ -756,13 +736,12 @@ def _apply_perf_log_config(cfg, observability=None) -> None:
             set_perf_gate(perf, detail)
             set_perf_interval(interval)
             if perf is False:
-                # ⚠ observability.perf=false 连心跳行一起静音（DATA_STREAM/WDT/MEM）。
+                # observability.perf=false 连心跳行一起静音（DATA_STREAM/WDT/MEM）。
                 set_perf_log(False)
     except Exception as e:
         log_print(f"[PERFLOG] 配置应用失败, 保持全开: {type(e).__name__}: {e}")
         return
-    # `perf_log=` 必须是三态: 只静音 `[WDT]` 时 `perf_log_enabled()` 也是 False,
-    # 直接打 MUTED 会让人以为全静音了。`interval=` 打**生效值**（被 clamp 时不撒谎）。
+    # perf_log 是三态: 只静音 [WDT] 时 perf_log_enabled() 也是 False, 别误报全静音。
     log_print(f"[PERFLOG] perf_log={perf_log_summary()} "
               f"observability.perf={'ON' if perf_enabled() else 'OFF'} "
               f"perf_detail={'ON' if perf_detail_enabled() else 'OFF'} "
@@ -775,17 +754,14 @@ def main():
     config = _project_config()
     start_log_writer()
 
-    # ---- 高频性能日志闸门（project_config.yaml `perf_log:`）----
-    # 闸门在 log_util 层, 设完之后所有线程的 `[PERF]`/`[MEM]`/`[WDT]` 等高频行
-    # 都被吞掉, 台架调试只剩事件类日志。
-    # 兼容旧的布尔写法 (`perf_log: true/false`) 与新的映射写法;
-    # `observability.perf/perf_detail` 优先决定 `[PERF] ` 行。
+    # ---- 高频性能日志开关（project_config.yaml perf_log:）----
+    # log_util 层吞掉 [PERF]/[MEM]/[WDT] 等高频行; 兼容旧布尔写法与新映射写法,
+    # observability.perf/perf_detail 优先决定 [PERF] 行。
     _apply_perf_log_config(config.get("perf_log"), config.get("observability"))
 
     # ---- 调试台（rich TUI）----
-    # 决策权在 **run.py::_init_debug_console()**: 它在导入 app.main 之前读
-    # `debug_console_enabled`, 禁用时**连 rich 都不导入**（CAM1 只有 128MB 用户内存）。
-    # 这里只处理"配置说关、但它确实已经被导入并启动过"这种不一致情况。
+    # run.py 在导入本模块前按 debug_console_enabled 决定是否导入 rich;
+    # 这里只处理"配置说关但已被启动"的不一致情况。
     if config.get("debug_console_enabled", True):
         dc_mod = sys.modules.get("utils.debug_console")
         if dc_mod is not None:
@@ -801,7 +777,7 @@ def main():
                 log_print(f"[DCONSOLE] 关闭失败: {type(e).__name__}: {e}")
 
     # 看门狗是否武装: 由 project_config.yaml `wdt_enabled` 决定（缺键用默认,
-    # CAM1 默认 **False** —— 详见 _WDT_ENABLED_DEFAULT 的注释）。
+    # CAM1 默认 False —— 详见 _WDT_ENABLED_DEFAULT 的注释）。
     wdt_feed = _make_wdt_feed(bool(config.get("wdt_enabled", _WDT_ENABLED_DEFAULT)))
 
     from framework.event_bus import EventBus
@@ -856,7 +832,7 @@ def main():
     coordinator.set_ai(machine.ai)
     _apply_stream_policy(coordinator, config)
     _apply_render_policy(vision_manager, config)
-    # ⚠ 全系统唯一的 display.show() 出口: MAIN 与调试页共用
+    # 全系统唯一的 display.show() 出口: MAIN 与调试页共用
     presenter = _make_presenter(machine.display)
     # competition_mode 关推流（归 presenter 管）
     presenter.set_policy(stream_enabled=not bool(config.get("competition_mode")))
@@ -881,7 +857,7 @@ def main():
     factory = DebugPageFactory(machine, vision_manager, pages)
     factory.set_presenter(presenter)
     factory.set_laser_sender(_send_laser)
-    # 调试页上屏与 MAIN 页同口径（同一组配置键）; 缺键即保持默认行为
+    # 调试页上屏与 MAIN 页用同一组配置键; 缺键即保持默认行为
     factory.set_display_policy(config.get("display_enabled"),
                                config.get("display_show_interval_ms"))
     ui = MainUiShell(machine, pages, factory, vision_manager, presenter=presenter)
@@ -889,9 +865,7 @@ def main():
     ui.set_display_policy(config.get("display_enabled"),
                           config.get("display_show_interval_ms"))
     if vision_manager is not None:
-        # [PERF] vision 的静音统一由 log_util 层的 perf_log 闸门处理（见
-        # _apply_perf_log_config）。这里保留 set_perf_log(True) 作为**兜底**:
-        # 万一闸门没被配置（缺键）, 视觉线程的分项计时照旧输出。
+        # [PERF] vision 静音由 log_util 层处理; 这里 set_perf_log(True) 是缺键时的保底。
         vision_manager.set_perf_log(True)
 
     coordinator.start()
@@ -903,8 +877,8 @@ def main():
             display_callback=ui.display_callback,
         )
     finally:
-        factory.send_laser_off()   # 激光兜底关（os._exit 路径已单独处理）
-        # ⚠ **必须在任何退出路径上 disarm 硬件看门狗**（含异常路径与
+        factory.send_laser_off()   # 收尾时关激光（os._exit 路径已单独处理）
+        # 必须在任何退出路径上 disarm 硬件看门狗（含异常路径与
         # `app.need_exit()` 正常收工），否则每次退出后 ~10s 设备重启。
         _wdt_stop()
 

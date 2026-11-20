@@ -33,7 +33,7 @@ def _local_ip() -> str:
 
 
 class JpegStreamer:
-    """HTTP JPEG 推流。**仅 maix 平台可用**（依赖 maix.http + Image.to_jpeg）。"""
+    """HTTP JPEG 推流。仅 maix 平台可用（依赖 maix.http + Image.to_jpeg）。"""
 
     def __init__(self, fps: float = 5.0, quality: int = 80,
                  max_width: int = 320) -> None:
@@ -43,7 +43,7 @@ class JpegStreamer:
         self._thread: Optional[threading.Thread] = None
         self._queue: deque = deque(maxlen=_QUEUE_MAX)
         self._lock: threading.Lock = threading.Lock()
-        # 推流节奏与编码成本闸门（与显示频率解耦）
+        # 推流节奏与编码开销限制（不受显示频率影响）
         self._min_interval_s = (1.0 / fps) if fps and fps > 0 else 0.0
         self._last_push_ts = 0.0
         self._quality = int(quality)
@@ -165,7 +165,7 @@ class JpegStreamer:
     def push_frame(self, img) -> None:
         """喂一帧。按 fps 时间节流；deque(maxlen=1) 丢旧，永不阻塞生产者。
 
-        就绪判据用 `_server`（而非 `_is_running`）: 后者在 srv.start() 之后才置位,
+        判断就绪的条件用 `_server`（而非 `_is_running`）: 后者在 srv.start() 之后才置位,
         启动早期送达的帧会被静默丢弃, 表现为浏览器永远空白。
         """
         if self._server is None:

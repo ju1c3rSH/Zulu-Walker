@@ -1,7 +1,7 @@
 # 视觉数据流坑记：FrameResult 回调不触发
 
 > 最后更新: 2026-07-17
-> ⚠️ **历史文档说明**：本文记载的 `FrameResult` → `_on_vision_results` 回调路径是**重构前的历史路径**。
+> **历史文档说明**：本文记载的 `FrameResult` → `_on_vision_results` 回调路径是**重构前的历史路径**。
 > 当前架构已改为 `_pending_results` deque 传递视觉结果，`MissionCoordinator` 不再订阅 `FrameResult` 事件。
 > 详见 `docs/architecture/thread_tick_topology.md` §3-4。
 >

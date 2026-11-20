@@ -23,9 +23,9 @@ panzer/GetData ↔ panzer_Brain/Middlewares/serial_protocol + interrupt.c）:
 | 0x24 | DATA_STREAM | 从→主 | [seq, data_id, sub_payload(8B)]             |
 | 0x25 | CMD_LASER   | 从→主 | [on_off, rsv x7]（v2.3 附录, 见 docs/competition/gks_laser_ctrl_addendum_v2.3.md） |
 
-订阅语义（USART1 v1.3 扩展）:
+订阅规则（USART1 v1.3 扩展）:
 - 5B 完整订阅帧携带任务码（爆色/靶色/形状 随订阅下发）;
-- 短帧(1~4B) = 重订阅，沿用上次任务码（幂等，不得清视觉锁存）;
+- 短帧(1~4B) = 重订阅，沿用上次任务码（重复发也不要清视觉锁存）;
 - 换 data_id 或换任务码才允许清锁存（reset_task_latch）。
 - ACK 字面 [data_id, 60, 10]（Brain on_cam1 不消费 ACK，照发保协议一致性）。
 
@@ -190,8 +190,8 @@ def build_cmd_stop_frame() -> bytes:
 def build_cmd_laser_frame(on: bool) -> bytes:
     """Build TYPE_CMD_LASER frame [on_off, rsv x7]; Brain 写 PA4, 无应答。
 
-    电平语义: 激光**高有效**, `on=True` -> PA4 拉高 = 发射, `on=False` -> PA4 拉低
-    = 熄灭。只改电平解释, **帧字节不变**(on_off 仍是 0x01/0x00), 测试向量保持
+    电平规定: 激光高有效, `on=True` -> PA4 拉高 = 发射, `on=False` -> PA4 拉低
+    = 熄灭。只改电平解释, 帧字节不变(on_off 仍是 0x01/0x00), 测试向量保持
     `...01...8F 91` / `...00...C8 42`。
     """
     payload = bytes([0x01 if on else 0x00]) + b"\x00" * 7

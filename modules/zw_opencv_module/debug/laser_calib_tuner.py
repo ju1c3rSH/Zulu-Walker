@@ -2,7 +2,7 @@
 """激光校准(LASER)调试页 — 红点检测 + err 零点校准。
 
 职责: Laser 按钮经 0x25 CMD_LASER 帧控制 Brain 板载激光(无应答); 页内全分辨率
-分层检测红色激光点(白核+红环+光晕; 旧"绝对红"判据 + "白核+淡晕"签名入口, 见下),
+分层检测红色激光点(白核+红环+光晕; 旧"绝对红"判断条件 + "白核+淡晕"签名入口, 见下),
 命中画十字+实时坐标;
 CALIB 把当前点 x 存为 TARGET err 零点(laser_cx, 立即生效), RESET 回画面中心,
 SAVE 落盘 /my-threshold/my_laser_calib.txt(主程序 mtime 热重载)。
@@ -11,16 +11,16 @@ Line 按钮切换手动校零竖线(画面中心 x): 检测失效时物理调整
 
 检测分层(每层堵上一层的失效模式, 依据 laser 点成像调研):
   1. 候选提取: R>=lum_min 且 R-max(G,B)>=dom_min(红环满足, 白核三通道同饱和被排除);
-  2. 颜色确认: dom_min 判据天然排除白墙/灯光高光(白色 R-G≈0);
+  2. 颜色确认: dom_min 判断条件天然排除白墙/灯光高光(白色 R-G≈0);
   3. 质心校正: R 通道加权质心; 权重和为 0 时退回连通域几何质心。
-激光点仅 3~30px, **必须全分辨率**运行, 不进主管线(主管线暂停期间页内自算)。
+激光点仅 3~30px, 必须全分辨率运行, 不进主管线(主管线暂停期间页内自算)。
 
 亮环境/白背景签名扩展(本页只用于标定激光零点, 与 TARGET 主链路无关):
   白背景 + ~50cm 远距时光斑过曝泛白成"亮度极高的白点 + 一点红晕", 晕的
   dom≈25~45 落在逐像素 dom_min=40 门限两侧, 随 AE 抖动/噪声概率性丢失;
-  暗背景/近距 dom 富余, 旧判据本来就够。
+  暗背景/近距 dom 富余, 原来的条件本来就够。
   签名方案: 激光点的指纹 = "三通道全饱和的白核(R,G,B>=prom_min) + 核周淡红晕"。
-    1. 第二入口: 白核掩码膨胀 halo_pad 后, 允许核周边亮像素(R>=lum_min)免红判据
+    1. 第二入口: 白核掩码膨胀 halo_pad 后, 允许核周边亮像素(R>=lum_min)不用再要求红色
        进候选 —— 白化光斑的芯+晕整体进掩码。halo_pad=0 或帧内无白核时整段跳过,
        掩码与旧实现逐像素一致(兼容开关)。
     2. 逐块确认: bbox 外扩 halo_pad 的窗口内 max(dom)>=dom_min(强红, 近距) 或
@@ -157,8 +157,8 @@ class GksLaserCalibTuner:
     def detect_dot(self, frame_bgr):
         """分层检测红激光点 -> (lx, ly, area) | None。参数来自 cfg["laser"]。
 
-        判据链见文件头: 旧"绝对红"入口 + "白核+淡晕"签名入口(默认开启,
-        halo_pad=0 整体关闭回到旧判据)。检出时把 core/dom 实测值存到
+        判断流程见文件头: 旧"绝对红"入口 + "白核+淡晕"签名入口(默认开启,
+        halo_pad=0 整体关闭回到原来的条件)。检出时把 core/dom 实测值存到
         self._last_stats 供 HUD 读数 —— 台架据此定 prom_min/dom_faint。
         """
         if frame_bgr is None:
@@ -177,12 +177,8 @@ class GksLaserCalibTuner:
         h, w = frame_bgr.shape[:2]
         b, g, r = frame_bgr[:, :, 0], frame_bgr[:, :, 1], frame_bgr[:, :, 2]
         lum_term = cv2.inRange(r, lum_min, 255)
-        # cv2.subtract 在 uint8 上会**饱和到 0**, 所以它只保留 r-max(g,b) 的非负部分。
-        # 判据 r-max(g,b) >= dom_min 分两种情况才严格等价于原来的 int16 版本:
-        #   dom_min >= 1: 饱和丢掉的负数本来就 < 1 <= dom_min, 不可能命中 -> inRange 够用;
-        #   dom_min == 0: 原判据要求 r-max(g,b) >= 0 即 **r >= max(g,b)**,
-        #                 而饱和后的 0 会让 r < max(g,b) 的像素也通过 0>=0 —— 会放宽判据。
-        #                 故 lo==0 必须显式比较, 否则纯白/偏蓝像素会混进候选（已实测复现）。
+        # cv2.subtract 在 uint8 上饱和到 0: dom_min>=1 时负数本就命中不了, inRange 够用;
+        # dom_min==0 时饱和会让 r<max(g,b) 的像素也通过 0>=0, 必须显式比较防误收。
         lo = max(0, int(dom_min))
         gb = cv2.max(g, b)
         if lo > 0:
@@ -190,7 +186,7 @@ class GksLaserCalibTuner:
         else:
             dom_term = cv2.compare(r, gb, cv2.CMP_GE)
         # ---- 签名第二入口: 三通道全饱和的白核膨胀 halo_pad 后, 核周边亮像素免红
-        # 判据进候选 —— 远距白化光斑(白核+淡晕)由此复活。halo_pad=0 或帧内无白核时
+        # 判断条件进候选 —— 远距白化光斑(白核+淡晕)由此复活。halo_pad=0 或帧内无白核时
         # 整段跳过, 掩码与旧实现逐像素一致。白核膨胀区这道门本身就是抗噪闸:
         # 白墙/纹理噪声没有白核, 不会因签名入口涌入候选。
         if halo_pad > 0:
@@ -267,7 +263,7 @@ class GksLaserCalibTuner:
             —— 远距白化光斑。窗口是 bbox 联合外扩, 晕在部件内还是部件外都覆盖,
             不依赖"晕进没进掩码"的几何巧合。
 
-        lo==0(dom_min=0) 时 b1 恒过 —— 与旧实现一致: 那时绝对红判据是
+        lo==0(dom_min=0) 时 b1 恒过 —— 与旧实现一致: 那时绝对红的条件是
         r>=max(g,b) 的逐像素门限, 已由候选掩码承担, 这里不再重复收紧。
         """
         h, w = frame_bgr.shape[:2]
@@ -368,7 +364,7 @@ class GksLaserCalibTuner:
         self._guide_on = not self._guide_on
 
     def on_leave(self) -> None:
-        """切页/退出兜底: 激光开着就自动发关帧（多条路径之一, 幂等）。"""
+        """切页/退出时的收尾: 激光开着就自动发关帧（多条路径之一, 重复调也没事）。"""
         if not self._laser_on:
             return
         self._laser_on = False
@@ -520,7 +516,7 @@ class GksLaserCalibTuner:
         return self._stop
 
     def laser_is_on(self) -> bool:
-        """供退出兜底查询（factory.send_laser_off）; 未开过不发关帧。"""
+        """退出收尾时会查这里（factory.send_laser_off）; 未开过不发关帧。"""
         return self._laser_on
 
     # ---- helpers ----
@@ -546,7 +542,7 @@ class GksLaserCalibTuner:
     def _to_maix(self, bgr):
         """BGR numpy -> FMT_RGB888 原生画布, 免 show() 内部整帧转换。"""
         # RGB 字节本就正确; ascontiguousarray 只保证连续(防 pybind11 拒收/镜像)。
-        # ⚠ 若去掉 copy=True, 负步长视图会 OOB 或整帧镜像 —— 不是换色通道。
+        # 若去掉 copy=True, 负步长视图会 OOB 或整帧镜像 —— 不是换色通道。
         import maix.image
         rgb = np.ascontiguousarray(bgr[:, :, ::-1])
         return maix.image.cv2image(rgb, bgr=False, copy=True)
@@ -564,7 +560,7 @@ class GksLaserCalibTuner:
             self._diag(f"rect@({x},{y})", e)
 
     def _line(self, img, x1, y1, x2, y2, color, thickness=1):
-        """draw_line 优先; 固件不支持时降级为 1px rect(复用 _rect 自身的兜底)。"""
+        """draw_line 优先; 固件不支持时改用 1px rect(复用 _rect 自身的保底)。"""
         try:
             img.draw_line(x1, y1, x2, y2, color=color, thickness=thickness)
         except Exception:

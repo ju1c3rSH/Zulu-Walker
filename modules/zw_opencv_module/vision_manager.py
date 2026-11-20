@@ -61,7 +61,7 @@ class VisionManager:
         # 交给显示线程"。见 _update_display_frame。
         self._render_enabled = True
 
-        # HUD 叠加的**绘制**节流（秒）。0 = 每帧都画（旧行为）。
+        # HUD 叠加的绘制节流（秒）。0 = 每帧都画（旧行为）。
         # 为什么需要: HUD 画在原始 maix Image 上, 而那张图正是 find_blobs / YOLO
         # 直接吃的 same-frame 数据。每帧画 ~20 次 maix draw_string/draw_rect
         # （CAM1 纯软件渲染, TARGET 还多 6 个刻度标签）都在视觉线程里、与识别
@@ -162,10 +162,10 @@ class VisionManager:
                 profiler.start("total")
                 _, all_results, any_fresh = self.process_all()
 
-                # ⚠ 结果入队必须在 _update_display_frame() **之前**。
+                # 结果入队必须在 _update_display_frame() 之前。
                 # 台架模式(render 开)下 HUD 要画二十几次 maix draw_string/draw_rect,
                 # 这段绘制原本插在"find_blobs 已出结果"和"主循环能看到结果"之间,
-                # 纯粹白吃时延。顺序调换零风险, 结果内容与语义都不变。
+                # 纯粹白吃时延。顺序调换零风险, 结果内容和判定都不变。
                 if self._event_bus:
                     self._pending_results.append(all_results)
 
@@ -205,17 +205,17 @@ class VisionManager:
           ① loop = 帧周期（墙上）。loop - body = 视觉线程 sleep 等帧的余量。
           ② read / conv / task / disp = 分项（墙上）。
           ③ 每个分项后面的 `cpu` = 该项真正消耗的 CPU（thread_time）。
-             **墙上大而 cpu 小 = 在等（硬件/GIL）; 两者都大 = 真在算。**
+             墙上大而 cpu 小 = 在等（硬件/GIL）; 两者都大 = 真在算。
              这是回答"到底谁最耗性能"的唯一依据 —— 只看墙上是分不出
              "驱动调用在等硬件"和"框架在烧 CPU"的。
           ④ `自身cpu` = body_cpu - (read_cpu + tasks_cpu + disp_cpu)
              = 视觉线程这一轮里、除取帧/识别/显示之外的 CPU 开销,
-             即**框架自身的编排开销**（process 包壳、结果入队、profiler、
+             即框架自己花的时间（process 包装、结果入队、profiler、
               本打点函数自身、sleep(0) 的调度）。
              它接近 0 -> 瓶颈不在框架, 在驱动调用与 GIL, 别去重构框架;
              它很大  -> 才轮到怀疑框架本身。
-          ⑤ `none=` 是**本窗口内**无新帧的帧数, 分母看行尾 `win=`（默认 10s）;
-             `Hz` / `avg` / `每秒 CPU` 本身已按窗口长度归一, 口径与 1s 时代一致。
+          ⑤ `none=` 是本窗口内无新帧的帧数, 分母看行尾 `win=`（默认 10s）;
+             `Hz` / `avg` / `每秒 CPU` 本身已按窗口长度归一, 算法跟 1s 时代一样。
         """
         if not self._perf_log:
             return
@@ -305,7 +305,7 @@ class VisionManager:
     def set_render_enabled(self, enabled: bool) -> None:
         """比赛模式开关: False = 跳过 HUD 叠加与 JPEG 推流（推流已迁到 presenter）。
 
-        **只影响显示, 不影响日志与协议推流。** 视觉线程里被跳过的只有
+        只影响显示, 不影响日志与协议推流。 视觉线程里被跳过的只有
         `DisplayHUD.draw()`（约 20 次 maix draw_string/draw_rect, CAM1 纯软件
         渲染, TARGET 模式还多 6 个误差刻度标签）。
         `log_print` 走独立写盘线程, coordinator 的 UART 推流走主循环,
@@ -340,9 +340,9 @@ class VisionManager:
                 continue
             if self._render_enabled:
                 # HUD 绘制按 _hud_draw_interval_s 节流（0 = 每帧）。
-                # ⚠ 节流跳过绘制的帧**必须连 _display_frame 一起跳过**（只发布
+                # 节流跳过绘制的帧必须连 _display_frame 一起跳过（只发布
                 # 画过 HUD 的帧）—— 否则会出现"46Hz 发布 vs 10Hz 画 HUD",
-                # 显示线程 show 到的大半是**裸帧**, 真机表现就是"顶部信息时有时无"。
+                # 显示线程 show 到的大半是裸帧, 真机表现就是"顶部信息时有时无"。
                 # 发布节流到与绘制同频后, show 到的每一帧都带 HUD;
                 # 触摸退出判定只读宽高, 不受影响。
                 _now = time.monotonic()
@@ -359,7 +359,7 @@ class VisionManager:
                     self._draw_exit_icon(raw_img)
                     self._display_src.publish(raw_img)
             else:
-                # 比赛模式: 无 HUD 可画, 每帧照旧发布（保持"最新原始帧"语义）
+                # 比赛模式: 无 HUD 可画, 每帧照旧发布（保持"最新原始帧"规则）
                 self._display_src.publish(raw_img)
             return
 
@@ -370,7 +370,7 @@ class VisionManager:
     def set_paused(self, paused: bool) -> None:
         """暂停/恢复采集处理（调参页独占相机时置 True）。
         暂停期间不读相机、不 produce 新结果, WDT 照常喂;
-        结果 >1s 陈旧由 coordinator 的归零心跳逻辑兜底。"""
+        结果 >1s 陈旧由 coordinator 的归零心跳逻辑保底。"""
         self._paused = bool(paused)
 
     def get_pipeline_camera(self):

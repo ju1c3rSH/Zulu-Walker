@@ -18,12 +18,12 @@ _FALLBACK_W, _FALLBACK_H = 552, 368
 class MaixCam1Display:
     """MaixCAM / MaixCAM-Pro 显示。
 
-    构造签名按 CAM1 固件能力降级：新固件支持 `open=True`，老固件的
+    构造签名按 CAM1 固件支持程度逐级简化：新固件支持 `open=True`，老固件的
     `Display()` 不认该 kwarg（官方示例即`display.Display()`），故先试
     带 kwarg 的、失败退回无参。MaixCAM-Pro 有触摸屏（552x368），调参页
     与四页 KEY_OK 路由因此可原样保留。
 
-    ⚠ **与相机同款的白跑风险（2026-10-08 打点）**: `except TypeError: pass`
+    与相机同款的白跑风险（2026-10-08 打点）: `except TypeError: pass`
     之后会继续尝试下一级。若 `Display(open=True)` 是"已经建好显示上下文才
     抛 TypeError"，重试就是重复初始化。逐级打点后可见实际试了几次。
     """
@@ -78,7 +78,7 @@ class MaixCam1Display:
         )
 
     def width(self) -> int:
-        """⚠ 打不开时退回面板物理尺寸而非 0: 0 会让调试页 resize(0,0) 直接失败。"""
+        """打不开时退回面板物理尺寸而非 0: 0 会让调试页 resize(0,0) 直接失败。"""
         try:
             return self._disp.width() or _FALLBACK_W
         except Exception:

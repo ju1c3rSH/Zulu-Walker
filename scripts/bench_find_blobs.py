@@ -4,12 +4,12 @@ CAM1 find_blobs 台架测量 + 打靶误识别诊断 (2026-10-08)
 
 两件事一起做:
   1. 提速验证: 排爆"三色串行 3 次全帧扫" vs "多阈值 1 次 + stride" 的实测耗时差。
-     收益 1 (多阈值一次调用) 与收益 2 (x_stride/y_stride) 的兑现幅度**只能实测** ——
+     收益 1 (多阈值一次调用) 与收益 2 (x_stride/y_stride) 的兑现幅度只能实测 ——
      CAM1 算力比 CAM2 弱一个量级, CAM2 的经验不能沿用 (同 scan_scale 的教训)。
-  2. 误识别诊断: 在target ROI 内把**每个**候选 blob 的 pixels/cx/roundness/
+  2. 误识别诊断: 在target ROI 内把每个候选 blob 的 pixels/cx/roundness/
      density 全部打出来, 直接看是真环一个还是"背景大片红 + merge 合并框"。
-     ⚠ 靶标是**圆环** —— roundness 对环 = (1-k)/(1+k) (k=内径比), k=0.5 时只有
-        0.333, **比方块的 0.785 还低**; 别拿实心球的直觉读这两个数。
+     靶标是圆环 —— roundness 对环 = (1-k)/(1+k) (k=内径比), k=0.5 时只有
+        0.333, 比方块的 0.785 还低; 别拿实心球的直觉读这两个数。
 
 用法 (设备上):
     python scripts/bench_find_blobs.py            # 默认 40 帧/变体
@@ -19,16 +19,16 @@ CAM1 find_blobs 台架测量 + 打靶误识别诊断 (2026-10-08)
 只依赖 maix + 标准库, 不 import 项目代码 —— 设备上跑不牵扯模块路径/配置解析,
 阈值/LAB 直接写死在这里, 避免"配置文件读的是相机端还没同步的旧值"这种干扰。
 
-⚠ 阈值来源: 取自仓库 eod_config.yaml 的**兜底初值**, 不是设备
+阈值来源: 取自仓库 eod_config.yaml 的备用初值, 不是设备
 /my-threshold/my_64threshold.txt (那份在 CAM1 上是另一套, 见 bench 输出对照)。
-本脚本的目的不是标定, 是**相对**比较各变体耗时 —— 用哪套阈值对相对值影响很小。
+本脚本的目的不是标定, 是相对比较各变体耗时 —— 用哪套阈值对相对值影响很小。
 """
 import argparse
 import time
 
 from maix import camera, image
 
-# ---- 与 eod_config.yaml / gks_task_processor._DEFAULT_CONFIG 一致的兜底 LAB ----
+# ---- 与 eod_config.yaml / gks_task_processor._DEFAULT_CONFIG 一致的保底 LAB ----
 LAB_RED = [0, 80, 40, 80, 10, 80]
 LAB_GREEN = [25, 85, -80, -25, 30, 85]
 LAB_BLUE = [0, 60, -8, 45, -75, -25]
@@ -169,7 +169,7 @@ def main():
     except TypeError as e:
         supports_stride = False
         supports_multi = "thresholds" in str(e) is False
-        print(f"[bench] ⚠ 多阈值/x_stride 不被接受: {e}")
+        print(f"[bench] 多阈值/x_stride 不被接受: {e}")
         print("[bench]   -> 固件较老, 收益 1/2 需先升级 MaixPy 才能吃到")
     else:
         print(f"[bench] 多阈值 OK, code() = {_blob_code(b[0]) if b else 'N/A'} "
@@ -235,7 +235,7 @@ def main():
                                    pixels_threshold=TARGET_PIXELS_TH, **kw)
             if not blobs:
                 continue
-            # 复刻 gks_task_processor 的选取口径: 纯按 pixels 最大
+            # 复刻 gks_task_processor 的选取标准: 纯按 pixels 最大
             best = max(blobs, key=lambda b: _safe(lambda: b.pixels(), 0))
             key = _safe(lambda: best.cx(), -1)
             seen.setdefault(key // 20 * 20, 0)     # 按 20px 分桶看 cx 分布
@@ -250,7 +250,7 @@ def main():
                                 sorted(seen.items()))
             print(f"    >>> 选中块 cx 分布: {buckets}")
             if len(seen) > 1:
-                print("    >>> ⚠ cx 在多个远距簇间跳 -> 确认误识别, "
+                print("    >>> cx 在多个远距簇间跳 -> 确认误识别, "
                       "先改 merge=False 再看是否消失")
         else:
             print("    >>> 无候选 (目标不在 ROI/阈值不匹配)")

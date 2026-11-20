@@ -15,7 +15,7 @@ class DisplaySource:
 
     def __init__(self) -> None:
         self._handle: Any = None
-        self._seq: int = -1        # ⚠ -1 = 还没发布过; 0 会被当成"已取过"
+        self._seq: int = -1        # -1 = 还没发布过; 0 会被当成"已取过"
         self._taken: int = -1
 
     def publish(self, handle: Any) -> int:

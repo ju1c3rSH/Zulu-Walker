@@ -2,16 +2,16 @@
 """人质(RESCUE)调试页 — YOLO 参数触屏调参。
 
 conf_th/iou_th/x_crop_px 三条滑条即时写 GksTaskProcessor 运行时参数
-（process() 立即生效）; 顶栏 **SAVE** 把当前值落盘到
+（process() 立即生效）; 顶栏 SAVE 把当前值落盘到
 /my-threshold/my_rescue_params.txt（key=value 行）—— 主程序按 mtime 热重载
-（不清锁存, 语义同 my_64threshold.txt）, eod_config.yaml 保持只读不毁注释。
+（不清锁存, 做法跟 my_64threshold.txt 一样）, eod_config.yaml 保持只读不毁注释。
 RESET 回本次进页时的加载值（yaml + 覆盖文件合并结果）。模型状态来自注入的
 ai provider（framework Machine.ai）: 显示 active_model/labels 数量, 未加载红字。
 画面预览: 本页 tick 由 main.py 喂原始相机帧, 页内自行调用注入的 AI HAL
-跑一次 detect()（运行参数 conf/iou 与 x_crop 过滤口径同
+跑一次 detect()（运行参数 conf/iou 与 x_crop 过滤标准沿用
 GksTaskProcessor._process_rescue）并把检测框叠加到预览上 —— 调试页独占
 相机期间主管线已暂停, 页内推理是 YOLO 参数唯一的实时验证途径, 不影响
-coordinator 的归零心跳兜底。
+coordinator 的归零心跳补上。
 检出日志（逐框 label:score 标签）之外, 主流程侧的"变化才打"汇总日志见
 GksTaskProcessor._log_rescue_dets。
 绘图颜色规范同 threshold_tuner.py 文件头说明。
@@ -127,7 +127,7 @@ class GksRescueTuner:
         """页内跑一次 YOLO 推理（参数由处理器的实时 config 提供）。
 
         AI 缺失/未加载/推理失败时返回 [], 预览仍显示原始画面,
-        模型状态由顶部栏红字说明 —— 页面自身不因 AI 状态降级崩溃。
+        模型状态由顶部栏红字说明 —— 页面自身不会因为 AI 状态变差而崩。
         """
         ai = self._get_ai() if callable(self._get_ai) else None
         if ai is None or not getattr(ai, "loaded", False) or frame_bgr is None:
@@ -162,7 +162,7 @@ class GksRescueTuner:
         for det in dets:
             label = labels[det.class_id] if det.class_id < len(labels) else ""
             shape_num = int(shape_map.get(label, 0))
-            # 颜色语义与 _process_rescue hits 对齐:
+            # 颜色含义跟 _process_rescue hits 一致:
             # 计入坑位的形状 = 橙色, 未映射标签 = 青色, x_crop 过滤 = 灰色
             if x_crop > 0 and det.x > x_crop:
                 color, tag = self._C["gray"], "X"
@@ -178,7 +178,7 @@ class GksRescueTuner:
                        color, 0.9)
 
     def _draw_latch_status(self, img, disp_h) -> None:
-        """坑位锁存进度行（坐标口径同 _process_rescue 的锁存数据）。"""
+        """坑位锁存进度行（坐标跟 _process_rescue 的锁存数据用同一套标准）。"""
         try:
             processor = self._get_processor()
             ps = processor.pit_status if processor is not None else {}
@@ -372,7 +372,7 @@ class GksRescueTuner:
     def _to_maix(self, bgr):
         """BGR numpy -> FMT_RGB888 原生画布, 免 show() 内部整帧转换。"""
         # RGB 字节本就正确; ascontiguousarray 只保证连续(防 pybind11 拒收/镜像)。
-        # ⚠ 若去掉 copy=True, 负步长视图会 OOB 或整帧镜像 —— 不是换色通道。
+        # 若去掉 copy=True, 负步长视图会 OOB 或整帧镜像 —— 不是换色通道。
         import maix.image
         rgb = np.ascontiguousarray(bgr[:, :, ::-1])
         return maix.image.cv2image(rgb, bgr=False, copy=True)

@@ -6,7 +6,7 @@ import numpy as np
 
 from framework.display.types import DisplayCaps, PixelFormat
 
-# 无窗口/未上过帧时的画布兜底（与相机默认分辨率一致）。
+# 无窗口/未上过帧时的画布保底（与相机默认分辨率一致）。
 _DEFAULT_W, _DEFAULT_H = 640, 480
 
 

@@ -16,7 +16,7 @@ class JpegTap(BaseTap):
         self._streamer = streamer
 
     def attached(self) -> bool:
-        """无客户端连接时不编码 —— 这是推流唯一的成本闸门。"""
+        """无客户端连接时不编码 —— 这是推流唯一的编码开销限制。"""
         st = self._streamer
         if st is None or not self._attached:
             return False

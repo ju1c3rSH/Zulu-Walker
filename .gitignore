@@ -22,11 +22,10 @@ s.log
 s2.log
 *.log
 
-# Local-only design notes and battery HAL tests (not for version control)
+# Local-only design notes and tests (not for version control)
 docs/architecture/battery_hal_hud.md
 docs/architecture/logging_pipeline.md
-tests/test_battery_hal.py
-tests/test_battery_sampler.py
+tests/
 
 # Agent scratch scripts
 .tmp_*.py

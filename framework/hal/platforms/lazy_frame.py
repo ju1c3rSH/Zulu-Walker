@@ -1,42 +1,35 @@
 # -*- coding: utf-8 -*-
-"""LazyFrame — 延迟把 maix Image 转成 BGR numpy 的透明代理。
+"""LazyFrame — 把 maix Image 转成 BGR numpy 这件事，拖到真要用像素时才做。
 
-## 为什么需要
+设备端相机原本每帧都调 `maix.image.image2cv(raw, copy=True)`，640x480x3 一次拷
+921KB，台架真机实测要 9~16ms，是 find_blobs 之外最大的一块。多数时候这份拷贝白做了：
+TARGET/EXPLOSIVE 走 C++ `find_blobs`，直接吃 `camera.last_raw`（零拷贝）；RESCUE 走
+`_raw=True`，也直接吃 maix Image。只有 maix 不可用时回退 cv2，以及调参页，才真需要
+这份 BGR numpy。
 
-设备端相机每帧都做 `maix.image.image2cv(raw, copy=True)` —— 640x480x3 一次拷
-921KB, 台架真机实测这份拷贝占 9~16ms, 是除 find_blobs 之外最大的一块。但它大多数
-时候是白做的: TARGET/EXPLOSIVE 走 C++ `find_blobs` 直接吃 `camera.last_raw`
-(零拷贝), RESCUE 走 `_raw=True` 也直接吃 maix Image。这份 BGR numpy 只服务
-cv2 回退路径(maix 不可用) 与调参页 —— 真机上 maix 可用时, 这份拷贝属于"算了不用"。
+所以相机改成交出一个 `LazyFrame` 代理，不再一开始就转换：
 
-## 做法
+  · `.shape` / `.ndim` / `.size` / `.dtype` 从 maix Image 的元数据
+    (`width()/height()`) 直接给，零拷贝，处理器里的 `h, w = frame.shape[:2]` 白拿。
+  · 切片、`__array__`、`.copy()`、`.numpy()` 这些真正碰像素的操作，才触发一次
+    `image2cv`，结果缓存起来，同一帧只转一次。
 
-相机不再急切转换, 改为交出一个 `LazyFrame` 代理:
+于是设备上 maix 可用、又走 C++ 路径时，一次拷贝都不发生；cv2 回退、调参页、RESCUE
+传 numpy 这几种情况，结果和原来逐位一致。
 
-  · `.shape` / `.ndim` / `.size` / `.dtype`  **从 maix Image 元数据直接给**
-    (`width()/height()`), 零拷贝 —— 处理器里的 `h, w = frame.shape[:2]` 白拿。
-  · 任何**真正的像素访问**(切片 / `__array__` / `.copy()` / `.numpy()`)
-    才触发一次 `image2cv`, 结果缓存, 同一帧只转一次。
+代理要满足几条：能像 `np.ndarray` 一样通过 `frame is None` 之外的判断（处理器里唯一
+不碰像素的用法是 `.shape`）；不要求 `isinstance(frame, np.ndarray)`，全仓库查过，
+处理器和协处理器都没做这种判断；`np.asarray(lazy)` 和 `lazy.numpy()` 等价，方便
+第三方库接手。
 
-于是: 设备 + maix 可用 + 走 C++ 路径 => **一次拷贝都不发生**;
-      cv2 回退 / 调参页 / RESCUE 传 numpy => 与原行为逐位一致。
+OpenCV 的 Python 绑定不吃这个代理。OpenCV 4.9/5.0 都会报
+"src is not a numpy array, neither a scalar"：`cv2.resize/cvtColor` 的入参转换不走
+`__array__` / `__array_interface__`，只认 `PyArray_Check` 为真的真 ndarray。所以调参页
+这类要喂 cv2 的地方，得先 `.numpy()`/`.copy()` 拿真数组；相机侧 `read()` 是调参页的
+取帧入口，最后统一返回真 numpy。
 
-## 契约
-
-- `LazyFrame` 必须能**冒充 `np.ndarray`** 通过 `frame is None` 之外的判断。
-  处理器里唯一对 frame 的"非像素"用法就是 `.shape`, 已覆盖。
-- 鸭子类型: 只要不 `isinstance(frame, np.ndarray)`。全局搜过: 处理器/协处理器
-  都没有对 frame 做 isinstance 判断（`frame is None` / `.shape` / 切片 / 传库）。
-- `np.asarray(lazy)` 等价于 `lazy.numpy()` —— 供第三方库吞 numpy 的场合。
-- ⚠⚠ **OpenCV 的 Python 绑定不收本代理**（OpenCV 4.9/5.0 同样报
-  "src is not a numpy array, neither a scalar"）: `cv2.resize/cvtColor` 等函数的
-  入参转换**不走** `__array__` / `__array_interface__`, 只认 `PyArray_Check` 为真的
-  真 ndarray。所以"把 LazyFrame 直接喂 cv2"是错的 —— 需要 cv2 的消费者（调参页）
-  必须先 `.numpy()`/`.copy()` 拿真数组; 相机侧 `read()`（调参页入口）
-  已按返回契约收敛为真 numpy。
-
-PC 端(无 maix)不构造本类: `LazyFrame.for_raw()` 在 raw 为 None 或转换函数不可用时
-直接返回现有 numpy / None, 不引入任何 maix 依赖。
+PC 端没有 maix，不构造本类：`LazyFrame.for_raw()` 在 raw 为 None 或转换函数不可用时
+直接返回现有 numpy / None，不会引入 maix 依赖。
 """
 from __future__ import annotations
 
@@ -83,10 +76,10 @@ class LazyFrame:
     def copy(self) -> np.ndarray:
         """ndarray.copy() 透传 —— 转换一次并返回其副本。
 
-        ⚠ 缺这个方法会让调参页 LCD 直接冻住: 调参页 `threshold_tuner._highlight`
+        缺这个方法会让调参页 LCD 直接冻住: 调参页 `threshold_tuner._highlight`
         第一行就是 `frame_bgr.copy()`, 缺方法 -> 每帧抛 AttributeError 被吞进
         logs/app.log（控制台看不见）-> disp.show() 永远执行不到 -> LCD 冻结在
-        按键前最后一帧。语义与 ndarray.copy() 一致（独立副本）。
+        按键前最后一帧。效果跟 ndarray.copy() 一样（独立副本）。
         """
         return self.numpy().copy()
 
@@ -97,8 +90,8 @@ class LazyFrame:
             try:
                 arr = self._convert(self._raw)
             except Exception:
-                # 转换抛异常也退化为空数组 —— 这帧"没有像素可用"是可降级状态,
-                # 不该把整帧打断（单任务 try 兜底会记 error 并丢结果）。
+                # 转换抛异常也退化为空数组 —— 这帧"没有像素可用"还能继续跑,
+                # 不该把整帧打断（单任务 try 的异常处理会记 error 并丢结果）。
                 arr = None
             if arr is None:
                 # 转换失败: 退化成空数组而非抛异常 —— 空数组让 `.shape[:2]` 与
@@ -137,7 +130,7 @@ class LazyFrame:
         """按平台能力选择: 有 raw 且有转换函数 -> LazyFrame; 否则退回 fallback。
 
         `fallback` 是"没有 maix 时本来会返回的东西"（通常是 None, 或已转好的
-        真实 numpy）。linux/mock 平台不调用本类, 保持原 `read()` 语义。
+        真实 numpy）。linux/mock 平台不调用本类, 保持原 `read()` 的行为。
         """
         if raw is None or convert is None:
             return fallback

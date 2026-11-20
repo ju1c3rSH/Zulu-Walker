@@ -22,4 +22,4 @@ class LcdTap(BaseTap):
         try:
             self.display.show(frame)
         except Exception:
-            pass        # ⚠ 上屏异常不得冒泡: 会打断调试页 step 并被踢回 MAIN
+            pass        # 上屏异常不得冒泡: 会打断调试页 step 并被踢回 MAIN

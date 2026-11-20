@@ -1,45 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-CAM1 打靶 err 反馈速度 — 帧周期分项测量 (2026-10-08)
+"""帧周期分项测量: 定位单帧周期花在哪, 判断瓶颈是相机、find_blobs 还是别的线程抢 GIL。
 
-回答一个问题: `[FPS] pipeline 20.3` + `[UART TX] DATA_STREAM 20.1Hz` 说明推流链路
-已经不是瓶颈 (结果驱动生效了), 但 50ms 的单帧周期**到底花在哪**, 现有日志只有一个
-总数, 分不出下面两种情形:
-
-  假设 A — read 实际是阻塞的:
-      周期 = 33ms(等新帧) + 17ms(处理) ≈ 50ms, 相机与处理**串行**相加。
-      解法: 采集与处理解耦 (独立采集线程 + 只取最新帧)。
-  假设 B — read 非阻塞, 相机在 80fps 产帧:
-      周期 = 50ms ≈ 全是 find_blobs 的时间。
-      解法: 降 find_blobs 成本 (收窄 ROI / 两段式降采样 / 收紧 LAB 降噪点)。
-
-两个假设的解法完全不同, 而且**改错方向会白花一天台架时间**, 所以先测再改。
-本脚本同时给出"串行 vs 解耦"的实测对比, 直接回答"加采集线程到底有没有用"。
-
-用法 (设备上, SSH):
-    python scripts/bench_frame_budget.py                 # 每项默认 3 秒
-    python scripts/bench_frame_budget.py --seconds 5
-
-只依赖 maix + 标准库, **不 import 项目代码** —— 避免读到设备上还没同步的旧配置。
-阈值/LAB 取自仓库 eod_config.yaml 的兜底初值; 本脚本只做**相对**比较, 不用于标定。
-
-读结果 (2026-10-08 首轮实测基线, MaixCAM-Pro / GC4653 720P):
-  [1] 产帧 59.7Hz, 间隔 16.7ms        -> fps=60 生效, 相机不是瓶颈
-  [2] image2cv 4.73ms/帧              -> TARGET 走 C++ find_blobs, 这份 numpy 白做
-  [3] find_blobs ROI 8.90ms / 全帧 20.25ms
-  [4] ROI 197/120/80/40 行 = 8.96/5.10/3.34/1.53ms   -> 成本≈线性于像素数
-  [5] 串行 read+find_blobs **59.7Hz** -> 识别链路本身能跑满 60fps!
-  [7] display.show() **23.4ms/次**    -> 每 2 帧一次 ≈ 每秒 117ms 的 GIL 独占
-
-  ⇒ 结论: 识别**不是**瓶颈。真机 [FPS] pipeline 只有 20.3Hz, 与识别链路的
-    59.7Hz 差 ~35ms/帧 —— 差额不在 read/find_blobs 里, 而在**别的线程抢 GIL**
-    (显示线程的 show() 是首位嫌疑, 其次是 debug_console 的 rich 10Hz 重绘)。
-    实测方法: 真机跑主程序看 `[PERF] vision ... | 差额 X ms` 那一行。
-
-  ⚠ 本脚本的 [6] 曾给出"解耦 31.7Hz"的反常结果 —— 那是**测量假象**: 采集线程用
-    `time.sleep(0.0005)` 忙轮询, 持续抢 GIL 把消费线程饿死。现已改为低自旋写法,
-    并在输出里同时给"非阻塞+1ms"与"阻塞读"两种采集线程模型, 便于对照判断
-    阻塞读到底会不会释放 GIL。
+用法 (设备 SSH): python scripts/bench_frame_budget.py [--seconds 5]
+只依赖 maix + 标准库, 阈值取 eod_config.yaml 兜底初值, 只做相对比较不用于标定。
 """
 import argparse
 import statistics
@@ -59,11 +22,11 @@ BAR = "=" * 74
 
 # ------------------------------------------------------------------ camera ----
 def open_camera():
-    """按能力从多到少构造, 并**明确报告命中了哪一级**。
+    """按能力从多到少构造, 并明确报告命中了哪一级。
 
     `[BOOT] cam.open:CRASH ... sensor timeout` + `camera.attempts=3` 说明台架上
-    第一次构造就炸了、最后落在位置参数签名 —— 那一级的 fps/buff_num **根本没传
-    进相机**, MaixPy 对 <=1280x720 会默认给 80fps。这里把命中级别打出来,
+    第一次构造就炸了、最后落在位置参数签名 —— 那一级的 fps/buff_num 根本没传
+    进相机, MaixPy 对 <=1280x720 会默认给 80fps。这里把命中级别打出来,
     后面所有帧率数字才解释得通。
     """
     levels = [
@@ -89,7 +52,7 @@ def open_camera():
         ms = (time.time() - t0) * 1000
         print(f"  {name:<40s} 命中  ({ms:.0f}ms)")
         if i >= 3:
-            print("  ⚠ 命中降级级: project_config 的 fps/buff_num 没生效,"
+            print("  命中降级级: project_config 的 fps/buff_num 没生效,"
                   " 实际帧率以 [1] 为准")
         return cam, i
     return None, 0
@@ -99,7 +62,7 @@ def probe_block_kwarg(cam):
     """read(block=False) 是否被固件接受。
 
     官方 examples/vision/display/display_multi_channel.py 用了这个 kwarg, 说明
-    新版固件是支持的; 但项目代码里有一条"TypeError -> 静默降级为阻塞读"的分支,
+    新版固件是支持的; 但项目代码里有一条"TypeError -> 悄悄改成阻塞读"的分支,
     真命中时停帧保护失效、且每帧要等满一个帧间隔。必须先确认在哪一支里。
     """
     try:
@@ -182,11 +145,11 @@ def sim_decoupled(cam, seconds, block_ok, blocking_read=False):
     两种采集线程模型都给出来, 因为它们的 GIL 行为完全不同:
       blocking_read=False -> `read(block=False)` + 1ms 轮询。低自旋, 但每秒仍有
                             1000 次唤醒抢 GIL。
-      blocking_read=True  -> 直接用阻塞 `read()`。零自旋, 但**前提是固件在阻塞
-                            等待期间释放 GIL**; 若 pybind 绑定全程持 GIL, 采集
+      blocking_read=True  -> 直接用阻塞 `read()`。零自旋, 但前提是固件在阻塞
+                            等待期间释放 GIL; 若 pybind 绑定全程持 GIL, 采集
                             线程会把消费线程彻底饿死, 实测 Hz 会明显低于串行。
 
-    ⚠ 不要写成 `while True: read(); time.sleep(0.0005)` 的忙轮询 —— 那测的是
+    不要写成 `while True: read(); time.sleep(0.0005)` 的忙轮询 —— 那测的是
       GIL 争抢, 不是 pipeline 设计（首轮就是这个假象, 见文件头）。
     """
     slot = {"img": None, "seq": 0}
@@ -246,7 +209,7 @@ def main():
         raise SystemExit("[bench] 相机全部构造失败, 无法继续")
     block_ok = probe_block_kwarg(cam)
     print(f"  read(block=False) 支持 = {block_ok}"
-          + ("" if block_ok else "   ⚠ 已降级为阻塞读, 停帧保护失效且每帧等满一个间隔"))
+          + ("" if block_ok else "   已降级为阻塞读, 停帧保护失效且每帧等满一个间隔"))
     img = cam.read() if not block_ok else cam.read(block=False)
     if img is None:
         img = cam.read()
@@ -270,7 +233,7 @@ def main():
     print("[2] 每帧固定开销 —— 912KB 拷贝值不值")
     print("-" * 74)
     print("  应用当前用的是 image2cv(ensure_bgr=False, copy=True) + [:, :, ::-1]")
-    print("  ⚠ TARGET 走 C++ find_blobs（直接吃 camera.last_raw），这份 numpy 只服务")
+    print("  TARGET 走 C++ find_blobs（直接吃 camera.last_raw），这份 numpy 只服务")
     print("    cv2 回退路径与 RESCUE/调参页 —— 正常路径下它是**纯白做**的")
     variants = [
         ("copy=True  ensure_bgr=False  (当前)", dict(ensure_bgr=False, copy=True)),
@@ -295,7 +258,7 @@ def main():
               "   (视图本身≈0; 但它是**非连续**数组, 后续 cv2 可能要多拷一次)")
     except Exception:
         pass
-    print("  ⚠ copy=False 是零拷贝视图, 但底层缓冲会被下一次 read() 回收 ->")
+    print("  copy=False 是零拷贝视图, 但底层缓冲会被下一次 read() 回收 ->")
     print("    只能在「当帧内立即用完」时使用, 不能跨帧持有（否则读到下一帧的数据）")
 
     print("\n" + "-" * 74)

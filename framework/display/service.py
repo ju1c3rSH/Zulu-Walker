@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""PresenterService: 全系统**唯一**调 display.show() 的出口。
+"""PresenterService: 全系统唯一调 display.show() 的出口。
 
-⚠ submit() 会被两个线程调用（MAIN 用显示线程, 调试页用主循环）——内部单锁串行化。
+submit() 会被两个线程调用（MAIN 用显示线程, 调试页用主循环）——内部单锁串行化。
 """
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ class PresenterService:
                show_fn: Optional[Callable[[], Any]] = None) -> bool:
         """按策略限流后分发; 返回是否真的上屏。任何异常都不外泄。
 
-        ⚠ 三个入口（MAIN / 调试页 / 显式 show_fn）共用这一条 gate, 不许各写一份。
+        三个入口（MAIN / 调试页 / 显式 show_fn）共用这一条 gate, 不许各写一份。
         """
         if frame is None and show_fn is None:
             return False
@@ -127,8 +127,8 @@ class PresenterService:
             else:
                 self._skipped += 1
                 shown = False
-            # ⚠ 推流独立于 LCD 节流: 关了屏也要继续供帧（fps 节流在 streamer 内）
-            # ⚠ frame is None（present(show_fn) 路径）时绝不能把 callable 塞给 tap
+            # 推流独立于 LCD 节流: 关了屏也要继续供帧（fps 节流在 streamer 内）
+            # frame is None（present(show_fn) 路径）时绝不能把 callable 塞给 tap
             if self.policy.stream_enabled and frame is not None:
                 self._offer_taps(frame)
             return shown
@@ -146,13 +146,13 @@ class PresenterService:
             try:
                 show_fn()
             except Exception:
-                pass        # ⚠ 上屏异常不得冒泡: 会打断调试页 step 被踢回 MAIN
+                pass        # 上屏异常不得冒泡: 会打断调试页 step 被踢回 MAIN
             self._note_show((time.perf_counter() - t0) * 1000.0, frame, source)
             return
         if not self._lcd.attached():
             return
         t0 = time.perf_counter()
-        cpu0 = thread_cpu()          # ⚠ 必须在 show 之前采样
+        cpu0 = thread_cpu()          # 必须在 show 之前采样
         self._lcd.offer(frame, self.frame_counter)
         cpu = (thread_cpu() - cpu0) * 1000.0
         self._note_show((time.perf_counter() - t0) * 1000.0, frame, source, cpu)

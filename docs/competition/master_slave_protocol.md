@@ -710,7 +710,7 @@ class LineFollowCoordinator:
         self._last_cmd_time = 0.0
         self._master_linked = False
         
-        # ⚠ 并发保护：_streaming_type / _last_cmd_time / _master_linked
+        # 并发保护：_streaming_type / _last_cmd_time / _master_linked
         # 由 EventBus 线程写入，主线程读取
         self._cmd_lock = threading.Lock()
         
@@ -899,7 +899,7 @@ def _build_all_targets_payload(self) -> Optional[bytes]:
 1. **主循环 @60Hz**：`module_manager.run_main_loop()` 每 16.7ms 调用一次 `coordinator.loop()`。每次 loop 最多发送 1 帧 DATA_STREAM。
 2. **视觉管道异步**：Camera Process 线程独立运行，将检测结果入 deque。主循环在每次 loop 中排空 deque，只保留最新值。
 3. **链路超时**：若 5 秒内未收到任何 CMD（REQUEST/STOP），从机自动停止流送并标记断链。
-   - ⚠ `_last_cmd_time` **仅在** `_on_cmd_request` / `_on_cmd_stop`（即 EventBus 回调）中更新。
+   - `_last_cmd_time` **仅在** `_on_cmd_request` / `_on_cmd_stop`（即 EventBus 回调）中更新。
    - 流送中发送 DATA_STREAM **不会**刷新 `_last_cmd_time`。这意味着若主机发 CMD_REQUEST 后对 UART 总线一言不发，即使从机仍在以 60fps 流送，`_last_cmd_time` 也不会更新→5s 后超时触发→从机停止流送。
    - 这符合"主机不发 CMD 即视为断链"的设计原则。
 4. **恢复方式**：收到新 CMD_REQUEST 即重新连接。
@@ -1074,10 +1074,10 @@ void main_loop(void) {
 
 ### 8.4 DATA_STREAM 解析
 
-⚠ **中断上下文警告**：`on_data_stream` 回调在 UART4 RX 中断上下文中执行。必须保持 <5µs，禁止阻塞操作、printf、动态分配。
+**中断上下文警告**：`on_data_stream` 回调在 UART4 RX 中断上下文中执行。必须保持 <5µs，禁止阻塞操作、printf、动态分配。
 
 ```c
-// ⚠ 运行在 IRQ 上下文 — 仅做轻量赋值，业务逻辑在主循环处理
+// 运行在 IRQ 上下文 — 仅做轻量赋值，业务逻辑在主循环处理
 static void on_data_stream(const uint8_t *payload, uint8_t len) {
     if (len < 2) return;  // 最少需要 seq(1) + data_type(1)
     

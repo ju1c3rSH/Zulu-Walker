@@ -19,7 +19,7 @@ class PixelFormat(Enum):
 
     NATIVE = "native"
     RGB888 = "rgb888"
-    BGR888 = "bgr888"      # ⚠ 慢路径标记: maix show() 内部要整帧转 RGB888
+    BGR888 = "bgr888"      # 慢路径标记: maix show() 内部要整帧转 RGB888
     GRAY8 = "gray8"
     JPEG = "jpeg"
 
@@ -27,7 +27,7 @@ class PixelFormat(Enum):
     def of(frame: Any) -> Optional["PixelFormat"]:
         """判帧格式; 判不出（LazyFrame / BGRA 等）返回 None, 由调用方拒绝。"""
         if isinstance(frame, np.ndarray):
-            # ⚠ 只有 3 通道才是 BGR888。灰度/BGRA 一律 None: 猜错会让闸门放行慢路径
+            # 只有 3 通道才是 BGR888。灰度/BGRA 一律 None: 猜错就会把慢路径放过去
             if frame.ndim == 3 and frame.shape[2] == 3:
                 return PixelFormat.BGR888
             return None
@@ -48,7 +48,7 @@ class Frame:
     fmt: PixelFormat
     w: int
     h: int
-    seq: int = -1              # ⚠ -1 = 未打号; 0 会被误读成"与首帧同一帧"而丢帧
+    seq: int = -1              # -1 = 未打号; 0 会被误读成"与首帧同一帧"而丢帧
     origin: str = "camera"     # "camera" | "canvas"
     ts: float = 0.0
 

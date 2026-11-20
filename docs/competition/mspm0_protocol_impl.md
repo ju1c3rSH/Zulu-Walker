@@ -39,7 +39,7 @@ MSPM0G3519 有 7 个 UART 实例（UART2 不存在），以下 3 个空闲：
 | RX FIFO 阈值 | **4~8 字节**（v3.0 建议） |
 | 引脚 | 需确认原理图选择空闲 GPIO |
 
-> ⚠ **v3.0 建议**：115200 波特率下每字节 86.8µs（8N1），推荐 RX FIFO 阈值
+> **v3.0 建议**：115200 波特率下每字节 86.8µs（8N1），推荐 RX FIFO 阈值
 > 4~8 字节以减少中断次数。详见 [`master_slave_protocol.md`](./master_slave_protocol.md) §8.5。
 
 ---
@@ -236,7 +236,7 @@ void UART4_IRQHandler(void) {
 ```c
 #include "op_uart.h"
 
-// ⚠ v3.0 回调声明（v2.1 旧回调已移除，见 master_slave_protocol.md §8.1）
+// v3.0 回调声明（v2.1 旧回调已移除，见 master_slave_protocol.md §8.1）
 static void on_cmd_ack(const uint8_t *payload, uint8_t len);
 static void on_cmd_nack(const uint8_t *payload, uint8_t len);
 static void on_data_stream(const uint8_t *payload, uint8_t len);

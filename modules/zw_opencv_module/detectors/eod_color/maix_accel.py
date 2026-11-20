@@ -67,10 +67,10 @@ def _as_rgb888(img):
 
     MaixCDK `convert_to_imlib_image()`（components/vision/src/maix_image_ops.cpp）对
     FMT_BGR888 是 fall-through 到 PIXFORMAT_RGB888 —— 源码注释原文就是
-    `case Format::FMT_BGR888:    // fall through`，**只认标记、不做通道交换**。
+    `case Format::FMT_BGR888:    // fall through`，只认标记、不做通道交换。
     于是 BGR 字节会被 imlib 当 RGB 去算 LAB: 蓝色目标落进"红色"阈值盒
     （HUD 把蓝色框标成 C1）、红色落进"蓝色"盒、绿色不受影响。
-    调用方最好直接交 RGB888（如 gks_task_processor._downscale）; 这里兜底转一次,
+    调用方最好直接交 RGB888（如 gks_task_processor._downscale）; 这里额外转一次,
     比错一整场的坑位定序便宜。
     """
     global _BGR_GUARD_LOGGED
@@ -95,7 +95,7 @@ def _as_rgb888(img):
 
 
 def _shape_metric(getter) -> float:
-    """blob 形状判据的安全取值: 缺失/异常/越界一律 -1.0 = "该判据不参与"。
+    """blob 形状条件的安全取值: 缺失/异常/越界一律 -1.0 = "这个条件不参与"。
 
     理论域都是 [0,1]; 越界值宁可当成"没测到"也不要拿去卡阈值(那会变成随机误杀)。
     """
@@ -125,19 +125,19 @@ def find_blobs_maix(img, thresholds: list, roi=None,
     and dropped gracefully when the firmware build does not accept the kwarg
     (official docs only pin thresholds/invert/roi/area_threshold/pixels_threshold).
 
-    ⚠ `margin` 默认 **None = 不传该 kwarg**。去年基准 `工科赛上端/main.py` 的
-    task1/task2 都是**裸 `merge=True`、不传 margin**（main.py:390）。margin 在
+    `margin` 默认 None = 不传该 kwarg。去年基准 `工科赛上端/main.py` 的
+    task1/task2 都是裸 `merge=True`、不传 margin（main.py:390）。margin 在
     OpenMV 系 find_blobs 里会触发形态学膨胀 + 连通域重标记，比 merge 本身重得多；
     CAM1(cv181x) 算力比 CAM2 弱一个量级，带 margin=1 时订阅后帧率只有 5.3fps，
-    是"比去年明显滞后"的主要嫌疑之一。不传 margin 即回到与去年一致的调用形态。
-    需要 margin 时显式传 int（走有 margin 的分支，失败仍降级到无 margin）。
+    是"比去年明显滞后"的主要嫌疑之一。不传 margin 即回到与去年一致的调用方式。
+    需要 margin 时显式传 int（走有 margin 的分支，失败仍改成不带 margin）。
     """
     if not _HAVE_MAIX or img is None:
         return None
     img = _as_rgb888(img)
     try:
         # roi 是 list[int] 参数, 传 None 会被 pybind11 拒绝(TypeError) —— 全帧
-        # 检测必须整体省略该 kwargs（EXPLOSIVE 三色扫描即此形态）
+        # 检测必须整体省略该 kwargs（EXPLOSIVE 三色扫描即这种写法）
         kwargs = dict(
             invert=False,
             area_threshold=area_threshold,
@@ -153,10 +153,10 @@ def find_blobs_maix(img, thresholds: list, roi=None,
                 blobs = img.find_blobs(thresholds=[list(thresholds)],
                                        **merge_kwargs, **kwargs)
             except TypeError:
-                # 固件不认 margin: 降级到**只去掉 margin**、保住 merge=True。
-                # ⚠ 不能退到 `**kwargs` 那条 —— 那条连 merge 都没有, 会把调用方的
-                # 合并语义静默丢掉, 表现为"能跑但结果不对"（去年基准是裸 merge=True,
-                # 这里的降级也必须回到同一形态）。
+                # 固件不认 margin: 改成只去掉 margin、保住 merge=True。
+                # 不能退到 `**kwargs` 那条 —— 那条连 merge 都没有, 会把调用方的
+                # merge 被悄悄丢掉, 表现为"能跑但结果不对"（去年基准是裸 merge=True,
+                # 这里的退回也必须回到同样的写法）。
                 blobs = img.find_blobs(thresholds=[list(thresholds)],
                                        merge=True, **kwargs)
         else:
@@ -167,17 +167,17 @@ def find_blobs_maix(img, thresholds: list, roi=None,
     out = []
     for b in blobs or []:
         x, y, w, h = b.x(), b.y(), b.w(), b.h()
-        # cxf(): 浮点中心(v4); 老固件回退 cx() 整数 —— 与 cv2 路径的 x+w/2 语义对齐
+        # cxf(): 浮点中心(v4); 老固件回退 cx() 整数 —— 与 cv2 路径的 x+w/2 规则对齐
         cx = b.cxf() if hasattr(b, "cxf") else b.cx()
         blob = {
             "x": x, "y": y, "w": w, "h": h,
             "cx": cx, "cy": b.cy(),
             "pixels": b.pixels(),
         }
-        # ---- 形状判据 ----
-        # 这些是 blob 的**预存字段**(OpenMV imlib 在 blob_analysis 里已算好),
+        # ---- 形状条件 ----
+        # 这些是 blob 的预存字段(OpenMV imlib 在 blob_analysis 里已算好),
         # 读getter 不产生额外计算, 故无条件透出供 bench 脚本观察。
-        # 上层当前**不用**它们做判定 —— 靶标是圆环, 实心球那套阈值会误杀真环,
+        # 上层当前不用它们做判定 —— 靶标是圆环, 实心球那套阈值会误杀真环,
         # 详见 eod_config.yaml target 段。
         # 用 getattr 而非 hasattr: 老固件可能缺方法, 也可能返回 None。缺失一律给
         # 中性值 -1.0, 绝不让缺字段的候选被阈值误杀(那会导致 found 恒 0)。

@@ -76,7 +76,7 @@ class ModuleManager:
         # coordinator.loop() + tick_callback(DebugConsole.set ×6) +
         # display_callback(touch.read() 硬件读)。这些是 Python 侧工作, 累加后可能
         # 与视觉线程抢 GIL —— 差额必须能逐线程、逐子步骤归因。
-        # ⚠ 同时报 body(墙上) 与 cpu(thread_time): 两者之差就是**等 GIL** 的时间。
+        # 同时报 body(墙上) 与 cpu(thread_time): 两者之差就是等 GIL 的时间。
         #   只看 body 会把"纯等待"误读成"这一路在吃 CPU"。
         _perf = {
             "n": 0, "t0": time.perf_counter(), "cpu0": _thread_cpu(),

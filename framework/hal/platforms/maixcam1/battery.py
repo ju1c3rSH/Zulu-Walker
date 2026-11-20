@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """MaixCAM-Pro (AXP2101) 电量: 用户态 I2C-4，从地址 0x34，走官方 pmu。
 
-三个已知语义:
+三个已知规则:
 - I2C 读失败时 `get_bat_percent()` 返回 0 而不是 -1，与"真的没电"不可区分 ——
   去抖在 BatterySampler，这里只如实上报。
 - `get_bat_vol()` 可能恒 0（ADC 未使能），0 按不可用上报，避免下游当"电芯已死"。
 - 构造要跑一次芯片 ID 校验（~2.4ms），所以句柄常驻、全工程只在这里构造
   （C 层是进程内单例，但并发读没有锁）。
 
-⚠ 这里**不打日志**：失败原因写进 `BatteryReading.reason`，由主循环那一个出口统一打印。
+这里不打日志：失败原因写进 `BatteryReading.reason`，由主循环那一个出口统一打印。
 """
 from __future__ import annotations
 

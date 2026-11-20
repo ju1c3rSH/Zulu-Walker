@@ -1,41 +1,14 @@
 # -*- coding: utf-8 -*-
-"""启动计时打点 — 把"启动慢"从猜测变成可读数字。
+"""启动计时打点: 给启动各阶段打可读时间戳。
 
-## 为什么需要它
+用 log_print 而非 logger —— 后者只进 app.log, 台架看不到 stdout。
+零依赖、不抛异常, 计时失败静默退化。
 
-MaixCAM-Pro 从 `main()` 第一行到 `[UART CFG]` 曾隔了 8 秒, 中间**一个时间戳都没有**。
-那 8 秒全部落在 `Machine.create()` 的五步串行构造里(相机/显示/串口/AI), 但每一步
-都不打点, 所以"到底是相机慢还是抢 UART0 慢"只能猜。
-
-⚠ **不要用 `logger` 打这类点**:`app/main.py` 的 `basicConfig` 钉了
-`filename="logs/app.log"` 且 root level=WARNING, `logger.info/warning` **只进
-文件、不进控制台**。台架看的是 MaixVision/串口的 stdout, 于是这类关键状态在
-控制台完全不可见 —— 要么用 `log_print`(走独立写盘线程 + stdout 兜底),
-要么用本模块。
-
-## 用法
-
-```python
-from utils.boot_timing import boot_stage
-
-with boot_stage("camera"):
-    cam = factory(...)
-```
-
-或不需要 with 语法时:
-
-```python
-mark = BootTimer("startup")
-mark.mark("camera")     # 逐点打
-print(mark.summary())   # 收尾汇总
-```
-
-设计约束:
-- **零依赖**: 只用 time + log_print, 不 import maix, PC 端也能 import 通过
-  (测试要能在无设备环境跑)。
-- **不抛异常**: 打点自身绝不能把启动搞挂, 计时失败就静默退化成无打点。
-- 走 `log_print` 而非 print: 与既有台架日志同通道, 且不与 rich 的
-  stdout 捕获打架。
+用法:
+    with boot_stage("camera"):
+        cam = factory(...)
+    # 或:
+    mark = BootTimer("boot"); mark.mark("camera"); mark.summary()
 """
 from __future__ import annotations
 
@@ -49,20 +22,13 @@ except Exception:  # pragma: no cover - 极端情况下 log_util 不可用
         pass
 
 # 慢于该毫秒数就在行尾标一个标记, 便于一眼看出"谁吃掉了时间"。
-# 阈值取得��保守(200ms): 目标是标出**异常段**, 而给每一步都打 "慢" 反而
+# 阈值取得��保守(200ms): 目标是标出异常段, 而给每一步都打 "慢" 反而
 # 淹没有效信息。
 _SLOW_MS = 200.0
 
 
 class BootTimer:
-    """累计式计时器: 每个 mark 打一条"距上一 mark + 距起点"的日志。
-
-    用法:
-        t = BootTimer("boot")
-        t.mark("camera")
-        t.mark("display")
-        t.mark("total", since_start=True)   # 只看总耗时
-    """
+    """累计式计时器: 每个 mark 打一条距上次与距起点的耗时。"""
 
     def __init__(self, name: str = "boot", enabled: bool = True) -> None:
         self._name = name
@@ -116,7 +82,7 @@ class _StageContext:
     用法上比 BootTimer.mark 更适合包住"一个构造调用":
         with boot_stage("camera"):
             cam = MaixCam1Camera(...)
-    退出时自动打点, **异常路径也打**(标 <FAILED>), 这样"某步炸了导致后面
+    退出时自动打点, 异常路径也打(标 <FAILED>), 这样"某步炸了导致后面
     全慢"和"某步单纯慢"在日志上能区分开。
     """
 
@@ -145,7 +111,7 @@ class _StageContext:
                 log_print(f"[BOOT] {self._label}: {ms:.0f}ms{slow}")
         except Exception:
             pass
-        # **返回 False**: 打点失败绝不能吞掉业务异常。
+        # 返回 False: 打点失败绝不能吞掉业务异常。
         return False
 
 
@@ -157,10 +123,10 @@ def boot_stage(label: str, timer: Optional[BootTimer] = None) -> _StageContext:
 def thread_cpu() -> float:
     """当前线程累计 CPU 时间（秒）。
 
-    ⚠ 把"真在算"和"在等 GIL"分开的唯一手段:
-    `time.perf_counter()` 量到的是**墙上时间** —— 线程被 GIL 挡住、被调度器
-    挂起的时间都算在里面, 于是一个**纯等待**的线程也会显示"很忙"。
-    报耗时的地方一律 **墙上 + CPU 两个都报**, 只报一个必然被误读。
+    把"真在算"和"在等 GIL"分开的唯一手段:
+    `time.perf_counter()` 量到的是墙上时间 —— 线程被 GIL 挡住、被调度器
+    挂起的时间都算在里面, 于是一个纯等待的线程也会显示"很忙"。
+    报耗时的地方一律 墙上 + CPU 两个都报, 只报一个必然被误读。
     """
     try:
         return time.thread_time()
