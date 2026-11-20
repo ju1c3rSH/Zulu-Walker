@@ -13,6 +13,10 @@ try:
     from utils.cpu_affinity import configure as configure_cpu_affinity
 except ImportError:
     def configure_cpu_affinity(cfg): pass
+try:
+    from utils.boot_timing import BootTimer
+except ImportError:
+    BootTimer = None
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +43,20 @@ class Machine:
 
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
+        """Build a Machine from config, marking each slow stage on stdout.
+
+        Args:
+            config_path: YAML config; missing file falls back to maixcam2 defaults.
+
+        Returns:
+            Fully assembled Machine.
+
+        Context:
+            Timing marks are observation-only; BootTimer absence is a no-op.
+        """
+        bt = BootTimer("machine") if BootTimer else None
         path = Path(config_path)
+        display_enabled = True
         if not path.exists():
             logger.warning("%s not found, using platform=maixcam2 defaults", config_path)
             platform = "maixcam2"
@@ -50,6 +67,7 @@ class Machine:
             with open(path) as f:
                 cfg = yaml.safe_load(f)
             platform = cfg.get("platform", "maixcam2")
+            display_enabled = bool(cfg.get("display_enabled", True))
             cameras_config = cfg.get("cameras", [])
             uart_defaults = cfg.get("uart_defaults", {})
             uart_config = {
@@ -60,6 +78,8 @@ class Machine:
             cpu_affinity_cfg = cfg.get("cpu_affinity")
             configure_cpu_affinity(cpu_affinity_cfg)
 
+        if bt:
+            bt.mark("config")
         platform_mod = importlib.import_module(f"framework.hal.platforms.{platform}")
 
         hub = CameraHub.init_instance(platform)
@@ -99,8 +119,15 @@ class Machine:
                 gain=cam_cfg.get("gain"),
                 aec=cam_cfg.get("aec"),
             )
+        if bt:
+            bt.mark("cameras")
 
-        display = platform_mod.create_display()
+        # `display_enabled: false` is a hard "no LCD" switch: skipping creation
+        # avoids the panel init cost and guarantees nothing downstream can
+        # present (the sink group only exists when a display object does).
+        display = platform_mod.create_display() if display_enabled else None
+        if display is None:
+            logger.info("Display disabled by config (display_enabled=false)")
         try:
             uart = platform_mod.create_uart(**uart_config)
         except Exception as e:
@@ -132,6 +159,8 @@ class Machine:
             except Exception as e:
                 logger.error("Failed to initialize AI: %s", e)
                 ai = None
+        if bt:
+            bt.summary("TOTAL")
 
         return cls(
             camera_hub=hub,

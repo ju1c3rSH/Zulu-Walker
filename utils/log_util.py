@@ -1,11 +1,13 @@
 import logging
 import logging.handlers
 import json
+import math
 import os
 from pathlib import Path
 import queue
 import sys
 import threading
+import time
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -14,6 +16,35 @@ _LOG_QUEUE: queue.Queue = queue.Queue(maxsize=2048)
 _WRITER_THREAD: Optional[threading.Thread] = None
 _SENTINEL: object = object()
 _DROP_COUNT: int = 0  # queue full 丢包累计计数，GIL 保护，无需额外 Lock
+
+_CONSOLE_MODULE = "utils.debug_console"
+
+# High-frequency perf-line gates. Names match by substring; [PERF] lines are
+# gated by the two-level observability switch below, other names by the mute set.
+_DEFAULT_PERF_NAMES = (
+    "[PERF] vision",
+    "[PERF] mainloop",
+    "[PERF] lcd show",
+    "[UART TX] DATA_STREAM",
+    "[UART TX] CMD_ACK",
+    "[WDT] ",
+    "[MEM] ",
+)
+_PERF_LOG_NAMES: set = set()
+
+# Two-level observability switch. The trailing space in "[PERF] " is required:
+# startswith("[PERF") would also swallow [PERFLOG] self-check lines.
+_PERF_TAG = "[PERF] "
+_PERF_COARSE = ("[PERF] vision", "[PERF] mainloop", "[PERF] lcd show")
+_PERF_GATE = True
+_PERF_DETAIL = True
+_PERF_GATE_SET = False
+_PERF_NAMES_MUTE_ALL = False
+_PERF_DEFAULT_SET = frozenset(_DEFAULT_PERF_NAMES)
+
+# Aggregation window in seconds for periodic [PERF] summaries.
+DEFAULT_PERF_INTERVAL_S = 10.0
+_PERF_INTERVAL_S = DEFAULT_PERF_INTERVAL_S
 
 try:
     os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
@@ -39,16 +70,21 @@ def _writer_loop() -> None:
             pass
 
         try:
-            from utils.debug_console import DebugConsole
-            dc = DebugConsole()
-            if not DebugConsole._global_enabled:
+            mod = sys.modules.get(_CONSOLE_MODULE)
+            if mod is None:
+                # Not imported: writing to stdout without pulling in rich.
                 sys.__stdout__.write(line)
                 sys.__stdout__.flush()
             else:
-                dc.log(msg)
-                if not dc._running:
+                dc = mod.DebugConsole()
+                if not mod.DebugConsole._global_enabled:
                     sys.__stdout__.write(line)
                     sys.__stdout__.flush()
+                else:
+                    dc.log(msg)
+                    if not dc._running:
+                        sys.__stdout__.write(line)
+                        sys.__stdout__.flush()
         except Exception:
             pass
 
@@ -68,10 +104,11 @@ def _writer_loop() -> None:
             sys.__stdout__.write(warn)
             sys.__stdout__.flush()
             try:
-                from utils.debug_console import DebugConsole
-                dc = DebugConsole()
-                dc.log(warn.rstrip("\n"))
-                dc.set("log_drop", str(drops))
+                mod = sys.modules.get(_CONSOLE_MODULE)
+                if mod is not None:
+                    dc = mod.DebugConsole()
+                    dc.log(warn.rstrip("\n"))
+                    dc.set("log_drop", str(drops))
             except Exception:
                 pass
 
@@ -98,7 +135,209 @@ def stop_log_writer(timeout: float = 2.0) -> None:
     _WRITER_THREAD = None
 
 
+def _refresh_mute_all() -> None:
+    """Set the mute-all flag when the default group is wholly muted.
+
+    Uses superset, not equality: adding names must not let ``[PERF] page*``
+    leak through once the default group is muted.
+    """
+    global _PERF_NAMES_MUTE_ALL
+    _PERF_NAMES_MUTE_ALL = bool(_PERF_LOG_NAMES) and _PERF_DEFAULT_SET <= _PERF_LOG_NAMES
+
+
+def set_perf_log(enabled: bool = True, names=None) -> None:
+    """Mute or allow named high-frequency lines.
+
+    Args:
+        enabled: False mutes ``names``; True allows all.
+        names: Substrings to control; None selects the default group.
+
+    Context:
+        Does not touch the observability gate, so it cannot re-enable a
+        switch that observability explicitly turned off.
+    """
+    global _PERF_LOG_NAMES
+    if enabled:
+        _PERF_LOG_NAMES = set()
+    else:
+        _PERF_LOG_NAMES = (set(_DEFAULT_PERF_NAMES) if not names
+                           else {str(n) for n in names})
+    _refresh_mute_all()
+
+
+def set_perf_gate(perf=None, detail=None) -> None:
+    """Apply the observability switch: ``perf`` for all [PERF] lines, ``detail`` for probes.
+
+    Args:
+        perf: Master switch for [PERF] lines; None keeps the current value.
+        detail: Per-item probe switch; None keeps the current value.
+    """
+    global _PERF_GATE, _PERF_DETAIL, _PERF_GATE_SET
+    if perf is not None:
+        _PERF_GATE = bool(perf)
+        _PERF_GATE_SET = True
+    if detail is not None:
+        _PERF_DETAIL = bool(detail)
+
+
+def perf_log_enabled() -> bool:
+    """Return whether performance lines are fully allowed (for tests/self-check)."""
+    return not _PERF_LOG_NAMES
+
+
+def set_perf_interval(seconds=None) -> None:
+    """Set the [PERF] summary window in seconds.
+
+    Args:
+        seconds: Positive finite number; None/bool/NaN/inf/<=0 keep current.
+
+    Context:
+        Clamps to a 0.5s floor to avoid re-entering log-flood territory.
+    """
+    global _PERF_INTERVAL_S
+    if seconds is None or isinstance(seconds, bool):
+        return
+    try:
+        v = float(seconds)
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(v) or v <= 0:
+        return
+    _PERF_INTERVAL_S = max(0.5, v)
+
+
+def perf_interval_s() -> float:
+    """Return the shared [PERF] summary window."""
+    return _PERF_INTERVAL_S
+
+
+def perf_log_summary() -> str:
+    """Return a three-state description of the mute set (for [PERFLOG])."""
+    if not _PERF_LOG_NAMES:
+        return "ON"
+    if _PERF_NAMES_MUTE_ALL:
+        return "MUTED"
+    return "custom(" + ",".join(sorted(_PERF_LOG_NAMES)) + ")"
+
+
+def perf_enabled() -> bool:
+    """Return the master [PERF] switch; explicit config wins over name inference."""
+    if _PERF_GATE_SET:
+        return _PERF_GATE
+    return not _PERF_NAMES_MUTE_ALL
+
+
+def perf_detail_enabled() -> bool:
+    """Return whether per-item probes are on (always False when master is off)."""
+    return _PERF_DETAIL and perf_enabled()
+
+
+def perf_t0() -> float:
+    """Return a probe start time, or 0.0 when gated so callers skip timing."""
+    if _PERF_DETAIL and perf_enabled():
+        return time.perf_counter()
+    return 0.0
+
+
+def _is_coarse_perf(msg: str) -> bool:
+    return any(msg.startswith(name) for name in _PERF_COARSE)
+
+
+def _is_perf_log(msg: str) -> bool:
+    """Return True when a message is currently muted. Empty set is zero-cost."""
+    if msg.startswith("[PERFLOG]"):
+        return False
+    if msg.startswith(_PERF_TAG):
+        if not perf_enabled():
+            return True
+        if not _PERF_DETAIL and not _is_coarse_perf(msg):
+            return True
+    if not _PERF_LOG_NAMES:
+        return False
+    for name in _PERF_LOG_NAMES:
+        if name in msg:
+            return True
+    return False
+
+
+class PerfAgg:
+    """Emit one ``[PERF] <label>`` summary per window; zero formatting when gated."""
+
+    __slots__ = ("_label", "_tag", "_t0", "_n", "_ms")
+
+    def __init__(self, label: str, tag: Optional[str] = None) -> None:
+        self._label = label
+        self._tag = tag
+        self._t0 = 0.0
+        self._n = 0
+        self._ms = 0.0
+
+    def add(self, ms: float, tag: Optional[str] = None) -> None:
+        """Accumulate one sample; flush a summary when the window elapses."""
+        if not perf_detail_enabled():
+            return
+        self._n += 1
+        self._ms += ms
+        if tag is not None:
+            self._tag = tag
+        now = time.monotonic()
+        if self._t0 == 0.0:
+            self._t0 = now
+            return
+        elapsed = now - self._t0
+        if elapsed < _PERF_INTERVAL_S:
+            return
+        n = self._n
+        avg = self._ms / n
+        extra = " " + self._tag if self._tag else ""
+        log_print(f"[PERF] {self._label} {n / elapsed:.1f}Hz "
+                  f"avg={avg:.2f}ms{extra}")
+        self._t0 = now
+        self._n = 0
+        self._ms = 0.0
+
+
+_AGGS: Dict[str, PerfAgg] = {}
+
+
+def perf_note(label: str, ms: float, tag: Optional[str] = None) -> None:
+    """Probe entry: one ``[PERF] <label>`` summary per window; gated costs one bool.
+
+    Args:
+        label: Aggregation key (one PerfAgg per label).
+        ms: Measured milliseconds for this sample.
+        tag: Optional suffix carried into the summary line.
+    """
+    if not perf_detail_enabled():
+        return
+    agg = _AGGS.get(label)
+    if agg is None:
+        agg = _AGGS[label] = PerfAgg(label)
+    agg.add(ms, tag)
+
+
+def debug_console_active() -> bool:
+    """Return whether the debug console TUI is actually running.
+
+    Uses a ``sys.modules`` lookup so ``rich`` is never imported just to ask
+    this question (CAM1 has 128MB user memory).
+    """
+    mod = sys.modules.get(_CONSOLE_MODULE)
+    if mod is None:
+        return False
+    return bool(getattr(getattr(mod, "DebugConsole", None), "_global_enabled", False))
+
+
 def log_print(msg: str = "", *args, **kwargs) -> None:
+    """Emit a line through the non-blocking queue.
+
+    Args:
+        msg: Message, with optional printf-style positional args.
+
+    Context:
+        Caller never touches I/O. Muted lines are dropped before enqueue;
+        a full queue only increments a counter.
+    """
     global _DROP_COUNT
     ts = datetime.now().strftime("[%H:%M:%S] ")
     if args:
@@ -106,12 +345,12 @@ def log_print(msg: str = "", *args, **kwargs) -> None:
         msg = " ".join(parts)
     else:
         msg = str(msg)
+    if _is_perf_log(msg):
+        return
     line = f"{ts}{msg}\n"
     try:
         _LOG_QUEUE.put_nowait((line, msg))
     except queue.Full:
-        # 仅计数，零 I/O，不阻塞调用者。
-        # MaixCAM2 等嵌入式设备上任何 I/O 阻塞都可能影响视觉管线帧率。
         _DROP_COUNT += 1
 
 
