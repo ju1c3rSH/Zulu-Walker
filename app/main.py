@@ -62,25 +62,81 @@ def _make_wdt_feed():
     return _feed
 
 
-def _build_tick(manager, machine):
-    """Per-tick callback: push the newest composed frame, then flush sinks."""
+def _apply_observability(cfg: dict) -> None:
+    """Apply ``observability:``/``perf_log:`` config to the log gates.
+
+    Args:
+        cfg: Parsed project config; missing keys keep current gate values.
+
+    Context:
+        Call once at startup, before modules emit perf lines.
+    """
+    from utils import log_util
+
+    obs = cfg.get("observability") or {}
+    perf = cfg.get("perf_log")
+    if isinstance(perf, bool):
+        log_util.set_perf_log(enabled=perf)
+    if isinstance(obs, dict):
+        log_util.set_perf_gate(
+            perf=obs.get("perf"),
+            detail=obs.get("perf_detail"),
+        )
+        log_util.set_perf_interval(obs.get("perf_interval_s"))
+    log_util.log_print(
+        f"[PERFLOG] perf={'ON' if log_util.perf_enabled() else 'OFF'} "
+        f"detail={'ON' if log_util.perf_detail_enabled() else 'OFF'} "
+        f"window={log_util.perf_interval_s():.1f}s"
+    )
+
+
+def _vision_manager_of(manager):
+    """Return the vision manager exposed by the vision module, or None."""
+    mod = manager.modules.get("zw_opencv_module")
+    if mod is None:
+        return None
+    getter = getattr(mod, "get_vision_manager", None)
+    return getter() if callable(getter) else None
+
+
+def _build_tick(manager, machine, cfg: dict = None):
+    """Per-tick callback: push the newest composed frame, then flush sinks.
+
+    Args:
+        manager: ModuleManager owning the vision module.
+        machine: Assembled Machine (``display`` may be None when headless).
+        cfg: Parsed project config. ``display_show_interval_ms`` maps to the
+            LCD present interval; absent or 0 means "no throttle".
+
+    Context:
+        Both the present cadence and the overlay rebuild window read the same
+        key, so a slow panel draws exactly as often as it shows. With
+        ``display_enabled: false`` the vision side stops composing frames at
+        all — nothing would consume them.
+    """
     from framework.hal.interface.sink import SinkGroup
 
+    cfg = cfg or {}
+    interval_ms = cfg.get("display_show_interval_ms")
     sinks = SinkGroup()
     try:
         from framework.hal.platforms.maixcam2.sink import MaixLcdSink
 
         if getattr(machine, "display", None) is not None:
-            sinks.add(MaixLcdSink(machine.display))
+            sinks.add(MaixLcdSink(machine.display, interval_ms=interval_ms))
     except ImportError:
         pass
     # TODO(project): add more sinks / input sources here (CvWindowSink,
     # JpegStreamSink, touchscreen -> CmdQueue).
 
+    vm = _vision_manager_of(manager)
+    if vm is not None:
+        vm.set_render_enabled(cfg.get("display_enabled", True))
+        vm.set_display_cadence_ms(interval_ms)
+
     def tick() -> None:
-        mod = manager.modules.get("zw_opencv_module")
-        vm = getattr(mod, "get_vision_manager", lambda: None)() if mod else None
-        frame = vm.get_display_frame() if vm else None
+        live_vm = vm or _vision_manager_of(manager)
+        frame = live_vm.get_display_frame() if live_vm else None
         if frame is not None:
             sinks.push(frame)
         sinks.flush()
@@ -99,6 +155,7 @@ def main() -> None:
     except Exception:
         cfg = {}
     DebugConsole.set_global_enabled(cfg.get("debug_console_enabled", True))
+    _apply_observability(cfg)
 
     wdt_feed = _make_wdt_feed()  # rule 1
     wdt_feed()
@@ -133,7 +190,7 @@ def main() -> None:
 
     manager.run_main_loop(
         coordinator=coordinator,
-        display_callback=_build_tick(manager, machine),
+        display_callback=_build_tick(manager, machine, cfg),
     )
 
 

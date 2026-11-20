@@ -65,7 +65,12 @@ class VisionManager:
         # frames.  The display thread / capture sink read the reused frame
         # (read-only), so no frame pollution.
         self._DISPLAY_REBUILD_INTERVAL_S: float = 0.033  # ~30fps rebuild
+        self._DISPLAY_REBUILD_MIN_S: float = 0.033  # floor: never rebuild per frame
         self._last_display_rebuild: float = 0.0
+        # Headless switch: when the project disables the LCD there is no
+        # consumer for the composed frame, so rebuilding it (raw_img.copy() +
+        # full overlay redraw, 10-16ms) is pure waste on the vision thread.
+        self._render_enabled: bool = True
 
         self._wdt_feed = lambda: None
         self._wdt_count = 0
@@ -382,7 +387,54 @@ class VisionManager:
     def get_display_frame(self):
         return self._display_frame
 
+    def set_render_enabled(self, enabled: Optional[bool]) -> None:
+        """Turn display-frame composition on/off (``display_enabled``).
+
+        Args:
+            enabled: ``False`` stops rebuilding the composed frame entirely;
+                ``None`` keeps the current value (missing config key).
+
+        Context:
+            With the LCD disabled nothing consumes ``get_display_frame()``,
+            so the 10-16ms copy+redraw per rebuild window would be spent for
+            no reader. Turning it off also drops the capture sink, which
+            publishes the composed frame - a headless project that still
+            needs frames should read ``camera.last_raw`` directly instead.
+        """
+        if enabled is None:
+            return
+        self._render_enabled = bool(enabled)
+
+    def set_display_cadence_ms(self, interval_ms: Optional[float]) -> None:
+        """Align the overlay rebuild window with the LCD present interval.
+
+        Args:
+            interval_ms: Present interval from ``display_show_interval_ms``.
+                ``None``/``0`` keep the built-in ~30fps window (unchanged
+                behaviour); a positive value sets the rebuild window to the
+                same period, floored at ~30fps.
+
+        Context:
+            Drawing at 30fps while the panel only presents 10 times a second
+            means two thirds of the copies are never shown. Matching both
+            cadences gives "draw one, show one". The floor keeps a very
+            small interval (say 16ms) from turning the vision loop into a
+            per-frame copy loop.
+        """
+        if interval_ms is None:
+            return
+        try:
+            interval_s = float(interval_ms) / 1000.0
+        except (TypeError, ValueError):
+            return
+        if interval_s <= 0.0:
+            self._DISPLAY_REBUILD_INTERVAL_S = self._DISPLAY_REBUILD_MIN_S
+            return
+        self._DISPLAY_REBUILD_INTERVAL_S = max(interval_s, self._DISPLAY_REBUILD_MIN_S)
+
     def _update_display_frame(self) -> None:
+        if not self._render_enabled:
+            return
         ai_ok = self._ai is not None and self._ai.loaded
         for pid, pipe in list(self._pipelines.items()):
             raw_img = getattr(pipe.camera, "last_raw", None)

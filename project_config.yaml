@@ -2,6 +2,11 @@ platform: maixcam2
 
 debug_console_enabled: false
 display_enabled: true
+# LCD 呈现节拍(ms)。缺省或 0 = 不节流: 主循环每拍只要有新帧就上屏,
+# 实际帧率由视觉线程与 sink 的新旧帧判定决定。
+# >0 = 按时间限流, 同时把视觉侧 HUD 重建窗口对齐到同一周期(下限 33ms),
+# 避免"画了不 show"。MaixCAM2 面板可跑满, 一般不用配; 换慢屏或省 GIL 时填 100。
+# display_show_interval_ms: 100
 
 display:
   detection_list: false              # 左上角检测文字列表; 比赛置 false (省每帧 draw_string), 调试置 true
