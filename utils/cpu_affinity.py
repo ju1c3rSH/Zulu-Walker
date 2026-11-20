@@ -44,9 +44,44 @@ def _parse_cores(value, default: Set[int]) -> Set[int]:
     return default
 
 
+def _validate_cores(cfg: "CpuAffinityConfig") -> Optional[str]:
+    """Return a description of out-of-range core numbers, or None if valid.
+
+    Context:
+        Defaults target MaixCAM2 (AX630C). On boards with fewer cores
+        (e.g. MaixCAM-Pro cv181x), ``sched_setaffinity`` would silently fail
+        and leave binding entirely ineffective; catch it up front.
+    """
+    try:
+        ncpu = os.cpu_count() or 0
+    except Exception:
+        return None
+    if ncpu <= 0:
+        return None
+    roles = (
+        "vision_processing", "camera_capture", "main_loop",
+        "heartbeat", "uart_receiver", "debug_console",
+    )
+    invalid = []
+    for role in roles:
+        cores = cfg.get_cores(role)
+        if not cores:
+            continue
+        if any(c < 0 or c >= ncpu for c in cores):
+            invalid.append(f"{role}={sorted(cores)}")
+    if not invalid:
+        return None
+    return f"configured/default cores exceed CPU count ({ncpu}): {', '.join(invalid)}"
+
+
 def configure(config_dict: Optional[dict]) -> None:
     global _global_config
     _global_config = CpuAffinityConfig(config_dict)
+    if _global_config.enabled:
+        problem = _validate_cores(_global_config)
+        if problem:
+            _global_config.enabled = False
+            logger.warning("CPU affinity DISABLED: %s", problem)
     if _global_config.enabled:
         logger.info(
             "CPU affinity enabled. Vision=%s Camera=%s MainLoop=%s "
