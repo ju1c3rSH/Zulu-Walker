@@ -35,3 +35,14 @@ dist/maix-zulu_walker-v1.4.1.zip
 dist/
 capture_exposure_set.py
 docs/competition/封箱清单.md
+
+# Agent workspace (local tooling state)
+.workbuddy/
+
+# Log files
+*.log
+logs/
+
+# Temporary / throwaway scripts at repo root
+.tmp_*.py
+/_*.py
