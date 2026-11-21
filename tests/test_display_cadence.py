@@ -17,8 +17,21 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from framework.hal.platforms.maixcam2 import sink as sink_mod
-from framework.hal.platforms.maixcam2.sink import MaixLcdSink
+try:
+    from framework.hal.platforms.maixcam2 import sink as sink_mod
+    from framework.hal.platforms.maixcam2.sink import MaixLcdSink
+
+    _HAS_MAIX = True
+except Exception:            # no MaixPy runtime (desktop / CI)
+    sink_mod = None
+    MaixLcdSink = None
+    _HAS_MAIX = False
+
+# The LCD sink lives in the maixcam2 platform, which imports the MaixPy
+# runtime. Skip the module everywhere else instead of failing collection.
+pytestmark = pytest.mark.skipif(
+    not _HAS_MAIX, reason="requires the MaixPy runtime (maixcam2 platform)"
+)
 
 
 class _SpyDisplay:
