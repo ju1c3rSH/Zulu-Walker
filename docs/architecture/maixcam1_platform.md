@@ -140,9 +140,9 @@ python run.py main
 
 - **VENC 是单例硬件资源**：CAM1 的 `Display.show()` 内部走 MaixVision 编码，
   与推流抢同一份编码器。开推流前先关 MaixVision 预览。
-- **电量 HAL 暂无消费方**：本 PR 含 HAL 与采样器，但主循环慢节拍采集模块
-  （`zw_battery_module`）依赖另一套主循环架构，未纳入本 PR。
-  `Machine.battery` 目前可读，但没有 UI 展示。
+- **电量读数只上日志，不上 HUD**：采集模块（`modules/zw_battery_module`）在主循环
+  慢节拍里采样，每个快照打一行到控制台与 `logs/debug.log`；HUD 上还没有电量位置，
+  需要另一层显示接线。
 - **相机标定几何需重标**：CAM1 是手动调焦镜头，坑位 ROI、误差中心等
   不能沿用 CAM2 的值。
 - **`nn.YOLOv8` / `nn.YOLO11` 在 CAM1 固件上不存在**，因此 CAM1 的 AI 工厂

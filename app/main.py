@@ -194,9 +194,10 @@ def main() -> None:
         event_bus=bus,
         wdt_feed=wdt_feed,
         exit_check=getattr(machine, "exit_check", None),
+        config=cfg,
     )
     # TODO(project): add modules per need ("zw_uart_module", "zw_wifi_stream").
-    manager.register_many(["zw_opencv_module"])
+    manager.register_many(["zw_opencv_module", "zw_battery_module"])
 
     manager.run_main_loop(
         coordinator=coordinator,

@@ -49,6 +49,11 @@ ai:
       model_type: "auto"
   active: "yolo11n"
 
+battery:
+  enabled: true              # false = 完全不采（省一次 I2C 事务）
+  poll_interval_ms: 10000    # 采集周期; 平台 min_poll_s 更长时以平台为准
+  low_percent: 20            # 低于这个百分比记为 low
+
 pendulum:
   pixels_per_cm: 51.0           # 实测: 5cm 处虚拟刻度落后真实 0.1cm → 50+1.0
   length_cm: 25.0

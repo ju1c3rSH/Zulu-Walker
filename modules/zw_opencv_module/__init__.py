@@ -21,7 +21,7 @@ except Exception:
     pass
 
 
-def init(machine: Machine, event_bus=None, wdt_feed=None) -> None:
+def init(machine: Machine, event_bus=None, wdt_feed=None, **kwargs) -> None:
     from utils.cpu_affinity import get_config as get_cpu_affinity_config
     _cpu_cfg = get_cpu_affinity_config()
     if _cpu_cfg and _cpu_cfg.opencv_threads > 0:
