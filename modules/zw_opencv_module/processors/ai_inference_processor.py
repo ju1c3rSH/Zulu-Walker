@@ -7,7 +7,13 @@ from typing import Optional
 import numpy as np
 
 from framework.hal.interface import AIInference, Detection
-from framework.hal.interface.ai import filter_detections
+from framework.hal.interface.ai import (
+    AIError,
+    E_INFER_FAILED,
+    E_INVALID_INPUT,
+    E_MODEL_NOT_LOADED,
+    filter_detections,
+)
 from utils.log_util import log_print
 
 from .registry import register_processor
@@ -19,11 +25,18 @@ logger = logging.getLogger(__name__)
 
 @register_processor("AIInferenceProcessor")
 class AIInferenceProcessor(Processor):
+    """Runs the platform AI backend and turns its detections into a result.
+
+    A failure is reported as `success=False` plus a stable `error_code`,
+    so the caller can tell a broken backend apart from a scene that simply
+    contains no target.
+    """
+
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self._ai: Optional[AIInference] = None
         self._handler = None
-        # Last wall-clock time the filter aggregate was logged (once/second).
+        # Wall-clock time of the last filter aggregate log.
         self._last_discard_log_ts: float = 0.0
 
     def set_ai(self, ai: AIInference) -> None:
@@ -44,16 +57,19 @@ class AIInferenceProcessor(Processor):
         if self._ai is None:
             return VisionResult(
                 self.name, success=False,
+                error_code=E_MODEL_NOT_LOADED,
                 error_message="AI not available",
             )
         if not self._ai.loaded:
             return VisionResult(
                 self.name, success=False,
+                error_code=E_MODEL_NOT_LOADED,
                 error_message="AI model not loaded",
             )
         if frame is None:
             return VisionResult(
                 self.name, success=False,
+                error_code=E_INVALID_INPUT,
                 error_message="frame is None",
             )
 
@@ -66,10 +82,19 @@ class AIInferenceProcessor(Processor):
             else:
                 detections = self._ai.detect(frame)
                 h, w = frame.shape[:2]
-        except Exception as e:
-            logger.error("AIInferenceProcessor detect failed: %s", e)
+        except AIError as e:
+            logger.error("AIInferenceProcessor detect failed [%s]: %s", e.code, e)
             return VisionResult(
-                self.name, success=False, error_message=str(e),
+                self.name, success=False,
+                error_code=e.code,
+                error_message=str(e),
+            )
+        except Exception as e:
+            logger.error("AIInferenceProcessor detect failed [%s]: %s", E_INFER_FAILED, e)
+            return VisionResult(
+                self.name, success=False,
+                error_code=E_INFER_FAILED,
+                error_message=str(e),
             )
 
         # Filter detections before any downstream consumption
@@ -81,15 +106,23 @@ class AIInferenceProcessor(Processor):
             image_height=h,
             on_discard=lambda obj, reason: discard_log.append((obj, reason)),
         )
-        # Log only a once-per-second aggregate instead of one line per discarded
-        # object every frame (the per-item spam was pure log noise).
+        # Count the reasons so a mis-tuned threshold shows up as a named
+        # cause instead of only a shrinking detection count.
+        reason_counts: dict[str, int] = {}
+        for _obj, reason in discard_log:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+        # Log one aggregate per second instead of one line per discarded
+        # object every frame.
         if discard_log:
             now = time.monotonic()
             if now - self._last_discard_log_ts >= 1.0:
                 self._last_discard_log_ts = now
+                detail = ", ".join(
+                    f"{reason}={count}" for reason, count in sorted(reason_counts.items()))
                 log_print(
                     f"filter_detections: {pre_count} -> {len(detections)} "
-                    f"(removed {len(discard_log)})"
+                    f"(removed {len(discard_log)}: {detail})"
                 )
 
         segment_dicts = []
@@ -109,6 +142,7 @@ class AIInferenceProcessor(Processor):
                 "segments": segment_dicts,
                 "infer_fps": getattr(self._ai, "infer_fps", 0.0),
                 "infer_avg_ms": getattr(self._ai, "infer_avg_ms", 0.0),
+                "discard_reasons": reason_counts,
             },
             success=True,
         )

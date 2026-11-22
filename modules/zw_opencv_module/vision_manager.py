@@ -443,8 +443,15 @@ class VisionManager:
             fps = self.get_pipeline_fps(pid)
             ai_result = pipe.last_results.get("ai_inference")
             detections = []
-            if ai_result is not None and ai_result.success:
-                detections = ai_result.result_data.get("detections", [])
+            ai_error_code = ""
+            if ai_result is not None:
+                if ai_result.success:
+                    detections = ai_result.result_data.get("detections", [])
+                else:
+                    # A failed inference must be visible on the display: an
+                    # empty detection list is indistinguishable from an
+                    # empty scene.
+                    ai_error_code = getattr(ai_result, "error_code", "") or ""
 
             serial = getattr(pipe.camera, "frame_serial", None)
             if serial is not None and self._display_frame is not None \
@@ -475,7 +482,9 @@ class VisionManager:
                 self._draw_rail(disp, detections)
             if ai_ok:
                 self._draw_overlays(disp, pid, fps, detections)
-            else:
+            if ai_error_code:
+                self._draw_ai_error_banner(disp, ai_error_code)
+            elif not ai_ok:
                 self._draw_ai_fault_banner(disp)
             if getattr(pipe.camera, "is_reconnecting", False):
                 self._draw_camera_fault_banner(disp)
@@ -679,6 +688,22 @@ class VisionManager:
         try:
             img.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_RED, thickness=-1)
             img.draw_string(6, 2, "AI FAULT - MODEL NOT LOADED",
+                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
+        except Exception:
+            pass
+
+    def _draw_ai_error_banner(self, img, code: str = "") -> None:
+        """Show an AI failure with its error code on the display."""
+        try:
+            import maix.image
+        except ImportError:
+            return
+        w = img.width()
+        bar_h = 32
+        text = f"AI FAULT - {code}" if code else "AI FAULT"
+        try:
+            img.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_RED, thickness=-1)
+            img.draw_string(6, 2, text,
                             color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
         except Exception:
             pass

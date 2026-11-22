@@ -23,11 +23,15 @@ class VisionResult:
         result_data: Any = None,
         success: bool = False,
         error_message: str = "",
+        error_code: str = "",
     ):
         self.task_name = task_name
         self.result_data = result_data
         self.success = success
         self.error_message = error_message
+        # Stable failure identifier (see the E_* constants in
+        # framework/hal/interface/ai.py); empty when the task succeeded.
+        self.error_code = error_code
 
     def __repr__(self):
         return f"VisionResult(task={self.task_name}, success={self.success}, data={self.result_data})"

@@ -3,8 +3,8 @@
 
 设备端相机原本每帧都调 `maix.image.image2cv(raw, copy=True)`，640x480x3 一次拷
 921KB，台架真机实测要 9~16ms，是 find_blobs 之外最大的一块。多数时候这份拷贝白做了：
-TARGET/EXPLOSIVE 走 C++ `find_blobs`，直接吃 `camera.last_raw`（零拷贝）；RESCUE 走
-`_raw=True`，也直接吃 maix Image。只有 maix 不可用时回退 cv2，以及调参页，才真需要
+C++ 实现的处理器直接吃 `camera.last_raw`（零拷贝）；需要 maix Image 的处理器走
+`_raw=True`，同样是零拷贝。只有 maix 不可用时回退 cv2，以及调参页，才真需要
 这份 BGR numpy。
 
 所以相机改成交出一个 `LazyFrame` 代理，不再一开始就转换：
@@ -14,8 +14,8 @@ TARGET/EXPLOSIVE 走 C++ `find_blobs`，直接吃 `camera.last_raw`（零拷贝�
   · 切片、`__array__`、`.copy()`、`.numpy()` 这些真正碰像素的操作，才触发一次
     `image2cv`，结果缓存起来，同一帧只转一次。
 
-于是设备上 maix 可用、又走 C++ 路径时，一次拷贝都不发生；cv2 回退、调参页、RESCUE
-传 numpy 这几种情况，结果和原来逐位一致。
+于是设备上 maix 可用、又走 C++ 路径时，一次拷贝都不发生；cv2 回退、调参页、需要
+numpy 的处理器这几种情况，结果和原来逐位一致。
 
 代理要满足几条：能像 `np.ndarray` 一样通过 `frame is None` 之外的判断（处理器里唯一
 不碰像素的用法是 `.shape`）；不要求 `isinstance(frame, np.ndarray)`，全仓库查过，

@@ -1,16 +1,82 @@
-﻿from __future__ import annotations
+﻿"""AI inference contracts shared by every platform backend.
+
+Coordinate and unit conventions used by `Detection` and friends:
+
+* `x`/`y` are the top-left corner of the box in **source frame pixels**,
+  `w`/`h` its width and height.  A backend must undo its own letterbox
+  scaling before returning.
+* `score` is a probability in `[0.0, 1.0]`.
+* `class_id` indexes the model label list.  The label order is part of the
+  model contract and must be identical across backends.
+* `seg_mask` is a single channel `uint8` mask in **box local coordinates**
+  (same size as the box).  `MaskStats.center_x`/`center_y` are reported in
+  source frame coordinates.
+* `keypoints` are in source frame coordinates.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Protocol, TypedDict, Unpack, runtime_checkable
 
+
 import numpy as np
 
-# Detection filtering constants — tune these on-site
-# camera 1280x352: steelball ~6500px -> set 20000 as headroom
+# Detection filter thresholds, in source frame pixels.  They are
+# absolute pixels and must be re-tuned whenever the frame resolution
+# changes.
 MIN_AREA = 100
 MAX_AREA = 20000
 MAX_RATIO = 2.0
 MARGIN = 4
+
+# Stable failure identifiers.  Callers and tests branch on these instead of
+# matching on message text.
+E_MODEL_NOT_LOADED = "E_MODEL_NOT_LOADED"
+E_MODEL_TYPE_UNSUPPORTED = "E_MODEL_TYPE_UNSUPPORTED"
+E_MODEL_LOAD_FAILED = "E_MODEL_LOAD_FAILED"
+E_OUTPUT_LAYOUT_MISMATCH = "E_OUTPUT_LAYOUT_MISMATCH"
+E_INFER_FAILED = "E_INFER_FAILED"
+E_INVALID_INPUT = "E_INVALID_INPUT"
+
+
+class AIError(Exception):
+    """Base class for AI layer failures.
+
+    `code` is one of the `E_*` constants above so that callers can branch
+    on the failure kind without parsing message text.
+    """
+
+    code = E_INFER_FAILED
+
+    def __init__(self, message: str, code: str = "") -> None:
+        super().__init__(message)
+        self.message = message
+        if code:
+            self.code = code
+
+
+class ModelConfigError(AIError):
+    """The requested model/backend combination cannot be honoured.
+
+    Configuration errors are never downgraded to an empty result.  Running
+    the wrong post-processing on a model output does not raise, it silently
+    produces wrong boxes, which is more dangerous than a visible failure.
+    """
+
+    code = E_MODEL_TYPE_UNSUPPORTED
+
+
+class ModelLoadError(AIError):
+    """The model file could not be loaded by the selected runtime class."""
+
+    code = E_MODEL_LOAD_FAILED
+
+
+class ContractError(AIError):
+    """Model output does not match the declared output layout."""
+
+    code = E_OUTPUT_LAYOUT_MISMATCH
 
 
 class DetectKwargs(TypedDict, total=False):
@@ -80,6 +146,13 @@ def filter_detections(
     image_height: int = 640,
     on_discard: Optional[Callable[[Detection, str], None]] = None,
 ) -> list[Detection]:
+    """Drop detections that are too small, too large, too distorted or too
+    close to the frame border.
+
+    `on_discard` receives every removed detection together with the reason
+    (`area_too_small`, `area_too_large`, `aspect_ratio`, `edge_proximity`)
+    so the caller can report what was filtered instead of only how many.
+    """
     filtered: list[Detection] = []
     for obj in detections:
         area = obj.w * obj.h
@@ -153,6 +226,21 @@ class AIInference(Protocol):
 
     @property
     def model_path(self) -> str:
+        ...
+
+    @property
+    def last_error_code(self) -> str:
+        """Code of the most recent failure, empty while the backend is healthy."""
+        ...
+
+    @property
+    def error_count(self) -> int:
+        """Number of failures recorded since the last successful inference."""
+        ...
+
+    @property
+    def degraded(self) -> bool:
+        """True while the backend runs but does not produce valid output."""
         ...
 
     def detect(
