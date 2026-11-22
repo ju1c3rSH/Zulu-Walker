@@ -23,12 +23,20 @@ Iron rules (violating these bricks the board or hides bugs):
 from __future__ import annotations
 
 
-def _make_wdt_feed():
-    """1Hz-throttled feed over the platform watchdog; noop where absent."""
-    try:
-        from framework.hal.platforms.maixcam2 import create_watchdog
+def _make_wdt_feed(platform: str = "maixcam2"):
+    """1Hz-throttled feed over the platform watchdog; noop where absent.
 
-        wdt = create_watchdog()
+    The watchdog capability is probed on the *active* platform module.
+    A hardcoded maixcam2 import burns an exception on every boot for boards
+    whose firmware has no ``nn.YOLO11`` (MaixCAM-Pro) -- and whose watchdog
+    is a firmware stub anyway.
+    """
+    try:
+        import importlib
+
+        platform_mod = importlib.import_module(f"framework.hal.platforms.{platform}")
+        create_watchdog = getattr(platform_mod, "create_watchdog", None)
+        wdt = create_watchdog() if callable(create_watchdog) else None
     except Exception:
         wdt = None
     if wdt is None:
@@ -115,17 +123,13 @@ def _build_tick(manager, machine, cfg: dict = None):
         all — nothing would consume them.
     """
     from framework.hal.interface.sink import SinkGroup
+    from framework.hal.sink import MaixLcdSink
 
     cfg = cfg or {}
     interval_ms = cfg.get("display_show_interval_ms")
     sinks = SinkGroup()
-    try:
-        from framework.hal.platforms.maixcam2.sink import MaixLcdSink
-
-        if getattr(machine, "display", None) is not None:
-            sinks.add(MaixLcdSink(machine.display, interval_ms=interval_ms))
-    except ImportError:
-        pass
+    if getattr(machine, "display", None) is not None:
+        sinks.add(MaixLcdSink(machine.display, interval_ms=interval_ms))
     # TODO(project): add more sinks / input sources here (CvWindowSink,
     # JpegStreamSink, touchscreen -> CmdQueue).
 
@@ -145,24 +149,30 @@ def _build_tick(manager, machine, cfg: dict = None):
 
 
 def main() -> None:
+    import os
+
     import yaml
 
     from utils.debug_console import DebugConsole
 
+    # 平台配置路径: 默认读工作区的 project_config.yaml; ZWULU_CONFIG 可指向
+    # 其它配置 (如 configs/project_config.maixcam1.yaml), 避免为了切平台去
+    # 覆盖工作区文件。
+    config_path = os.environ.get("ZWULU_CONFIG", "project_config.yaml")
     try:
-        with open("project_config.yaml") as f:
+        with open(config_path) as f:
             cfg = yaml.safe_load(f) or {}
     except Exception:
         cfg = {}
     DebugConsole.set_global_enabled(cfg.get("debug_console_enabled", True))
     _apply_observability(cfg)
 
-    wdt_feed = _make_wdt_feed()  # rule 1
+    wdt_feed = _make_wdt_feed(cfg.get("platform", "maixcam2"))  # rule 1
     wdt_feed()
 
     from framework.hal import Machine
 
-    machine = Machine.create("project_config.yaml")
+    machine = Machine.create(config_path)
     wdt_feed()  # AI model load can take seconds
 
     # TODO(project): platform bring-up that needs `machine` goes here

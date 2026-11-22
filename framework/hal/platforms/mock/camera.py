@@ -38,6 +38,15 @@ class MockCamera:
         )
         return frame
 
+    def read_raw(self) -> Optional[np.ndarray]:
+        """Return a fresh BGR frame (mock has no native image buffer)."""
+        return self.read()
+
+    @property
+    def last_raw(self):
+        """No native frame buffer here (maix Image is maix-only)."""
+        return None
+
     def set(self, prop_id: int, value) -> bool:
         return True
 

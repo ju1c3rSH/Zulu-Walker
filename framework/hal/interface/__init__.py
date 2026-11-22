@@ -1,4 +1,5 @@
 ﻿from .ai import AIInference, Detection, Keypoint, MaskStats, SegmentResult
+from .battery import Battery, BatteryReading, NullBattery
 from .camera import Camera
 from .display import Display
 from .sink import FrameSink, InputSource, SinkGroup
@@ -7,6 +8,8 @@ from .watchdog import Watchdog
 
 __all__ = [
     "AIInference",
+    "Battery",
+    "BatteryReading",
     "Camera",
     "Detection",
     "Display",
@@ -14,6 +17,7 @@ __all__ = [
     "InputSource",
     "Keypoint",
     "MaskStats",
+    "NullBattery",
     "SegmentResult",
     "SinkGroup",
     "Uart",

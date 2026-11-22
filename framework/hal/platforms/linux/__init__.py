@@ -59,6 +59,13 @@ def create_ai(**kwargs) -> LinuxAI:
     return LinuxAI()
 
 
+def create_battery() -> "NullBattery":
+    """Capability hook: PC 上没有电量计，返回 -1 的默认实现。"""
+    from framework.hal.interface import NullBattery
+
+    return NullBattery()
+
+
 def resolve_camera_source(raw_source):
     """Capability hook (MOD-02): map user-friendly sources to /dev nodes.
 
@@ -84,7 +91,9 @@ __all__ = [
     "LinuxCamera",
     "LinuxDisplay",
     "LinuxUart",
+    "NullBattery",
     "create_ai",
+    "create_battery",
     "create_camera",
     "create_display",
     "create_uart",

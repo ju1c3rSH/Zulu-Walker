@@ -21,12 +21,21 @@ def create_ai(**kwargs) -> MockAI:
     return MockAI()
 
 
+def create_battery() -> "NullBattery":
+    """Capability hook: 无电量计平台，返回 -1 的默认实现。"""
+    from framework.hal.interface import NullBattery
+
+    return NullBattery()
+
+
 __all__ = [
     "MockAI",
     "MockCamera",
     "MockDisplay",
     "MockUart",
+    "NullBattery",
     "create_ai",
+    "create_battery",
     "create_camera",
     "create_display",
     "create_uart",
