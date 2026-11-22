@@ -44,6 +44,12 @@ ai:
       model_type: "yolov5"   # CAM1 无 YOLO11 类, 显式指定避免落到 "auto" 歧义
   active: "eod_hostage"
 
+battery:
+  # Pro 的 AXP2101 走 I2C-4, 一次完整读约 1.02ms; 采样在主循环慢节拍里
+  enabled: true
+  poll_interval_ms: 10000
+  low_percent: 20
+
 streaming:
   # zw_wifi_stream 模块声明 PLATFORMS = ("maixcam2",), 在 CAM1 上会被跳过
   wifi_mode: "off"

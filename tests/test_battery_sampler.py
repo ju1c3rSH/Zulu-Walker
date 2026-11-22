@@ -140,3 +140,19 @@ def test_read_exception_keeps_previous_snapshot():
     s.poll()
     assert s.snapshot() is before, "读失败不能把画面清掉，也不能变成 0%"
     assert s.reads == 1
+
+
+def test_reason_survives_the_snapshot():
+    """快照是渲染/日志的唯一来源: HAL 说"为什么", 这里不能丢。"""
+    s = BatterySampler(_ScriptedBattery(BatteryReading(reason="没装电池")))
+    s.poll()
+    assert s.snapshot().percent == -1 and s.snapshot().reason == "没装电池"
+
+
+def test_reason_is_cleared_by_a_good_reading():
+    s = BatterySampler(_ScriptedBattery(BatteryReading(reason="读失败: OSError"),
+                                        _reading(80)))
+    s.poll()
+    assert s.snapshot().reason == "读失败: OSError"
+    s.poll()
+    assert s.snapshot().percent == 80 and s.snapshot().reason == ""
