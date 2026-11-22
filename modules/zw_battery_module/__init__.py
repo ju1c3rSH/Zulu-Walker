@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
-"""电量采集: 主循环里的慢节拍，不开线程。
+"""Sample battery state on the main loop tick, without a worker thread.
 
-为什么是主循环: 显示线程只在 MAIN 页跑，采集放那里会让数据源跟着页面状态走。
-为什么用 monotonic 不用计数器: 主循环拍长随负载变（实测 89Hz，约 11.2ms/拍），
-计数器不是时间单位。采样那一拍 1.02ms（含 is_charging 约 1.30ms），落在主循环里，
-推流推迟 ≤1ms、不丢帧。
+The main loop is used because the display thread only runs on the MAIN page;
+sampling there would tie the data source to page state. Timing uses
+``time.monotonic()`` because loop cadence varies with load (measured 89 Hz,
+about 11.2 ms per tick), so a tick counter is not a time unit. A sample takes
+1.02 ms (about 1.30 ms including ``is_charging``), which delays streaming by
+at most 1 ms and drops no frames.
 
-日志策略: 快照发布就打印。`BatterySampler.poll()` 返回新快照或 None，这里只做
-`if snap is not None: log_print(...)` —— 不记"上次是多少"、不判"值变没变"、不限流。
-所以模块里没有任何日志状态，也不会在读失败时把旧值当新值重打一遍。
-`log_print` 一次调用同时进控制台与 logs/debug.log，存档与控制台因此天然一致。
+Each published snapshot is logged once: ``poll()`` returns a snapshot or
+``None``, and this module only checks for ``None`` before calling ``log_print``.
+No previous value is retained, no change detection or rate limiting is done,
+and failed reads are never replayed as stale snapshots. ``log_print`` writes
+to the console and ``logs/debug.log`` in one call, so both stay consistent.
 
-退避: 单次读超过 50ms 判定总线异常，周期翻倍（上限 60s）；一次好读还回一半 ——
-否则一次 50ms 抖动会把 60s 永久吃下去。
+A read over 50 ms is treated as a bus fault and doubles the interval, capped
+at 60 s; one good read halves it again so a single spike cannot pin the
+interval at the cap.
 """
 from __future__ import annotations
 
@@ -23,13 +27,13 @@ from framework.hal.battery_sampler import BatterySampler, BatterySnapshot
 from framework.hal.interface.battery import NullBattery
 from utils.log_util import log_print
 
-_SLOW_READ_MS = 50.0            # 单次读超过这个值 = 总线不正常，周期翻倍
-_MAX_INTERVAL_S = 60.0          # 退避周期上限（秒）
+_SLOW_READ_MS = 50.0            # A read above this is treated as a bus fault and doubles the interval.
+_MAX_INTERVAL_S = 60.0          # Upper bound for the backoff interval in seconds.
 
 _sampler: Optional[BatterySampler] = None
-_base_interval = 10.0           # 配置值; 退避只往上翻, 不会低于它
+_base_interval = 10.0           # Configured interval; backoff never drops below it.
 _interval = 0.0
-_next_t = 0.0                   # 0 = 第一拍就采，不要等满一个周期
+_next_t = 0.0                   # Zero samples on the first tick instead of waiting one full interval.
 _driver = "-"
 
 
@@ -46,7 +50,8 @@ def init(machine, **kwargs) -> None:
         log_print("[BAT] 平台未提供电量 HAL，不显示")
         return
     if isinstance(battery, NullBattery):
-        # 无电量计的平台（桌面 / mock）: 保持安静，不要每 10s 打一行"无读数"
+        # Platforms without a fuel gauge (desktop/mock) stay quiet instead
+        # of logging "no reading" every 10 s.
         log_print("[BAT] 平台无电量计，不采集")
         return
 
@@ -65,7 +70,7 @@ def loop() -> None:
 
 
 def _poll_if_due(now: float) -> None:
-    """时间可注入 —— 测试直接喂时间戳，不需要 sleep。"""
+    """Poll at a caller-supplied time so tests can inject timestamps without sleeping."""
     global _next_t, _interval
     if _sampler is None or now < _next_t:
         return
@@ -75,18 +80,18 @@ def _poll_if_due(now: float) -> None:
         _interval = min(_interval * 2, _MAX_INTERVAL_S)
         log_print(f"[BAT] 单次读 {_sampler.last_ms:.0f}ms，周期退避到 {_interval:.0f}s")
     elif _interval > _base_interval:
-        # 一次好读就还一半 —— 否则一次 50ms 抖动会把 60s 永久吃下去。
+        # One good read halves the interval; otherwise a single 50 ms spike keeps the 60 s cap forever.
         _interval = max(_base_interval, _interval / 2)
 
-    if snap is not None:                       # 新快照 = 一行; 没有新快照 = 不说话
+    if snap is not None:                       # A new snapshot produces one line; no snapshot produces none.
         log_print(_format(snap, _sampler.last_ms, _driver))
 
-    # 排下一次要等多久，必须在读完/退避之后再算 —— 否则退避要等一个周期才生效
+    # Schedule the next read after the read and backoff, so a new interval takes effect immediately.
     _next_t = now + _interval
 
 
 def _format(snap: BatterySnapshot, read_ms: float, driver: str) -> str:
-    """一行一个事实。失败原因随快照过来（`snap.reason`），HAL/采样器不再各说一句。"""
+    """Format one snapshot as a single line; failures carry ``snap.reason`` from the HAL."""
     if snap.percent < 0:
         return (f"[BAT] 无读数（{snap.reason or '原因未知'}）"
                 f" read={read_ms:.2f}ms driver={driver}")
@@ -95,5 +100,5 @@ def _format(snap: BatterySnapshot, read_ms: float, driver: str) -> str:
 
 
 def get_sampler() -> Optional[BatterySampler]:
-    """给 HUD 接线用；未启用 / 无 HAL 时返回 None。"""
+    """Return the sampler for HUD wiring, or None when disabled or unsupported."""
     return _sampler

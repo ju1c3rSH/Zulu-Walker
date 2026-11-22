@@ -67,7 +67,7 @@ def merge_collinear_lines(lines: np.ndarray, angle_threshold: float = 5.0,
 
 
 def line_to_line_distance(line1: np.ndarray, line2: np.ndarray) -> float:
-    """Compute minimum distance between two line segments."""
+    """Return the shortest distance between two line segments."""
     x1, y1, x2, y2 = line1
     x3, y3, x4, y4 = line2
 

@@ -23,13 +23,11 @@ _COLOR_NAMES = {
 
 @register_processor("TrackCargoProcessor")
 class TrackCargoProcessor(Processor):
-    """物料跟踪处理器。
+    """Track a cargo marker and report its normalized offset from frame center.
 
-    输出 result_data:
-      percent_error_x: int, [-5000, 5000], 0=画面中心, 负=偏左, 正=偏右
-      percent_error_y: int, [-5000, 5000], 0=画面中心, 负=偏上, 正=偏下
-      coordinate: (cx, cy) 像素坐标
-      radius: float, 检测到的圆半径（像素）
+    result_data holds percent_error_x and percent_error_y in [-5000, 5000]
+    (0 is frame center; negative is left/up, positive is right/down), the
+    pixel coordinate (cx, cy), and the detected radius in pixels.
     """
 
     def __init__(self, name: str = "cargo_detect"):

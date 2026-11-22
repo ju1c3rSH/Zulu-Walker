@@ -2,12 +2,12 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Agent/IDE config — NOT for version control
+# Agent and IDE configuration
 AGENTS.md
 CLAUDE.md
 claude.settings.json
 
-# Runtime data
+# Local tooling, reference material, and packaged builds
 logs/
 .vscode/c_cpp_properties.json
 .vscode/settings.json
@@ -36,13 +36,13 @@ dist/
 capture_exposure_set.py
 docs/competition/封箱清单.md
 
-# Agent workspace (local tooling state)
+# Agent workspace state
 .workbuddy/
 
 # Log files
 *.log
 logs/
 
-# Temporary / throwaway scripts at repo root
+# Throwaway scripts at the repository root
 .tmp_*.py
 /_*.py

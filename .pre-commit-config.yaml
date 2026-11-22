@@ -1,7 +1,9 @@
-# Opt-in architecture guardrails (BRANCH-03). Install with:
+# Opt-in architecture checks. Install with:
 #   pip install pre-commit && pre-commit install
-# Both checks also run standalone:
+# Every hook also runs standalone:
 #   python scripts/check_platform_isolation.py
+#   python scripts/check_boot_scope.py
+#   python -m compileall -q app framework modules utils tests scripts
 #   python -m unittest discover -s tests
 repos:
   - repo: local

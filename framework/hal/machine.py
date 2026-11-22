@@ -41,8 +41,8 @@ class Machine:
         # Platform capability hooks (probed via getattr, never hard imports):
         self.exit_check = exit_check
         self.sys_info = sys_info
-        # 电量计（可选能力）: 有 PMU/sysfs 电量计的平台为实例，
-        # 其余为 None。构造在 create 阶段完成，不碰主循环。
+        # Optional fuel gauge: an instance on platforms with a PMU/sysfs gauge,
+        # None elsewhere. Constructed in create(), so the main loop is untouched.
         self.battery = battery
 
     @classmethod
@@ -138,9 +138,10 @@ class Machine:
             logger.warning("UART creation failed (non-fatal): %s", e)
             uart = None
 
-        # 电量: 与 display/uart 一样在 create 阶段初始化（Pro 上 open i2c-4, ~2.4ms）。
-        # 不能留到第一次 read —— 那把一次冷 import 塞进了主循环的一拍。
-        # 平台没提供 create_battery 时保持 None（能力探测，不硬导入）。
+        # Battery, like display/uart, is initialized in create() (on Pro this
+        # opens i2c-4, ~2.4 ms). Deferring it to the first read would put a cold
+        # import into a main-loop tick. Platforms without create_battery keep
+        # None: capability probing, no hard import.
         battery: Optional[Battery] = None
         battery_factory = getattr(platform_mod, "create_battery", None)
         if callable(battery_factory):

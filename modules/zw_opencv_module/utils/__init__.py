@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-OpenCV 模块工具
-"""
+"""Provide shared utilities for the OpenCV module."""
 from .focal_distance_util import CameraIntrinsics, FocalDistanceCalculator
 
 __all__ = [

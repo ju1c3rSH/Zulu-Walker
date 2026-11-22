@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Processor 基类和协议定义。
+"""Define the processor base class, result container, and tracking protocol.
 
-Protocol 规范：
-  ColorTrackable — 实现了 set_target_color(color: Color) 的 Processor
-    自动满足此协议。使用 isinstance(processor, ColorTrackable) 检测，
-    运行时通过 @runtime_checkable 反射检查方法是否存在。
-    注意：Protocol 不检查方法签名，请确保实现正确。
+A Processor implementing set_target_color(color: Color) satisfies
+ColorTrackable automatically. Use isinstance(processor, ColorTrackable) to
+test for it; @runtime_checkable only checks that the method exists, not its
+signature, so implementations must keep the signature correct.
 """
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
@@ -15,7 +13,7 @@ import numpy as np
 
 
 class VisionResult:
-    """视觉任务结果"""
+    """Hold the outcome of one vision task."""
 
     def __init__(
         self,
@@ -38,7 +36,7 @@ class VisionResult:
 
 
 class Processor(ABC):
-    """处理器抽象基类"""
+    """Abstract base class for vision processors."""
 
     def __init__(self, name: str = ""):
         self.name = name or self.__class__.__name__
@@ -46,30 +44,19 @@ class Processor(ABC):
 
     @abstractmethod
     def process(self, frame: np.ndarray, context: dict = None) -> VisionResult:
-        """
-        处理帧
+        """Process one frame and return its result.
 
         Args:
-            frame: 输入图像帧
-            context: 上下文，可包含前置任务结果
-
-        Returns:
-            VisionResult: 处理结果
+            context: May carry results from upstream tasks.
         """
         pass
 
     def draw_result(
         self, frame: np.ndarray, result: VisionResult
     ) -> np.ndarray:
-        """
-        在帧上绘制结果
+        """Draw the result onto the frame.
 
-        Args:
-            frame: 输入图像帧
-            result: 处理结果
-
-        Returns:
-            np.ndarray: 绘制后的帧
+        The default implementation leaves the frame unchanged.
         """
         return frame
 
@@ -84,7 +71,10 @@ class Processor(ABC):
         self._getters.clear()
 
     def release(self) -> None:
-        """释放 Processor 持有的资源（模型、detector等）。子类按需覆盖。"""
+        """Release resources held by the processor, such as models or detectors.
+
+        Subclasses override this when they own such resources.
+        """
         pass
 
 @runtime_checkable

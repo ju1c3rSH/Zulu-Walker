@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""电量 HAL: 接口约定 + 各平台实现。
+"""Battery HAL: interface contract and per-platform implementations.
 
-平台实现按文件路径加载，不走 `framework.hal.platforms.<平台>` 包 —— 那个
-`__init__` 会把 `.ai/.camera/.display/.uart` 一起拉进来，PC 上没有 maix 直接
-ImportError（同 tests/test_gks_review_fixes.py:179 的说明）。
+Platform modules are loaded by file path instead of via the
+``framework.hal.platforms.<platform>`` package, whose ``__init__`` also pulls
+in ``.ai``, ``.camera``, ``.display`` and ``.uart`` and raises ImportError on a
+PC without maix (see tests/test_gks_review_fixes.py:179).
 """
 import importlib.util
 import os
@@ -27,7 +28,7 @@ def _load(rel: str):
     return module
 
 
-# ---------------- 约定 ----------------
+# ---------------- contract ----------------
 
 def test_reading_defaults_mean_unavailable():
     r = BatteryReading()
@@ -35,7 +36,7 @@ def test_reading_defaults_mean_unavailable():
 
 
 def test_null_battery_satisfies_protocol_and_reports_absent():
-    """默认实现返回 -1（无电池），且 HUD/采样器只判 percent >= 0。"""
+    """The default implementation returns -1 (absent); HUD and sampler only check percent >= 0."""
     b = NullBattery()
     assert isinstance(b, Battery)
     assert b.read().percent == -1
@@ -44,7 +45,7 @@ def test_null_battery_satisfies_protocol_and_reports_absent():
 # ---------------- maixcam2: sysfs ----------------
 
 def test_maixcam2_maps_capacity_0_90_to_0_100(tmp_path, monkeypatch):
-    """官方 pmu 的标准: `capacity` 只标定到 90, 放大到 100。45% 原始值显示 50%。"""
+    """The official PMU calibrates ``capacity`` only up to 90, so scale to 100: a raw 45 shows as 50."""
     mod = _load("framework/hal/platforms/maixcam2/battery.py")
     monkeypatch.setattr(mod, "_DIR", str(tmp_path))
 
@@ -61,14 +62,14 @@ def test_maixcam2_maps_capacity_0_90_to_0_100(tmp_path, monkeypatch):
 
 
 def test_maixcam2_missing_node_is_absent_not_crash(tmp_path, monkeypatch):
-    """没装电池 / 内核没起驱动时节点不存在 —— 按无电池处理。"""
+    """A missing node means no battery is installed or the kernel driver has not started; treat as absent."""
     mod = _load("framework/hal/platforms/maixcam2/battery.py")
     monkeypatch.setattr(mod, "_DIR", str(tmp_path))
     assert mod.MaixCam2Battery().read().percent == -1
 
 
 def test_maixcam2_voltage_optional(tmp_path, monkeypatch):
-    """voltage_now 读不到不影响百分比。"""
+    """An unreadable voltage_now does not affect the percentage."""
     mod = _load("framework/hal/platforms/maixcam2/battery.py")
     monkeypatch.setattr(mod, "_DIR", str(tmp_path))
     (tmp_path / "capacity").write_text("72\n")
@@ -77,7 +78,7 @@ def test_maixcam2_voltage_optional(tmp_path, monkeypatch):
 
 
 def test_maixcam2_declares_kernel_poll_floor():
-    """内核 CW2015 驱动 8s 才更新一次，读更快是白读。"""
+    """The kernel CW2015 driver updates only every 8s, so polling faster is pointless."""
     mod = _load("framework/hal/platforms/maixcam2/battery.py")
     assert mod.MaixCam2Battery.min_poll_s == 8.0
 
@@ -85,7 +86,9 @@ def test_maixcam2_declares_kernel_poll_floor():
 # ---------------- maixcam1 (Pro): AXP2101 ----------------
 
 def test_maixcam1_without_pmu_degrades_to_absent():
-    """PC / 老固件没有 maix.ext_dev: 构造时就确定没电池，read() 不重试也不抛。"""
+    """Without maix.ext_dev (PC or old firmware), no battery is known at
+    construction time; read() neither retries nor raises.
+    """
     try:
         import maix.ext_dev  # noqa: F401
         pytest.skip("本机装了 maix，测不到降级路径")
@@ -115,7 +118,7 @@ class _FakePMU:
 
 def _battery_with(fake):
     mod = _load("framework/hal/platforms/maixcam1/battery.py")
-    b = mod.MaixCam1Battery()      # PC 上构造必然失败, _pmu 为 None
+    b = mod.MaixCam1Battery()      # on PC construction fails, so _pmu is None
     b._pmu = fake
     return b
 
@@ -126,7 +129,7 @@ def test_maixcam1_passes_through_reading():
 
 
 def test_maixcam1_zero_voltage_is_reported_as_unavailable():
-    """0mV 不是有效读数, 报 0 会被下游当"电芯已死"。"""
+    """0 mV is not a valid reading; reporting 0 would look like a dead cell."""
     assert _battery_with(_FakePMU(60, 0)).read().millivolts == -1
 
 
@@ -137,6 +140,8 @@ def test_maixcam1_pmu_exception_is_swallowed():
 
 
 def test_null_battery_explains_itself():
-    """linux/mock 上不是"没电池", 是"这个平台没有电量计" —— -1 要能区分。"""
+    """On linux/mock this means "no fuel gauge", not "no battery"; -1 must
+    distinguish the two cases.
+    """
     r = NullBattery().read()
     assert r.percent == -1 and "无电量计" in r.reason

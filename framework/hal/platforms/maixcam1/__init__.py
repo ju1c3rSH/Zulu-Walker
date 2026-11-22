@@ -9,7 +9,7 @@ def create_exit_check():
     """Return the platform exit predicate for the framework main loop.
 
     The framework calls this without importing maix itself (ARCH-06).
-    MaixCAM 固件同样提供 maix.app.need_exit。
+    MaixCAM firmware also provides maix.app.need_exit.
     """
     from maix import app as _app
 
@@ -19,15 +19,16 @@ def create_exit_check():
 def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> MaixCam1Camera:
     camera_id = kwargs.pop("camera_id", str(source))
     fps = kwargs.pop("fps", None)
-    # CAM1 取图延时最低 30+ms（即使 buff_num=1 也至少双缓存），
-    # 这里默认 2 即可，不必像 CAM2 那样堆缓冲。
+    # CAM1 capture latency is at least 30 ms even at buff_num=1 because the
+    # firmware always double-buffers, so a small value is sufficient here.
     buff_num = kwargs.pop("camera_stream_queue_size", 2)
     focal_length_mm = kwargs.pop("focal_length_mm", None)
     sensor_width_mm = kwargs.pop("sensor_width_mm", None)
     sensor_height_mm = kwargs.pop("sensor_height_mm", None)
-    # Machine.create 会把曝光/增益/AEC 透传给平台工厂；CAM1 的相机构造不认
-    # 这三个参数（运行期改曝光要走 set()），必须显式吞掉，否则这里直接
-    # TypeError，连相机都开不起来。
+    # Machine.create forwards exposure/gain/AEC to the platform factory, but
+    # the CAM1 camera constructor rejects them (runtime changes go via set()).
+    # Drop them here; passing them through would raise TypeError before the
+    # camera can even open.
     kwargs.pop("exposure_us", None)
     kwargs.pop("gain", None)
     kwargs.pop("aec", None)
@@ -57,8 +58,6 @@ def create_ai() -> MaixCam1AI:
 
 
 def create_battery() -> MaixCam1Battery:
-    # 与 create_display/create_uart 一致: 在 create 阶段就把硬件打开。
-    # 不能留到第一次 read() —— 那把"冷 import maix.ext_dev"塞进了主循环的一拍。
     return MaixCam1Battery()
 
 

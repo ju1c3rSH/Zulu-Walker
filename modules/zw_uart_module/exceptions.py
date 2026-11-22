@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-zw_uart_module - Custom exceptions
-
-Defines module-specific exceptions for UART communication errors.
-"""
+"""Define module-specific exceptions for UART communication errors."""
 
 
 class UartError(Exception):

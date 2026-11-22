@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MaixCAM2 (CW2015) 电量: 读内核 power_supply 的 sysfs 节点。
+"""Read MaixCAM2 (CW2015) battery state from kernel power_supply sysfs nodes.
 
-官方 pmu 内部读的是同一个 `capacity`（百分比一致），但它构造时会把 B29 复用成
-GPIO、且 `get_bat_vol()` 恒 0，所以这里直读 sysfs。capacity 只标定到 90，按官方
-数值放大到 100。
+The official PMU reads the same ``capacity`` value internally, but its
+constructor reconfigures B29 as a GPIO and ``get_bat_vol()`` always returns 0,
+so read sysfs directly. The gauge reports capacity on a 0..90 scale; scale it
+to 0..100.
 """
 from __future__ import annotations
 
@@ -18,18 +19,18 @@ def _read_text(name: str) -> str:
 
 
 class MaixCam2Battery:
-    min_poll_s = 8.0        # 内核驱动 8s 才轮询一次电量计，读更快纯属白读
+    min_poll_s = 8.0        # Kernel driver polls the gauge only every 8s; faster reads are stale.
 
     def read(self) -> BatteryReading:
-        """节点不存在 = 没装电池 / 驱动没起，按无电池处理。"""
+        """Return an empty reading when the node is absent (no battery or driver not running)."""
         try:
-            capacity = int(_read_text("capacity"))      # 0~90
+            capacity = int(_read_text("capacity"))      # Calibrated 0..90.
         except (OSError, ValueError):
             return BatteryReading(reason="sysfs 无 capacity（没装电池/驱动没起）")
 
         millivolts = -1
         try:
-            millivolts = int(_read_text("voltage_now")) // 1000     # 内核给 µV
+            millivolts = int(_read_text("voltage_now")) // 1000     # Kernel reports microvolts.
         except (OSError, ValueError):
             pass
 

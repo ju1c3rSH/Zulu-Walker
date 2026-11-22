@@ -60,7 +60,7 @@ def create_ai(**kwargs) -> LinuxAI:
 
 
 def create_battery() -> "NullBattery":
-    """Capability hook: PC 上没有电量计，返回 -1 的默认实现。"""
+    """Capability hook: return the -1 default on PCs, which have no fuel gauge."""
     from framework.hal.interface import NullBattery
 
     return NullBattery()

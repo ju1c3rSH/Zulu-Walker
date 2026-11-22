@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-性能分析器模块
-
-提供细粒度的性能计时和统计功能，帮助定位视觉识别流程中的瓶颈。
-"""
+"""Provide fine-grained timing and sliding-window statistics for the vision pipeline."""
 import time
 from collections import deque
 from contextlib import contextmanager
@@ -16,7 +12,7 @@ from utils.log_util import LoggerFactory, log_print
 
 @dataclass
 class TimingRecord:
-    """单次计时记录"""
+    """A single timed interval."""
 
     name: str
     duration_ms: float
@@ -25,7 +21,7 @@ class TimingRecord:
 
 @dataclass
 class TimingStats:
-    """计时统计数据"""
+    """Aggregated statistics for one timer."""
     name: str
     avg_ms: float = 0.0
     max_ms: float = 0.0
@@ -34,7 +30,7 @@ class TimingStats:
     total_ms: float = 0.0
 
     def update(self, duration_ms: float):
-        """更新统计数据"""
+        """Fold one duration into the aggregate."""
         self.count += 1
         self.total_ms += duration_ms
         self.avg_ms = self.total_ms / self.count
@@ -43,33 +39,28 @@ class TimingStats:
 
 
 class PerformanceProfiler:
-    """
-    性能分析器
-
-    支持多阶段计时、滑动窗口统计、控制台和日志文件输出。
-    """
+    """Record named timings and emit periodic sliding-window statistics."""
 
     def __init__(self, window_size: int = 60, log_file: str = "logs/performance.log"):
-        """
-        初始化性能分析器
+        """Initialize the profiler.
 
         Args:
-            window_size: 滑动窗口大小（帧数）
-            log_file: 日志文件路径
+            window_size: Number of recent records retained per timer.
+            log_file: Path passed to the logger factory.
         """
         self._enabled = True
         self._window_size = window_size
         self._log_file = log_file
 
-        # 计时器状态
+        # Timer state.
         self._start_times: Dict[str, float] = {}
         self._records: Dict[str, deque] = {}  # name -> deque of TimingRecord
         self._stats: Dict[str, TimingStats] = {}
 
-        # 层级关系（用于格式化输出）
+        # Parent-child relationships used when formatting output.
         self._hierarchy: Dict[str, List[str]] = {}
 
-        # 日志记录器
+        # Logger.
         self._logger = LoggerFactory.get_logger(
             name="performance",
             level=20,  # INFO
@@ -78,73 +69,59 @@ class PerformanceProfiler:
             format_str='%(asctime)s - %(message)s'
         )
 
-        # 帧计数器
+        # Frame counter.
         self._frame_count = 0
         self._last_report_time = time.time()
-        self._report_interval = 1.0  # 每秒输出一次报告
+        self._report_interval = 1.0  # Emit a report once per second.
 
     def enable(self, enabled: bool = True):
-        """启用/禁用性能分析"""
+        """Enable or disable profiling."""
         self._enabled = enabled
 
     def set_window_size(self, size: int):
-        """设置滑动窗口大小"""
+        """Set the sliding window size."""
         self._window_size = size
         for name in self._records:
             if len(self._records[name]) > size:
-                # 保留最新的记录
+                # Keep only the most recent records.
                 self._records[name] = deque(list(self._records[name])[-size:], maxlen=size)
 
     def set_report_interval(self, interval: float):
-        """设置报告输出间隔（秒）"""
+        """Set the report interval in seconds."""
         self._report_interval = interval
 
     def set_hierarchy(self, parent: str, children: List[str]):
-        """
-        设置层级关系
+        """Set the children of a timer for hierarchical report output.
 
         Args:
-            parent: 父节点名称
-            children: 子节点名称列表
+            parent: Name of the parent timer.
+            children: Names of the child timers.
         """
         self._hierarchy[parent] = children
 
     def start(self, name: str):
-        """
-        开始计时
-
-        Args:
-            name: 计时器名称
-        """
+        """Start timing under the given name."""
         if not self._enabled:
             return
 
         self._start_times[name] = time.perf_counter()
 
     def stop(self, name: str) -> float:
-        """
-        停止计时并记录
-
-        Args:
-            name: 计时器名称
-
-        Returns:
-            耗时（毫秒）
-        """
+        """Stop a timer, record it, and return the elapsed milliseconds."""
         if not self._enabled:
             return 0.0
 
         if name not in self._start_times:
             return 0.0
 
-        elapsed = (time.perf_counter() - self._start_times[name]) * 1000  # 转换为毫秒
+        elapsed = (time.perf_counter() - self._start_times[name]) * 1000  # Seconds to ms.
         del self._start_times[name]
 
         self._record(name, elapsed)
         return elapsed
 
     def _record(self, name: str, duration_ms: float):
-        """记录计时数据"""
+        """Append a record and update the aggregate statistics."""
         if name not in self._records:
             self._records[name] = deque(maxlen=self._window_size)
             self._stats[name] = TimingStats(name=name)
@@ -154,8 +131,7 @@ class PerformanceProfiler:
 
     @contextmanager
     def timer(self, name: str):
-        """
-        计时上下文管理器
+        """Time a block of code.
 
         Usage:
             with profiler.timer("frame_capture"):
@@ -168,9 +144,7 @@ class PerformanceProfiler:
             self.stop(name)
 
     def end_frame(self):
-        """
-        结束一帧的处理，检查是否需要输出报告
-        """
+        """Mark the end of a frame and emit a report when the interval elapses."""
         if not self._enabled:
             return
 
@@ -182,15 +156,11 @@ class PerformanceProfiler:
             self._last_report_time = current_time
 
     def get_stats(self, name: str) -> Optional[TimingStats]:
-        """获取指定计时器的统计数据"""
+        """Return aggregate statistics for a named timer."""
         return self._stats.get(name)
 
     def get_window_stats(self, name: str) -> Optional[TimingStats]:
-        """
-        获取滑动窗口内的统计数据
-
-        基于最近N帧的数据计算，而非全量累计。
-        """
+        """Compute statistics from the most recent records, not all-time totals."""
         if name not in self._records or not self._records[name]:
             return None
 
@@ -207,7 +177,7 @@ class PerformanceProfiler:
         )
 
     def print_report(self):
-        """打印性能报告"""
+        """Build the report and publish frame and detection times to the debug console."""
         if not self._records:
             return
 
@@ -216,7 +186,7 @@ class PerformanceProfiler:
         lines.append(f"[Performance] Last {self._window_size} frames summary")
         lines.append("=" * 60)
 
-        # 主要计时点
+        # Primary timers.
         main_timers = ["frame_capture", "processing", "total"]
         for timer_name in main_timers:
             stats = self.get_window_stats(timer_name)
@@ -226,7 +196,7 @@ class PerformanceProfiler:
                     f"max={stats.max_ms:6.2f}ms  min={stats.min_ms:6.2f}ms"
                 )
 
-        # 预处理阶段计时
+        # Preprocess stage timers.
         preprocess_timers = [
             "preprocess_color_convert",
             "preprocess_mask",
@@ -248,7 +218,7 @@ class PerformanceProfiler:
             lines.append("Preprocess stage:")
             lines.extend(preprocess_lines)
 
-        # 检测阶段计时
+        # Detection stage timers.
         detect_timers = ["detect_contours", "detect_ellipse"]
         detect_lines = []
         has_detect_data = False
@@ -265,7 +235,7 @@ class PerformanceProfiler:
             lines.append("Detection stage:")
             lines.extend(detect_lines)
 
-        # 任务级别计时
+        # Task-level timers.
         task_timers = [name for name in self._records.keys() if name.startswith("task_")]
         if task_timers:
             lines.append("-" * 40)
@@ -273,13 +243,13 @@ class PerformanceProfiler:
             for timer_name in sorted(task_timers):
                 stats = self.get_window_stats(timer_name)
                 if stats and stats.count > 0:
-                    # 简化名称显示
+                    # Strip the prefix for display.
                     display_name = timer_name.replace("task_", "")
                     lines.append(
                         f"  ├─ {display_name:25s}: avg={stats.avg_ms:6.2f}ms"
                     )
 
-        # 流程细分计时
+        # Pipeline-stage timers.
         pipeline_timers = ["process_all", "handle_detection", "state_machine",
                           "ffmpeg_push", "local_display", "callbacks"]
         pipeline_lines = []
@@ -297,7 +267,7 @@ class PerformanceProfiler:
             lines.append("Pipeline breakdown:")
             lines.extend(pipeline_lines)
 
-        # 计算FPS（基于滑动窗口）
+        # Derive FPS from the sliding-window average.
         total_stats = self.get_window_stats("total")
         if total_stats and total_stats.avg_ms > 0:
             fps = 1000.0 / total_stats.avg_ms
@@ -320,7 +290,7 @@ class PerformanceProfiler:
         # self._logger.info(f"\n{report}")
 
     def reset(self):
-        """重置所有统计数据"""
+        """Clear all recorded timings and statistics."""
         self._records.clear()
         self._stats.clear()
         self._start_times.clear()
@@ -331,5 +301,5 @@ class PerformanceProfiler:
 profiler = PerformanceProfiler()
 
 def get_profiler() -> PerformanceProfiler:
-    """获取全局性能分析器实例"""
+    """Return the shared profiler instance."""
     return profiler

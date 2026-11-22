@@ -14,27 +14,26 @@ from utils.log_util import log_print
 
 @register_processor("CircleTargetProcessor")
 class CircleTargetProcessor(Processor):
-    """圆形/椭圆目标检测处理器"""
+    """Detect circular and elliptical targets and report their offset."""
 
     def __init__(self, name: str = "circle_target_detect"):
         super().__init__(name)
         self.detector = CircleTargetDetector(name)
-        self.target_max_radius = 10  # 最大圆半径,单位为cm
-        self.target_min_radius = 2  # 最小圆半径,单位为cm
-        self.target_color: Optional[Color] = Color.RED  # 目标颜色
+        self.target_max_radius = 10  # Maximum radius in centimeters.
+        self.target_min_radius = 2  # Minimum radius in centimeters.
+        self.target_color: Optional[Color] = Color.RED
         self._frame_width: int = 640
         self._frame_height: int = 480
-        self._fps: float = 0.0  # 从外部获取的FPS
-        self._log_interval = 300  # 每300帧输出一次日志（约2秒@150fps）
+        self._fps: float = 0.0  # FPS supplied through context.
+        self._log_interval = 300  # Log every 300 frames (about 2 s at 150 fps).
         self._frame_count = 0
         self._last_logged_target_found: Optional[bool] = None
 
     def set_target_color(self, color: Optional[Color]):
-        """
-        设置目标颜色
+        """Set the color to search for.
 
         Args:
-            color: 目标颜色枚举，None 表示检测所有颜色
+            color: Target color, or None to detect any color.
         """
         self.target_color = color
 
@@ -46,30 +45,24 @@ class CircleTargetProcessor(Processor):
         return self.target_color.name.lower().capitalize()
 
     def set_detect_method(self, method: DetectMethod):
-        """
-        设置检测方法
+        """Set the detection method used by the underlying detector.
 
         Args:
-            method: 检测方法 (DetectMethod.CONTOUR_ELLIPSE, EDGE_CONTOUR_ELLIPSE)
+            method: One of the DetectMethod options, such as CONTOUR_ELLIPSE
+                or EDGE_CONTOUR_ELLIPSE.
         """
         self.detector.set_detect_method(method)
 
     def process(self, frame: np.ndarray, context: dict = None) -> VisionResult:
-        """
-        检测圆形/椭圆目标并计算坐标偏差
+        """Detect targets and compute their position error and distance.
 
         Args:
-            frame: 输入图像帧
-            context: 上下文，可包含 'fps'、'focal_calculator'
-
-        Returns:
-            VisionResult: 包含检测结果和坐标偏差
+            context: May carry 'fps' and a 'focal_calculator' for distance.
         """
 
         if context and "fps" in context:
             self._fps = context["fps"]
         
-        # 从 context 获取 focal_calculator
         focal_calculator = context.get("focal_calculator") if context else None
 
         if frame is None:
@@ -118,19 +111,17 @@ class CircleTargetProcessor(Processor):
             short_edge = min(edges)
 
             if self.detector.is_uv_spot_detected:
-                #log_print("[CircleTargetProcessor] UV spot detected, target may be occluded")
+                # Fall back to the UV spot as the tracking reference when the target is occluded.
                 uv_center = self.detector.uv_spot_center
             else:
                 uv_center = None
 
-            # 计算坐标偏差
             percent_error_x, percent_error_y = self._calculate_position_error(target, uv_center)
 
-            # 计算目标距离
             target_distance_mm = None
             if focal_calculator and target is not None:
-                quad_real_avg = reference_size_dict["quad"][2]  # 目标平均尺寸 (mm)
-                avg_edge = (long_edge + short_edge) / 2  # 平均边长像素
+                quad_real_avg = reference_size_dict["quad"][2]  # Reference quad size in mm.
+                avg_edge = (long_edge + short_edge) / 2  # Mean edge length in pixels.
                 target_distance_mm = focal_calculator.calculate_distance(
                     real_size_mm=quad_real_avg,
                     pixel_size=avg_edge
@@ -165,23 +156,17 @@ class CircleTargetProcessor(Processor):
             )
 
     def _find_target(self, targets: CircleTargets) -> Optional[CircleTargetItem]:
-        """
-        从检测结果中找到目标
+        """Pick the largest target matching the configured color.
 
-        Args:
-            targets: 检测结果
-
-        Returns:
-            目标对象或None
+        Returns None when no target matches.
         """
         if not targets.targets:
             return None
 
-        # 如果没有设置目标颜色，返回半径最大的目标
+        # With no color filter, fall back to the largest target.
         if self.target_color is None:
             return max(targets.targets, key=lambda t: t.radius or 0)
 
-        # 根据目标颜色过滤
         color_str = self._target_color_str
         matching = [t for t in targets.targets if t.color == color_str]
         if matching:
@@ -189,33 +174,29 @@ class CircleTargetProcessor(Processor):
         return None
 
     def _calculate_position_error(self, target: CircleTargetItem, uv_center: Optional[Tuple[int, int]] = None) -> tuple:
-        """
-        计算目标相对于参考点的坐标偏差
+        """Compute the target offset from a reference point.
+
+        Measures against uv_center when provided, otherwise against the frame
+        center, and returns the error normalized to [-5000, 5000].
 
         Args:
-            target: 目标对象（四边形中心）
-            uv_center: UV点坐标，如果提供则计算UV点与四边形中心的偏差
-
-        Returns:
-            (percent_error_x, percent_error_y): 归一化到 [-5000, 5000] 的坐标偏差
+            target: Detected target, whose center is the quad center.
+            uv_center: Optional UV spot to measure against instead of the
+                frame center.
         """
-        # 目标中心（四边形中心）
         target_x, target_y = target.center_coordinates
 
         if uv_center is not None:
-            # UV 点模式：计算四边形中心与 UV 点的偏差
-            # 误差 = 四边形中心 - UV点位置（用于将四边形中心移向UV点）
+            # UV mode: error drives the quad center toward the UV spot.
             center_x, center_y = uv_center
         else:
-            # 默认模式：计算目标与屏幕中心的偏差
             center_x = self._frame_width // 2
             center_y = self._frame_height // 2
 
-        # 像素偏差
         pixel_error_x = target_x - center_x
         pixel_error_y = target_y - center_y
 
-        # 归一化到 [-5000, 5000]（与 cargo/ring discovery 量纲统一）
+        # Normalize to the [-5000, 5000] scale used by cargo and ring discovery.
         half = max(self._frame_width, self._frame_height) / 2.0
         pe_x = int((pixel_error_x * 5000.0) / half)
         pe_y = int((pixel_error_y * 5000.0) / half)
@@ -236,16 +217,7 @@ class CircleTargetProcessor(Processor):
             self._last_logged_target_found = target_found
 
     def draw_result(self, frame: np.ndarray, result: VisionResult) -> np.ndarray:
-        """
-        在帧上绘制检测结果：圆心和坐标
-
-        Args:
-            frame: 输入图像帧
-            result: 检测结果
-
-        Returns:
-            np.ndarray: 绘制后的帧
-        """
+        """Overlay detected targets, center cross, UV spot, and status text."""
         if frame is None:
             return frame
 
@@ -256,29 +228,22 @@ class CircleTargetProcessor(Processor):
         target = result.result_data.get("target")
         target_found = result.result_data.get("target_found", False)
 
-        # 绘制所有检测到的目标
         if targets and targets.targets:
             for t in targets.targets:
                 self._draw_target(frame, t, is_target=(t == target))
 
-        # 绘制屏幕中心十字线
         self._draw_center_cross(frame)
 
-        # 绘制 UV 点和连线（如果检测到）
         if self.detector.is_uv_spot_detected and self.detector.uv_spot_center is not None:
             uv_x, uv_y = self.detector.uv_spot_center
-            # 绘制 UV 点（紫色圆点）
-            cv2.circle(frame, (uv_x, uv_y), 4, (255, 0, 255), -1)  # 紫色 (BGR: 255,0,255)
-            # 绘制 UV 点坐标文字
+            cv2.circle(frame, (uv_x, uv_y), 4, (255, 0, 255), -1)  # Magenta in BGR.
             cv2.putText(frame, f"UV({uv_x},{uv_y})", (uv_x + 10, uv_y - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
 
-            # 如果有目标，绘制从四边形中心到 UV 点的连线
             if target is not None:
                 quad_x, quad_y = target.center_coordinates
                 cv2.line(frame, (quad_x, quad_y), (uv_x, uv_y), (255, 0, 255), 2)
 
-        # 绘制状态信息
         self._draw_status_info(frame, result, target_found)
 
         return frame
@@ -286,20 +251,16 @@ class CircleTargetProcessor(Processor):
     def _draw_target(
         self, frame: np.ndarray, target: CircleTargetItem, is_target: bool = False
     ):
-        """
-        绘制单个目标：圆心和坐标
+        """Draw one target center and its coordinates.
 
         Args:
-            frame: 输入图像帧
-            target: 目标对象
-            is_target: 是否为主要目标
+            is_target: Whether this is the selected target, which adds a line
+                from the frame center.
         """
         cx, cy = target.center_coordinates
 
-        # 绘制圆心（红色实心圆）
         cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
 
-        # 绘制圆心坐标文字
         cv2.putText(
             frame,
             f"({cx},{cy})",
@@ -310,18 +271,16 @@ class CircleTargetProcessor(Processor):
             1,
         )
 
-        # 如果是主要目标，绘制从屏幕中心到目标中心的连线
         if is_target:
             center_x = self._frame_width // 2
             center_y = self._frame_height // 2
             cv2.line(frame, (center_x, center_y), (cx, cy), (0, 255, 255), 2)
 
     def _draw_center_cross(self, frame: np.ndarray):
-        """绘制屏幕中心十字线"""
+        """Draw a crosshair at the frame center."""
         center_x = self._frame_width // 2
         center_y = self._frame_height // 2
 
-        # 水平线
         cv2.line(
             frame,
             (center_x - 20, center_y),
@@ -329,7 +288,6 @@ class CircleTargetProcessor(Processor):
             (255, 255, 255),
             1,
         )
-        # 垂直线
         cv2.line(
             frame,
             (center_x, center_y - 20),
@@ -342,12 +300,10 @@ class CircleTargetProcessor(Processor):
     def _draw_status_info(
         self, frame: np.ndarray, result: VisionResult, target_found: bool
     ):
-        """绘制状态信息"""
+        """Overlay tracking status, error, and distance information."""
         data = result.result_data
 
-        # 直接绘制半透明背景,不需要copy和addWeighted
-        #cv2.rectangle(frame, (5, 5), (280, 155), (30, 30, 30), -1)
-
+        # Draw text directly; no separate background layer is needed.
         lines = [
             (f"FPS: {self._fps:.1f}", (10, 25), (0, 255, 255)),
             (f"Method: {self.detector.detect_method.value}", (90, 25), (200, 200, 200)),
@@ -355,7 +311,6 @@ class CircleTargetProcessor(Processor):
         ]
 
         if target_found:
-            # 显示距离信息
             distance_mm = data.get('target_distance_mm')
             if distance_mm is not None:
                 distance_m = distance_mm / 1000.0

@@ -10,10 +10,13 @@ from utils.log_util import log_print
 
 
 class CameraStream:
-    """
-    摄像头初始化的时候，会先检测是否支持V4L2接口（Linux专用），如果支持则使用V4L2接口进行视频捕获，这通常会提供更好的性能和更低的延迟。如果不支持V4L2接口，则回退到默认的视频捕获方式。摄像头参数设置部分也进行了错误处理，以确保在某些参数无法设置时不会导致程序崩溃。帧的读取和更新通过一个独立的线程进行，使用队列来存储最新的帧，确保读取时不会阻塞。
-    设置完捕获方式后，会开始设置相关摄像头参数，如分辨率、帧率、缓冲区大小和视频编码格式。最后，摄像头捕获线程会持续运行，直到调用`release`方法来停止线程并释放摄像头资源。
+    """Capture frames from a camera and serve the newest frame to readers.
 
+    Capture uses the V4L2 backend when available and falls back to the default
+    backend otherwise. Unsupported property settings are ignored. A daemon
+    thread reads frames into a bounded queue and drops the oldest frame when
+    full, so readers never block. Call release() to stop the thread and free
+    the camera.
     """
 
     def __init__(self, source=0, width=640, height=480, camera_id="", queue_size=2):
@@ -49,7 +52,7 @@ class CameraStream:
         self.queue = Queue(maxsize=queue_size)
         self.running = True
 
-        # 诊断计数器
+        # Capture diagnostics.
         self._cap_fps_count = 0
         self._cap_fps_start = time.time()
         self._cap_fps_actual = 0.0
@@ -88,7 +91,7 @@ class CameraStream:
                 self.running = False
                 break
 
-            # 实际摄像头 FPS 诊断
+            # Measure the actual capture FPS over a two-second window.
             self._cap_fps_count += 1
             self._frames_produced += 1
             elapsed = time.time() - self._cap_fps_start
@@ -117,7 +120,7 @@ class CameraStream:
                 pass
 
     def read_frame(self):
-        """读取帧（从队列获取）"""
+        """Return the newest queued frame, or None when the queue is empty."""
         from .performance import profiler
         with profiler.timer("frame_capture"):
             try:
@@ -132,4 +135,4 @@ class CameraStream:
         self.cap.release()
 
 
-# usage :camera = CameraStream(0)
+# Usage: camera = CameraStream(0)

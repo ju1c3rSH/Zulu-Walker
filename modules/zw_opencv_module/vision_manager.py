@@ -53,23 +53,19 @@ class VisionManager:
         self._results_slot: Slot = Slot()
         self._results_seen_gen: int = 0
         self._display_frame = None
-        # Frame-freshness gate: display is rebuilt only when a NEW sensor frame
-        # arrived (frame_serial changed), skipping the 1.29MB raw_img.copy()
-        # + full redraw on stale iterations.
+        # Rebuild the display only when the sensor delivers a new frame
+        # (frame_serial changed), skipping the 1.29MB copy and full redraw on
+        # stale iterations.
         self._last_display_serial: int = -1
-        # Display rebuild throttle: even on fresh frames, only rebuild the
-        # display frame (~raw_img.copy() + full redraw) every
-        # _DISPLAY_REBUILD_INTERVAL_S.  The detect→UART control path reads
-        # _latest_ai and is fully independent of the display frame, so the
-        # throttle frees the vision loop from the 10-16ms copy on intermediate
-        # frames.  The display thread / capture sink read the reused frame
-        # (read-only), so no frame pollution.
+        # Even on a fresh frame, throttle the rebuild to
+        # _DISPLAY_REBUILD_INTERVAL_S. Result delivery via _results_slot does
+        # not depend on the display frame, so intermediate frames skip the
+        # 10-16ms copy. Consumers of a reused frame only read it.
         self._DISPLAY_REBUILD_INTERVAL_S: float = 0.033  # ~30fps rebuild
         self._DISPLAY_REBUILD_MIN_S: float = 0.033  # floor: never rebuild per frame
         self._last_display_rebuild: float = 0.0
-        # Headless switch: when the project disables the LCD there is no
-        # consumer for the composed frame, so rebuilding it (raw_img.copy() +
-        # full overlay redraw, 10-16ms) is pure waste on the vision thread.
+        # With no LCD, nothing reads the composed frame, so rebuilding it is
+        # wasted work on the vision thread.
         self._render_enabled: bool = True
 
         self._wdt_feed = lambda: None
@@ -77,8 +73,8 @@ class VisionManager:
 
         self._capture_sink: callable = None
         self._capture_last: float = 0.0
-        # Fixed-cadence JPEG push (independent of vision-loop jitter) so the
-        # PC records evenly-timed frames. 0.05s -> 20fps.
+        # Fixed-cadence frame push to the capture sink, independent of vision
+        # loop jitter. 0.05s -> 20fps.
         self._CAPTURE_INTERVAL_S: float = 0.05
 
         self._exit_icon = None
@@ -113,13 +109,11 @@ class VisionManager:
         self._time_str_cached: str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
         self._time_counter: int = 0
 
-        # Persistent header buffer + per-fragment single-slot sprites.
-        # The 32px bar (black bg + FPS + time + test id) is composed by
-        # blitting pre-rendered RGBA8888 text sprites onto ONE persistent
-        # RGB888 buffer; the buffer is allocated once (or on width change)
-        # and never re-allocated per rebuild.  Each fragment uses a single
-        # cache slot that is re-rasterised only when its string changes,
-        # keeping both per-frame and per-second font work minimal.
+        # Persistent header buffer + one cache slot per fragment.
+        # The 32px bar (black background, FPS, time, test id) is composed by
+        # blitting opaque RGB888 text sprites onto ONE persistent RGB888 buffer,
+        # allocated once (or on width change) and reused across rebuilds. Each
+        # fragment is re-rasterised only when its string changes.
         self._header_bmp = None
         self._header_dirty = True
         self._hdr_fps_last: Optional[float] = None
@@ -466,11 +460,10 @@ class VisionManager:
             if self._display_frame is not None:
                 now = time.monotonic()
                 if now - self._last_display_rebuild < self._DISPLAY_REBUILD_INTERVAL_S:
-                    # Fresh sensor frame but inside the rebuild window: reuse
-                    # the previous display frame (no copy/redraw), which keeps
-                    # the detect→UART control path free of the 10-16ms copy.
-                    # The reused frame is only ever read (display.show /
-                    # capture sink), never mutated → no frame pollution.
+                    # Fresh frame inside the rebuild window: reuse the previous
+                    # display frame. Result delivery does not depend on it, so
+                    # the 10-16ms copy stays off the hot path. The reused frame
+                    # is only read by the display and capture sink, never mutated.
                     self._last_display_serial = serial if serial is not None else -1
                     self._maybe_push_capture(self._display_frame)
                     return
@@ -564,11 +557,11 @@ class VisionManager:
             pass
 
     def _draw_cm_ruler(self, img, ox, oy, dx, dy, w, h) -> None:
-        """Draw vertical (axis-perpendicular) cm ticks with labels.
+        """Draw axis-perpendicular cm ticks with numeric labels.
 
-        Ticks span roughly half the rail thickness on either side of the axis.
-        Coordinates outside the frame are skipped.  Labels are pre-rendered
-        once into transparent RGBA8888 sprites and blitted each frame.
+        Ticks extend about 20 px on either side of the rail axis. Off-frame
+        coordinates are skipped. Labels are cached once as transparent
+        RGBA8888 sprites and blitted each frame.
         """
         import maix.image
         step = self._rail_ppc * self._rail_cm_interval

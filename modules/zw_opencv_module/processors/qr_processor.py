@@ -13,7 +13,7 @@ except ImportError:
 
 @register_processor("QRCodeProcessor")
 class QRCodeProcessor(Processor):
-    """QR 码解码处理器（pyzbar 主解码 + cv2.QRCodeDetector 兜底）"""
+    """Decode QR codes with pyzbar, falling back to cv2.QRCodeDetector."""
 
     def __init__(self, name: str):
         super().__init__(name)

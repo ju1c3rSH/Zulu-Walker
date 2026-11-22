@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""
-Zulu-Walker 启动器
+"""Launch the Zulu-Walker application and detector debug tools.
 
-使用方法:
-    python run.py main                          # 运行主程序
-    python run.py debug [detector]              # 运行调试器
-    python run.py debug cargo                   # 物料块检测调试器
-    python run.py debug circle                  # 圆靶检测调试器
-    python run.py debug ring                    # 环检测调试器
-    python run.py debug line                    # 黑线循迹调试器
-    python run.py debug pendulum_calib          # 摆杆标定调试器
-    python run.py debug cargo -c 1              # 指定摄像头
-    python run.py debug cargo -W 1280 -H 720    # 指定分辨率
+Usage::
+
+    python run.py main                          # run the main program
+    python run.py debug [detector]              # run a detector debugger
+    python run.py debug cargo                   # cargo-block detector debugger
+    python run.py debug circle                  # circle-target detector debugger
+    python run.py debug ring                    # ring detector debugger
+    python run.py debug line                    # black-line tracker debugger
+    python run.py debug pendulum_calib          # pendulum calibration debugger
+    python run.py debug cargo -c 1              # select camera 1
+    python run.py debug cargo -W 1280 -H 720    # set frame resolution
 """
 import argparse
 import importlib

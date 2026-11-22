@@ -22,14 +22,15 @@ _CAP_PROP_EXPOSURE = 15
 
 
 try:
-    # FMT_* 查表只建一次: `dir()` 每帧遍历会直接吃掉探针想量的那点开销。
+    # Build the FMT_* lookup once: walking dir() every frame would consume the
+    # very overhead the probe is trying to measure.
     _FMT_NAMES = {getattr(maix.image.Format, a): a[4:]
                   for a in dir(maix.image.Format) if a.startswith("FMT_")}
 except Exception:
     _FMT_NAMES = {}
 
 def _fmt_tag(img) -> str:
-    """maix Image 格式 -> "RGB888"/"BGR888"/… —— conv 探针的归因依据。"""
+    """Map a maix Image format to a name like "RGB888" for conv probing."""
     if img is None:
         return "none"
     try:
@@ -39,13 +40,14 @@ def _fmt_tag(img) -> str:
 
 
 def _log_attempts(n: int) -> None:
-    """报告本次 camera 构造实际试了几级。
+    """Report how many construction levels were actually attempted.
 
-    走 log_print 而非 logger: 台架看的是 stdout，而 basicConfig 把 logger
-    全部导向 logs/app.log，控制台看不到。
-    正常路径恰好 1 次；>1 说明逐级回退的尝试在白跑 —— 前面的失败若是"已经把
-    sensor/ISP 初始化做了一半"的通用 Exception，重试等于把那段昂贵初始化
-    重复做一遍。
+    Use log_print rather than logger: the bench reads stdout, while
+    basicConfig sends all logger output to logs/app.log, invisible on the
+    console. A normal path attempts exactly once; more than one means a
+    fallback was wasted. If an earlier failure was a generic Exception raised
+    after sensor/ISP initialization had partly run, retrying repeats that
+    expensive initialization.
     """
     if n <= 1:
         return
@@ -55,20 +57,22 @@ def _log_attempts(n: int) -> None:
 
 
 class MaixCam1Camera:
-    """MaixCAM / MaixCAM-Pro 相机（CVI cv181x 平台）。
+    """Camera for MaixCAM / MaixCAM-Pro (CVI cv181x platform).
 
-    与 MaixCam2Camera 的差异:
+    Differences from MaixCam2Camera:
 
-    1. 取图延时: MaixPy 文档明确 CAM1 内部框架双缓存, 取图延时（帧龄）最低
-       30+ms —— 只限时延不限帧率（真机实测 [FPS] pipeline ~60fps 可达）。
-       buff_num 再小也压不下帧龄; 推流率按 [FPS] pipeline 实测验收。
-
-    2. 镜头: 默认 M12 手动调焦镜头（CAM2 是固定焦距），标定几何
-       （ROI 与误差中心）不能直接沿用 CAM2 的值，需现场重标。
-
-    3. constructor 签名: CAM1 走位置参数 `Camera(w, h, format)`，
-       `device=`/`buff_num=` 等关键字在老固件上可能不认，故全部走 try/except
-       退回更简单的构造（见 __init__），保证新固件能用、老固件不崩。
+    1. Capture latency: MaixPy documents that CAM1 double-buffers internally,
+       giving a minimum frame age of 30+ ms. This bounds latency, not frame
+       rate (hardware tests reach ~60 fps on the [FPS] pipeline). Lowering
+       buff_num does not reduce frame age; streaming rate is verified by the
+       [FPS] pipeline measurement.
+    2. Lens: the default is an M12 manual-focus lens (CAM2 uses a fixed focal
+       length), so calibration geometry (ROI and error center) cannot be
+       copied from CAM2 and must be recalibrated on site.
+    3. Constructor: CAM1 uses positional ``Camera(w, h, format)``. Older
+       firmware may reject ``device=``/``buff_num=`` keywords, so __init__
+       tries several signatures under try/except and falls back to simpler
+       ones, working on both new and old firmware.
     """
 
     def __init__(
@@ -91,50 +95,62 @@ class MaixCam1Camera:
         self._cam: Optional[maix.camera.Camera] = None
         self._last_raw: Optional[maix.image.Image] = None
         self._last_frame: Optional[np.ndarray] = None
-        # 最近一帧的分项耗时(ms): read=相机取帧本身, convert=image2cv 转 BGR numpy。
-        # 为什么必须拆开: 隔离台架里 read≈0ms（帧总是就绪），真机却 read=13.6ms，
-        # 差 3 倍且无法区分"在等一帧"与"在拷 921KB"。拆开后一眼定方向:
-        #   · 等一帧   -> 相机没跟上 / 缓冲被打空, 要查 fps 与 buff_num;
-        #   · 拷贝慢   -> image2cv 在抢核/抢内存带宽, 而它在 TARGET 下是纯白做
-        #                 （TARGET 走 C++ find_blobs, 直接吃 last_raw, 这份 numpy
-        #                  只服务 cv2 回退路径与调参页）。
+        # Per-frame timings in ms: read = camera capture, convert = image2cv
+        # conversion to BGR numpy. Keeping them separate distinguishes causes
+        # that total time hides: on the bench read is ~0 ms (frames always
+        # ready) while on hardware it is ~13.6 ms, a threefold gap that cannot
+        # otherwise tell "waiting for a frame" from "copying 921 KB".
+        #   - waiting -> camera cannot keep up / buffer drained: check fps and
+        #     buff_num;
+        #   - slow copy -> image2cv competing for cores or memory bandwidth,
+        #     which is pure overhead on TARGET (C++ find_blobs consumes
+        #     last_raw directly; this numpy array only serves the cv2 fallback
+        #     and the tuning page).
         self.stage_ms: dict = {"read": 0.0, "convert": 0.0}
-        # 非阻塞读帧是否可用：CAM1 老固件的 read() 可能不认 block kwarg。
-        # 探测一次后缓存，read_raw 据此决定走非阻塞（保停帧检测）还是阻塞读。
+        # Whether nonblocking reads are available: older CAM1 firmware may
+        # reject the block kwarg. Probe once and cache the result; read_raw
+        # then chooses nonblocking (preserving stalled-frame detection) or
+        # blocking reads.
         self._block_kwarg_ok: Optional[bool] = None
         self._cam = self._open(source, width, height, fps, buff_num)
         self._opened = self._cam is not None
 
     # ------------------------------------------------------------------ #
-    #  构造（CAM1 固件版本兼容）
+    #  Construction (CAM1 firmware compatibility)
     # ------------------------------------------------------------------ #
 
     def _open(self, source, width, height, fps, buff_num):
-        """按"能力从多到少"逐级尝试构造相机，任一级成功即返回。
+        """Try camera constructors from richest to simplest; return on first success.
 
-        CAM1 官方示例是 `camera.Camera(640, 480)`（位置参数、无 buff_num），
-        老固件对 `device=` / `buff_num=` / `open=` 的支持程度不一，这里不假设
-        固件版本，换成最小可用签名。
+        CAM1's official example is ``camera.Camera(640, 480)`` (positional,
+        no buff_num), and support for ``device=``/``buff_num=``/``open=``
+        varies by firmware. Rather than assume a version, fall back to the
+        smallest usable signature.
 
-        退回会丢参数：命中 level3/4 时 fps/buff_num 根本没传进去。按
-        docs/doc/zh/vision/camera.md:163，分辨率<=1280x720 时 MaixPy 会把帧率
-        设成 80fps，于是 project_config 的 `fps: 60` 被静默忽略、实际跑 80fps。
-        每级成功都打日志记录命中级别与被丢弃的参数，否则台架无法判断实际状态。
+        Falling back drops parameters: at levels 3/4, fps and buff_num are
+        never passed. Per docs/doc/zh/vision/camera.md:163, MaixPy sets 80 fps
+        for resolutions <=1280x720, so project_config's ``fps: 60`` is silently
+        ignored and the camera runs at 80 fps. Log the level reached and any
+        dropped parameters at each success, otherwise the bench cannot tell
+        the real state.
 
-        每次尝试都单独计时：相机是启动期最贵的一步，逐级回退的尝试意味着可能白构造
-        多次 —— 若 level-1 抛的是通用 Exception 而非 TypeError，会走 except Exception
-        只打warning 然后继续试 level-2，等于把 sensor/ISP 初始化做了两遍。逐级打点 +
-        累计"尝试次数"日志, 让"开了几次"直接可见: 正常应恰好 1次。
+        Time each attempt separately: camera open is the most expensive boot
+        step, and fallback can construct repeatedly. If level 1 raises a
+        generic Exception instead of TypeError, the handler only warns and
+        tries level 2, repeating sensor/ISP initialization. Per-level timing
+        plus a total attempt count make the number of opens visible; it should
+        normally be exactly one.
         """
         device = str(source) if source is not None else None
         attempts = 0
         from utils.log_util import log_print
 
-        # 退回时只做"关键字逐步减少"，不猜位置参数顺序。
-        # 依据：docs/doc/zh/vision/camera.md 只验证到 3 位位置参数
-        # (640,480) / (640,480,FORMAT)；device/fps/buff_num/open 一律以关键字
-        # 出现。若这里写 6 位位置参数而真实签名是 (w,h,format,buff_num,fps,..)，
-        # 会静默把 buff_num 当 fps、fps 当 buff_num —— 不报错、行为全错。
+        # On fallback, only drop keywords; never guess positional argument
+        # order. docs/doc/zh/vision/camera.md verifies at most three
+        # positional args (640,480) / (640,480,FORMAT); device/fps/buff_num/
+        # open always appear as keywords. Passing six positional args when the
+        # real signature is (w,h,format,buff_num,fps,..) would silently swap
+        # buff_num and fps: no error, entirely wrong behavior.
 
         def _level1():
             return maix.camera.Camera(
@@ -157,13 +173,14 @@ class MaixCam1Camera:
                 buff_num=buff_num,
             )
 
-        # 1) 全参数（新版固件）—— 命中即所有参数生效
+        # 1) All kwargs (new firmware): on success every parameter takes effect.
         attempts += 1
         try:
             with boot_stage("cam.open:L1(full-kwargs)"):
                 cam = _level1()
-            # warning 而非 info: root logger 被basicConfig 钉在 WARNING，
-            # 台架要靠这行判断相机实际命中哪级构造（info 不会被打印）
+            # Use warning rather than info: basicConfig pins the root logger
+            # at WARNING, and the bench relies on this line to see which level
+            # was reached (info would not be printed).
             logger.warning("[CAM1] camera open level=1 (full kwargs, fps=%s buff_num=%s)",
                         fps, buff_num)
             log_print(f"[CAM1] camera open level=1 fps={fps} buff_num={buff_num}")
@@ -172,11 +189,13 @@ class MaixCam1Camera:
         except TypeError:
             pass
         except Exception as e:
-            # 非 TypeError 的失败不等于"本固件不支持这套签名"。
-            # 台架实测过一次 `RuntimeError: sensor timeout`（sensor 上电未就绪等
-            # 瞬时故障），那是瞬时故障, 不是能力缺失。此时直接往更简单的签名退会落到
-            # 位置参数签名 L3, 后果是 fps / buff_num 静默丢失，取图延时与缓冲深度
-            # 全部不可控。故先原样重试一次 L1, 仍失败才退回。
+            # A non-TypeError failure does not mean the firmware rejects this
+            # signature. The bench once saw ``RuntimeError: sensor timeout``,
+            # a transient power-up issue rather than a missing capability.
+            # Falling back directly lands on the positional L3 signature,
+            # silently dropping fps/buff_num and leaving latency and buffer
+            # depth uncontrolled. Retry L1 unchanged first; fall back only if
+            # that also fails.
             logger.warning("Camera open(level1 full kwargs) failed: %s; 原样重试一次", e)
             log_print(f"[CAM1] camera L1 构造失败({type(e).__name__}: {e}), "
                       f"原样重试一次（避免降级丢掉 fps/buff_num）")
@@ -196,7 +215,7 @@ class MaixCam1Camera:
                 logger.warning("Camera open(level1 retry) failed: %s", e2)
                 log_print(f"[CAM1] camera L1 重试仍失败({type(e2).__name__}: {e2}) -> 降级")
 
-        # 2) 去掉 open=
+        # 2) Drop open=.
         attempts += 1
         try:
             with boot_stage("cam.open:L2(no-open)"):
@@ -211,7 +230,7 @@ class MaixCam1Camera:
         except Exception as e:
             logger.warning("Camera open(level2 no-open) failed: %s", e)
 
-        # 3) 官方示例已验证的位置参数签名 (w, h, format) —— fps/buff_num 被丢弃
+        # 3) Official positional signature (w, h, format): fps/buff_num dropped.
         attempts += 1
         try:
             with boot_stage("cam.open:L3(positional)"):
@@ -228,7 +247,7 @@ class MaixCam1Camera:
         except Exception as e:
             logger.warning("Camera open(level3 positional) failed: %s", e)
 
-        # 4) 最小签名 (w, h) —— 同上，fps/buff_num 全丢
+        # 4) Minimal signature (w, h): same as above, fps/buff_num all dropped.
         attempts += 1
         try:
             with boot_stage("cam.open:L4(minimal)"):
@@ -308,11 +327,11 @@ class MaixCam1Camera:
         return self._last_raw
 
     # ------------------------------------------------------------------ #
-    #  取帧
+    #  Frame capture
     # ------------------------------------------------------------------ #
 
     def _read_nonblocking(self):
-        """非阻塞取一帧；固件不支持 block kwarg 时返回 (None, False)。"""
+        """Read a frame nonblocking; return (None, False) when block is unsupported."""
         try:
             return self._cam.read(block=False), True
         except TypeError:
@@ -329,7 +348,10 @@ class MaixCam1Camera:
             return None, True
 
     def read(self) -> Optional[np.ndarray]:
-        """调参页独占读帧用（这里允许卡住等一帧）。恒返回真 numpy（见末尾的转换）。"""
+        """Read a frame for the tuning page (blocking is allowed here).
+
+        Always return a real numpy array; see the conversion at the end.
+        """
         if self._cam is None:
             return None
         img, _ok = self._read_nonblocking()
@@ -343,28 +365,32 @@ class MaixCam1Camera:
             return None
         frame = self._ingest_raw(img)
         if frame is not None and not isinstance(frame, np.ndarray):
-            # 懒转换模式下 _ingest_raw 交出 LazyFrame 代理 —— 但本方法的返回
-            # 约定就是 np.ndarray（签名如此, 调参页全链路每帧必用像素）。
-            # 不能指望 cv2 自己转: OpenCV 的 Python 绑定对 cv2.resize/cvtColor
-            # 只收真 ndarray, `__array__`/`__array_interface__` 协议一概不认 ——
-            # 不在这里转, 调参页第一帧就死在 resize 上。
-            # numpy() 只在首次访问时转一次并缓存, 这里就是那次访问。
+            # In lazy mode _ingest_raw yields a LazyFrame proxy, but this
+            # method promises an ndarray (as signed, and the tuning page uses
+            # pixels every frame). OpenCV's Python bindings for resize/
+            # cvtColor accept only real ndarrays and ignore the
+            # __array__/__array_interface__ protocols, so without conversion
+            # here the tuning page dies on resize at the first frame. numpy()
+            # converts once and caches on first access, which is this call.
             frame = frame.numpy()
         return frame
 
     def _ingest_raw(self, raw) -> Optional[np.ndarray]:
-        """新 raw 帧 -> 更新 last_raw/_last_frame 并返回帧; None = 停帧。
+        """Ingest a new raw frame, update caches, and return it; None = stalled.
 
-        不得回退 _last_frame（约定见 framework/hal/interface/camera.py::
-        read_raw）。CAM2 曾在这里回退过旧帧，导致 pipeline_camera 的"停帧不复用
-        旧帧"在设备上失效：视觉线程把同一帧反复当新帧算、结果时间戳持续刷新，
-        1s 陈旧归零永不触发，相机真的挂死时会以冻结误差持续喂主站。
-        CAM1 实现也是这个规则。
+        Never fall back to _last_frame (contract in framework/hal/interface/
+        camera.py::read_raw). CAM2 once did, breaking the "no reuse on stall"
+        rule: the vision thread kept treating the same frame as new, refreshed
+        timestamps continuously so the 1 s staleness counter never fired, and
+        fed frozen errors to the main station when the camera really hung.
+        CAM1 follows the same rule.
 
-        延迟转换（`_lazy_convert` 为真时）: 不在这里做 `image2cv`（921KB 拷贝,
-        实测 9~16ms）, 改为交出 `LazyFrame` 代理 —— 只有真正用到像素（cv2 回退 /
-        调参页 / 需要 numpy 的处理器）时才转一次。走 C++ find_blobs 的处理器
-        一次拷贝都不发生。`_last_frame` 仍置为转换后的 numpy 或 代理。
+        With deferred conversion (``_lazy_convert`` true), skip image2cv here
+        (a 921 KB copy, measured at 9-16 ms) and return a ``LazyFrame`` proxy
+        instead. Conversion happens once only when pixels are actually used
+        (cv2 fallback, tuning page, numpy handlers); C++ find_blobs handlers
+        cause no copy at all. ``_last_frame`` still holds the converted numpy
+        array or the proxy.
         """
         if raw is None:
             return None
@@ -379,11 +405,13 @@ class MaixCam1Camera:
         return self._last_frame
 
     def _ingest_lazy(self, raw):
-        """延迟转换路径: 返回 LazyFrame, 不立刻 image2cv。
+        """Return a LazyFrame without converting immediately.
 
-        转换首次被访问时才发生, 并计入 `convert` 分项 —— `[PERF] vision`
-        的 conv 读数的含义不变（只是从"每帧固定"变成"只在真用像素时才出现"）:
-        TARGET 纯 C++ 路径下 conv 应降到 0, 这正是本优化的验收信号。
+        Conversion happens on first access and is still charged to the
+        ``convert`` stage, so the meaning of the ``[PERF]`` conv reading is
+        unchanged (only its timing shifts from every frame to actual pixel
+        use). On the pure C++ TARGET path, conv should drop to zero, which is
+        the acceptance signal for this optimization.
         """
         from framework.hal.platforms.lazy_frame import LazyFrame
 
@@ -393,8 +421,10 @@ class MaixCam1Camera:
             self._mark_stage("convert", _t0)
             self._note_conv(_t0, img)
             if np_rgb is None:
-                # 转换失败: 交回 None 由 LazyFrame 退化为空数组（不在闭包里抛,
-                # 否则异常会打断整帧 —— 见 lazy_frame.py::numpy 的回退处理说明）。
+                # On conversion failure, return None so LazyFrame falls back
+                # to an empty array. Do not raise inside the closure, or the
+                # exception would break the whole frame (see the fallback
+                # handling in lazy_frame.py::numpy).
                 return None
             return np_rgb[:, :, ::-1]
 
@@ -408,19 +438,22 @@ class MaixCam1Camera:
         return frame
 
     def set_lazy_convert(self, enabled: bool) -> None:
-        """开关延迟转换（默认关 = 保持 `read_raw()` 急切转 numpy 的老约定）。
+        """Toggle deferred conversion (off by default, keeping read_raw's
+        eager numpy conversion).
 
-        由 PipelineCamera 按"任务是否需要 numpy"决定。
+        PipelineCamera decides based on whether the task needs numpy.
         """
         self._lazy_convert = bool(enabled)
 
     def _mark_stage(self, key: str, t0: float) -> None:
-        """记一笔分项耗时（毫秒）。
+        """Record one stage duration in milliseconds.
 
-        容器缺失时懒建到实例字典（`self.__dict__`）而不是挂在类属性上:
-        类级可变默认值会被所有实例共享, 一个实例写进去会污染另一个 —— 那种
-        串味 bug 在台架上极难查。这里用 `__dict__.get` 既避开共享, 又让
-        "绕过 __init__ 构造的实例"（测试桩）不会因为多一个计时字段就崩。
+        If the container is missing, create it lazily in the instance dict
+        (``self.__dict__``) rather than as a class attribute: a mutable class
+        default would be shared by all instances, and one instance writing to
+        it would corrupt another, a bug that is hard to trace on the bench.
+        Using ``__dict__.get`` avoids sharing and also lets instances built
+        without __init__ (test stubs) work without gaining an extra field.
         """
         st = self.__dict__.get("stage_ms")
         if st is None:
@@ -428,9 +461,10 @@ class MaixCam1Camera:
         st[key] = (time.perf_counter() - t0) * 1000.0
 
     def _note_conv(self, t0: float, raw=None) -> None:
-        """`[PERF] conv` 探针: image2cv 每帧代价 + 源格式。
+        """``[PERF] conv`` probe: per-frame image2cv cost plus source format.
 
-        格式缓存 1s 过期: `format()` 要问 C++, 但缓存到进程结束会让 src= 永久失真。
+        Cache the format for 1 s: ``format()`` queries C++, but caching it for
+        the whole process would leave src= permanently stale.
         """
         if not perf_detail_enabled():
             return
@@ -444,15 +478,18 @@ class MaixCam1Camera:
         perf_note("conv", (time.perf_counter() - t0) * 1000.0, f"src={tag} out=BGR")
 
     def read_raw(self) -> Optional[np.ndarray]:
-        """主流水线取帧：非阻塞，空队列 = None（停帧）。
+        """Read a frame for the main pipeline; nonblocking, empty = None (stall).
 
-        CAM1 特有风险：若固件不支持 `read(block=False)`（见 _read_nonblocking），
-        退化为阻塞读 —— 此时相机真挂死会让调用线程卡在 read() 里，停帧
-        归零保护不会触发。这是 CAM1 上已知的回退，日志已明示；台架验收时
-        需确认固件走的是非阻塞分支（启动日志无 "block=... unsupported"）。
+        CAM1 risk: if the firmware rejects ``read(block=False)`` (see
+        _read_nonblocking), reads fall back to blocking, so a truly hung
+        camera wedges the calling thread and the stalled-frame counter never
+        fires. This fallback is known and logged; bench acceptance must
+        confirm the nonblocking branch is used (no "block=... unsupported" in
+        the startup log).
 
-        回退探测发生在首次调用：那一拍必须补一次阻塞读把帧拿回来，否则
-        首帧直接丢成 None，等于凭空多一帧"停帧"。
+        The fallback is detected on first call; that tick must perform one
+        blocking read to recover the frame, otherwise the first frame is lost
+        as None and invents a spurious stall.
         """
         if self._cam is None:
             return None
@@ -462,7 +499,8 @@ class MaixCam1Camera:
         raw, _ok = self._read_nonblocking()
         self._mark_stage("read", _t0)
         if raw is None and self._block_kwarg_ok is False:
-            # 本拍刚探测出固件不支持 block kwarg -> 立刻走阻塞读补回这一帧
+            # This tick just detected that block is unsupported: read
+            # blocking now to recover the frame.
             return self._read_blocking()
         return self._ingest_raw(raw)
 
@@ -479,7 +517,7 @@ class MaixCam1Camera:
         return self._cam
 
     # ------------------------------------------------------------------ #
-    #  曝光/增益
+    #  Exposure / gain
     # ------------------------------------------------------------------ #
 
     def set(self, prop_id: int, value) -> bool:
@@ -493,7 +531,8 @@ class MaixCam1Camera:
                 self._cam.set_resolution(self._cam.width(), int(value))
                 return True
             elif prop_id == _CAP_PROP_FPS:
-                # CAM1 fps 由构造参数决定，运行期改分辨率不重设帧率
+                # CAM1 fps is set by the constructor; changing resolution at
+                # runtime does not reset the frame rate.
                 return False
             elif prop_id == _CAP_PROP_EXPOSURE:
                 self._cam.exposure(int(value))
@@ -513,8 +552,9 @@ class MaixCam1Camera:
             except Exception:
                 pass
             self._cam = None
-        # 一并清掉帧缓存: _last_raw 持有已释放相机的 Image 引用，残留会让显示侧
-        # 继续拿释放后的帧画 HUD。
+        # Clear frame caches too: _last_raw holds an Image reference from the
+        # closed camera, and leaving it lets the display keep drawing the HUD
+        # on a released frame.
         self._last_raw = None
         self._last_frame = None
         self._opened = False

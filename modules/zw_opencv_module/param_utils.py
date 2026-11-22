@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
-"""
-检测参数工具模块
-
-提供参数加载、保存和应用功能，供主程序和调试器共用。
-"""
+"""Load, save, and apply detection and camera parameters shared by the app and debugger."""
 import os
 import sys
 from typing import Dict, Any, Tuple, Optional
 import yaml
 import cv2
 
-# 支持直接运行和模块运行
+# Allow running this file directly as well as importing it as a module.
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
@@ -20,7 +16,7 @@ from utils.log_util import log_print
 
 
 def get_default_params() -> Dict[str, Dict[str, Any]]:
-    """获取各检测方法的默认参数"""
+    """Return default parameters for each detection method."""
 
     return {
         "edge_contour_ellipse": {
@@ -62,19 +58,18 @@ def get_default_params() -> Dict[str, Dict[str, Any]]:
 
 
 def load_detect_params(config_path: str) -> Tuple[DetectMethod, Dict[str, Dict[str, Any]]]:
-    """
-    从 YAML 加载检测参数
+    """Load detection parameters from a YAML file.
 
     Args:
-        config_path: 配置文件路径
+        config_path: Path to the YAML configuration file.
 
     Returns:
-        Tuple[DetectMethod, Dict]: 当前方法和所有方法的参数
+        The active method and the parameters for every method.
     """
     default_params = get_default_params()
 
     if not os.path.exists(config_path):
-        # 返回默认值 - 默认使用 edge_drawing_quads
+        # Fall back to defaults with edge_drawing_quads active.
         return DetectMethod.EDGE_DRAWING_QUADS, default_params
 
     try:
@@ -83,7 +78,7 @@ def load_detect_params(config_path: str) -> Tuple[DetectMethod, Dict[str, Dict[s
             if not data:
                 return DetectMethod.EDGE_DRAWING_QUADS, default_params
 
-        # 解析当前方法 - 默认使用 edge_drawing_quads
+        # Resolve the active method, defaulting to edge_drawing_quads.
         current_method = DetectMethod.EDGE_DRAWING_QUADS
         if "current_method" in data:
             try:
@@ -91,7 +86,7 @@ def load_detect_params(config_path: str) -> Tuple[DetectMethod, Dict[str, Dict[s
             except ValueError:
                 pass
 
-        # 解析各方法参数
+        # Merge stored parameters over the defaults.
         methods_params = default_params.copy()
         if "methods" in data:
             for method_name, params in data["methods"].items():
@@ -110,20 +105,13 @@ def apply_params_to_detector(
     method: DetectMethod,
     params: Dict[str, Any]
 ):
-    """
-    将参数应用到检测器
-
-    Args:
-        detector: 检测器实例
-        method: 检测方法
-        params: 参数字典
-    """
+    """Select the detection method on a detector and set its parameters."""
     detector.set_detect_method(method)
     detector.set_method_params(method, params)
 
 
 def get_config_path() -> str:
-    """获取默认配置文件路径"""
+    """Return the default debug parameter file path."""
     return os.path.join(
         os.path.dirname(__file__),
         "config",
@@ -132,7 +120,7 @@ def get_config_path() -> str:
 
 
 def get_uv_config_path() -> str:
-    """获取 UV 参数配置文件路径"""
+    """Return the UV parameter file path."""
     return os.path.join(
         os.path.dirname(__file__),
         "config",
@@ -141,14 +129,13 @@ def get_uv_config_path() -> str:
 
 
 def load_uv_params(config_path: str = None) -> Dict[str, Any]:
-    """
-    从 YAML 加载 UV 参数
+    """Load UV parameters from YAML, using defaults when values are absent.
 
     Args:
-        config_path: 配置文件路径
+        config_path: Optional YAML path; defaults to the UV config file.
 
     Returns:
-        UV 参数字典
+        UV parameters with stored values overriding the defaults.
     """
     if config_path is None:
         config_path = get_uv_config_path()
@@ -167,7 +154,7 @@ def load_uv_params(config_path: str = None) -> Dict[str, Any]:
         "uv_v_min2": 235,
         "uv_v_max2": 255,
         "uv_min_area": 0,
-        # 自适应 UV 检测
+        # Adaptive UV detection thresholds.
         "uv_adaptive_enabled": 1,
         "uv_v_percentile": 94,
         "uv_v_floor": 90,
@@ -175,7 +162,7 @@ def load_uv_params(config_path: str = None) -> Dict[str, Any]:
         "uv_h_low": 121,
         "uv_h_high": 165,
         "uv_s_gate": 80,
-        "uv_contrast_ratio_min": 115,  # x100 存储，实际 1.15
+        "uv_contrast_ratio_min": 115,  # Stored as x100; actual value 1.15.
         "uv_contrast_dilate": 30,
     }
 
@@ -194,31 +181,25 @@ def load_uv_params(config_path: str = None) -> Dict[str, Any]:
 
 
 def apply_uv_params_to_detector(detector: CircleTargetDetector, uv_params: Dict[str, Any]):
-    """
-    将 UV 参数应用到检测器
-
-    Args:
-        detector: 检测器实例
-        uv_params: UV 参数字典
-    """
+    """Apply UV detection parameters to a detector."""
     import numpy as np
 
-    # 更新 UV 颜色范围
+    # Set the two UV color ranges.
     uv_ranges = [
-        # 第一段范围
+        # First range.
         (np.array([uv_params["uv_h_min1"], uv_params["uv_s_min1"], uv_params["uv_v_min1"]]),
          np.array([uv_params["uv_h_max1"], uv_params["uv_s_max1"], uv_params["uv_v_max1"]])),
-        # 第二段范围
+        # Second range.
         (np.array([uv_params["uv_h_min2"], uv_params["uv_s_min2"], uv_params["uv_v_min2"]]),
          np.array([uv_params["uv_h_max2"], uv_params["uv_s_max2"], uv_params["uv_v_max2"]])),
     ]
     detector.color_ranges["UV"] = uv_ranges
 
-    # 更新 UV 最小面积
+    # Set the minimum UV region area.
     if "uv_min_area" in uv_params:
         detector.uv_min_area = int(uv_params["uv_min_area"])
 
-    # 自适应 UV 检测参数
+    # Adaptive UV detection parameters.
     if "uv_adaptive_enabled" in uv_params:
         detector.uv_adaptive_enabled = bool(int(uv_params["uv_adaptive_enabled"]))
     if "uv_v_percentile" in uv_params:
@@ -239,9 +220,9 @@ def apply_uv_params_to_detector(detector: CircleTargetDetector, uv_params: Dict[
         detector.uv_contrast_dilate = int(uv_params["uv_contrast_dilate"])
 
 
-# ── 摄像头硬件参数 ──────────────────────────────────────────────
+# Camera hardware parameters.
 
-# (显示名, key, CAP_PROP, min, max)
+# (display name, key, CAP_PROP, min, max)
 CAMERA_PARAM_DEFS = [
     ("Brightness",  "brightness",  cv2.CAP_PROP_BRIGHTNESS,        0,   255),
     ("Contrast",    "contrast",    cv2.CAP_PROP_CONTRAST,          0,   255),
@@ -258,20 +239,19 @@ CAMERA_PARAM_DEFS = [
 
 
 def get_camera_config_path() -> str:
-    """获取摄像头硬件参数配置文件路径"""
+    """Return the camera hardware parameter file path."""
     return os.path.join(os.path.dirname(__file__), "config", "camera_params.yaml")
 
 
 def load_camera_params(config_path: str = None) -> Tuple[Dict[str, Any], set]:
-    """
-    从 YAML 加载用户配置的摄像头硬件参数
+    """Load user-configured camera parameters from YAML.
 
     Args:
-        config_path: 配置文件路径，默认使用 camera_params.yaml
+        config_path: Optional YAML path; defaults to camera_params.yaml.
 
     Returns:
-        (摄像头参数字典, 用户在 YAML 中显式指定的 key 集合)
-        无 YAML 时返回空字典 + 空集合，不使用硬编码默认值
+        The parameters and the keys explicitly set in the YAML. Returns an
+        empty dict and set when no file exists; no hardcoded defaults are used.
     """
     if config_path is None:
         config_path = get_camera_config_path()
@@ -292,10 +272,10 @@ def load_camera_params(config_path: str = None) -> Tuple[Dict[str, Any], set]:
 
 
 def read_camera_params_from_capture(cap) -> Dict[str, Any]:
-    """从摄像头硬件读取当前参数值，不支持的参数会被跳过"""
+    """Read current values from the capture; unsupported properties are skipped."""
     result = {}
 
-    # 先读 auto_exp（曝光模式），因为它影响 exposure 的行为
+    # Read auto_exp first because it governs how exposure behaves.
     auto_exp_def = next((d for d in CAMERA_PARAM_DEFS if d[1] == "auto_exp"), None)
     if auto_exp_def:
         _, key, cap_prop, min_val, max_val = auto_exp_def
@@ -321,7 +301,7 @@ def read_camera_params_from_capture(cap) -> Dict[str, Any]:
 
 
 def save_camera_params(params: Dict[str, Any], config_path: str = None):
-    """保存摄像头参数到 YAML"""
+    """Save camera parameters to YAML."""
     if config_path is None:
         config_path = get_camera_config_path()
     try:
@@ -334,25 +314,24 @@ def save_camera_params(params: Dict[str, Any], config_path: str = None):
 
 
 def apply_camera_params_to_capture(cap, params: Dict[str, Any], user_keys: set = None):
-    """
-    将摄像头硬件参数应用到 VideoCapture
+    """Apply camera hardware parameters to a VideoCapture.
 
     Args:
-        cap: cv2.VideoCapture 实例
-        params: 参数字典
-        user_keys: 用户在 YAML 中显式指定的 key 集合
+        cap: Capture to configure.
+        params: Parameter values keyed by name.
+        user_keys: Keys the user explicitly set in YAML.
     """
     if user_keys is None:
         user_keys = set()
 
-    # 先设 auto_exp（曝光模式）
+    # Set auto_exp first.
     if "auto_exp" in params:
         try:
             cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, int(params["auto_exp"]))
         except Exception:
             pass
 
-    # 切手动模式时，若未显式指定 exposure，沿用自动模式下的当前值
+    # Switching to manual exposure without an explicit value keeps the current one.
     switching_to_manual = "auto_exp" in params and int(params["auto_exp"]) == 1
     exposure_explicit = "exposure" in user_keys
     if switching_to_manual and not exposure_explicit:

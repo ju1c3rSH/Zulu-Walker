@@ -15,7 +15,7 @@ _LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "de
 _LOG_QUEUE: queue.Queue = queue.Queue(maxsize=2048)
 _WRITER_THREAD: Optional[threading.Thread] = None
 _SENTINEL: object = object()
-_DROP_COUNT: int = 0  # queue full 丢包累计计数，GIL 保护，无需额外 Lock
+_DROP_COUNT: int = 0  # cumulative drops when the queue is full; GIL-protected, no extra lock
 
 _CONSOLE_MODULE = "utils.debug_console"
 
@@ -88,8 +88,9 @@ def _writer_loop() -> None:
         except Exception:
             pass
 
-        # 队列排空后，若发生过丢包，由 writer 线程统一输出警告。
-        # 这样 log_print 调用者完全零 I/O，对 MaixCAM2 视觉管线无任何阻塞风险。
+        # Report any drops once the queue drains, from the writer thread only.
+        # This keeps log_print callers free of I/O and never blocks the
+        # MaixCAM2 vision pipeline.
         if _DROP_COUNT > 0 and _LOG_QUEUE.empty():
             drops = _DROP_COUNT
             _DROP_COUNT = 0
@@ -355,7 +356,7 @@ def log_print(msg: str = "", *args, **kwargs) -> None:
 
 
 class LoggerFactory:
-    """日志工厂类，支持动态配置"""
+    """Factory that creates and caches dynamically configured loggers."""
     
     _instances: Dict[str, logging.Logger] = {}
     
@@ -370,16 +371,16 @@ class LoggerFactory:
                     console_output: bool = True,
                     format_str: Optional[str] = None) -> logging.Logger:
         """
-        获取或创建logger实例
+        Return a configured logger, creating it if needed.
         
         Args:
-            name: logger名称
-            level: 日志级别
-            log_file: 日志文件路径，如果提供则保存到文件
-            max_bytes: 单个日志文件最大字节数
-            backup_count: 保留的备份文件数量
-            console_output: 是否输出到控制台
-            format_str: 自定义格式字符串
+            name: Logger name.
+            level: Logging level.
+            log_file: Optional path to a log file; when set, also log to file.
+            max_bytes: Maximum size of a single log file in bytes.
+            backup_count: Number of rotated backup files to keep.
+            console_output: Whether to emit to the console.
+            format_str: Custom log format string.
         """
         if name in cls._instances:
             return cls._instances[name]
@@ -394,7 +395,7 @@ class LoggerFactory:
         format_str = format_str or '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         formatter = logging.Formatter(format_str)
         
-        # 控制台处理器(标准输出)
+        # Console handler (stdout).
         if console_output:
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setLevel(level)
@@ -402,9 +403,9 @@ class LoggerFactory:
             logger.addHandler(console_handler)
         
 
-        # 文件处理器(文件输出)
+        # File handler (rotating file output).
         if log_file:
-            # 确保日志目录存在
+            # Ensure the log directory exists.
             log_path = Path(log_file)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             
@@ -423,19 +424,19 @@ class LoggerFactory:
     
     @classmethod
     def clear_instances(cls):
-        """清空所有实例（主要用于测试）"""
+        """Clear all cached logger instances (mainly for tests)."""
         cls._instances.clear()
 
 
 class ConfigurableLogger:
-    """可配置的Logger封装类"""
+    """Thin configurable wrapper around a standard logger."""
     
     def __init__(self, config: Dict[str, Any]):
         """
-        初始化可配置的Logger
+        Initialize a configurable logger.
         
         Args:
-            config: 配置字典，示例：
+            config: Configuration dict; for example::
                 {
                     'name': 'myapp',
                     'level': 'INFO',
@@ -464,7 +465,7 @@ class ConfigurableLogger:
         self.extra_fields = config.get('extra_fields', [])
     
     def _add_extra_fields(self, extra: Optional[Dict] = None) -> Dict:
-        """添加额外字段"""
+        """Add extra context fields to the given dict."""
         if not extra:
             extra = {}
         for field in self.extra_fields:
@@ -489,12 +490,12 @@ class ConfigurableLogger:
         self.logger.error(msg, exc_info=exc_info, extra=extra if extra else None)
     
     def set_extra_field(self, key: str, value: Any):
-        """设置额外的上下文字段"""
+        """Set an extra context field."""
         setattr(self, key, value)
 
 
 class UARTModuleLogger(ConfigurableLogger):
-    """UART模块日志类，支持模块级别的日志记录"""
+    """Logger for a UART module, with module-level context."""
     
     def __init__(self, module_name: str):
         config = {
@@ -522,7 +523,7 @@ class UARTModuleLogger(ConfigurableLogger):
 
 
 class DataPipelineLogger(ConfigurableLogger):
-    """数据管道日志类"""
+    """Logger for a data pipeline, with batch and step context."""
     
     def __init__(self, pipeline_name: str):
         config = {
@@ -531,7 +532,7 @@ class DataPipelineLogger(ConfigurableLogger):
             'log_file': f'logs/pipelines/{pipeline_name}.log',
             'max_bytes': 100 * 1024 * 1024,
             'backup_count': 20,
-            'console_output': False,  # 只保存到文件
+            'console_output': False,  # file-only
             'extra_fields': ['batch_id', 'step_name']
         }
         super().__init__(config)

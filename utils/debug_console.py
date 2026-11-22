@@ -111,7 +111,7 @@ class DebugConsole:
         try:
             with Live(layout, console=self._console, screen=True,
                        refresh_per_second=10, auto_refresh=False) as live:
-                # Restore capture — Live(screen=True) may have replaced sys.stdout
+                # Restore capture: Live(screen=True) may have replaced sys.stdout.
                 from utils.console_capture import ConsoleCapture
                 if ConsoleCapture._instance is not None:
                     import sys

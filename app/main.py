@@ -1,35 +1,26 @@
-"""Application skeleton — the starting point for a new project.
+"""Application skeleton and entry point for a new project.
 
-Copy this layer and put your orchestration into app/coordinator.py (the
-designated per-project "dirty code" slot). A complete worked example —
-UART master-slave bridge, two-phase calibration UI, WiFi streaming, record
-signaling — lives on branch ``release/2026H``.
+Copy this layer and place orchestration in ``app.coordinator``. Entry points:
+desktop/linux via ``python run.py main`` (platform from project_config.yaml);
+MaixCAM2 firmware via the ``deploy/maixcam/main.py`` shell.
 
-Entry points:
-  desktop/linux : ``python run.py main``  (platform from project_config.yaml)
-  maixcam2      : firmware runs the deploy/maixcam/main.py shell -> here
-
-Iron rules (violating these bricks the board or hides bugs):
-1. Watchdog first: construct-and-feed before any slow step; feed between
-   every step (WiFi, model load, calibration loops).
-2. Anything created BEFORE Machine.create must receive platform
-   capabilities via late-injection setters (see coordinator.set_sys_info),
-   never through its constructor.
-3. No display thread: overlay composition runs inside the vision thread;
-   the main loop pumps sinks every tick
-   (docs/architecture/thread_tick_topology.md).
+Startup rules:
+1. Construct and feed the watchdog before any slow step; feed between steps.
+2. Inject platform capabilities into objects created before ``Machine.create``
+   through setters, never their constructors.
+3. Overlay composition runs in the vision thread, not a display thread; the
+   main loop pumps sinks each tick.
 """
 
 from __future__ import annotations
 
 
 def _make_wdt_feed(platform: str = "maixcam2"):
-    """1Hz-throttled feed over the platform watchdog; noop where absent.
+    """Build a 1 Hz-throttled watchdog feed, or a no-op where unsupported.
 
-    The watchdog capability is probed on the *active* platform module.
-    A hardcoded maixcam2 import burns an exception on every boot for boards
-    whose firmware has no ``nn.YOLO11`` (MaixCAM-Pro) -- and whose watchdog
-    is a firmware stub anyway.
+    Probe the watchdog on the active platform module: a hardcoded ``maixcam2``
+    import raises on every boot for boards without ``nn.YOLO11`` (MaixCAM-Pro),
+    whose watchdog is a firmware stub regardless.
     """
     try:
         import importlib
@@ -71,13 +62,12 @@ def _make_wdt_feed(platform: str = "maixcam2"):
 
 
 def _apply_observability(cfg: dict) -> None:
-    """Apply ``observability:``/``perf_log:`` config to the log gates.
+    """Apply ``observability`` / ``perf_log`` config to the log gates.
 
     Args:
-        cfg: Parsed project config; missing keys keep current gate values.
+        cfg: Parsed project config; missing keys leave the current gates unchanged.
 
-    Context:
-        Call once at startup, before modules emit perf lines.
+    Call once at startup, before modules emit perf lines.
     """
     from utils import log_util
 
@@ -108,19 +98,17 @@ def _vision_manager_of(manager):
 
 
 def _build_tick(manager, machine, cfg: dict = None):
-    """Per-tick callback: push the newest composed frame, then flush sinks.
+    """Build a per-tick callback that pushes the newest frame and flushes sinks.
 
     Args:
         manager: ModuleManager owning the vision module.
-        machine: Assembled Machine (``display`` may be None when headless).
-        cfg: Parsed project config. ``display_show_interval_ms`` maps to the
-            LCD present interval; absent or 0 means "no throttle".
+        machine: Assembled Machine; ``display`` may be None when headless.
+        cfg: Parsed config; ``display_show_interval_ms`` is the LCD present
+            interval, with absent or 0 meaning no throttle.
 
-    Context:
-        Both the present cadence and the overlay rebuild window read the same
-        key, so a slow panel draws exactly as often as it shows. With
-        ``display_enabled: false`` the vision side stops composing frames at
-        all — nothing would consume them.
+    The present cadence and overlay rebuild window share that key, so a slow
+    panel draws as often as it shows. With ``display_enabled: false`` the vision
+    side stops composing frames because nothing would consume them.
     """
     from framework.hal.interface.sink import SinkGroup
     from framework.hal.sink import MaixLcdSink
@@ -155,9 +143,9 @@ def main() -> None:
 
     from utils.debug_console import DebugConsole
 
-    # 平台配置路径: 默认读工作区的 project_config.yaml; ZWULU_CONFIG 可指向
-    # 其它配置 (如 configs/project_config.maixcam1.yaml), 避免为了切平台去
-    # 覆盖工作区文件。
+    # Config path: default to the workspace project_config.yaml; ZWULU_CONFIG
+    # can point elsewhere (e.g. configs/project_config.maixcam1.yaml) so
+    # switching platforms does not overwrite the workspace file.
     config_path = os.environ.get("ZWULU_CONFIG", "project_config.yaml")
     try:
         with open(config_path) as f:
@@ -167,7 +155,7 @@ def main() -> None:
     DebugConsole.set_global_enabled(cfg.get("debug_console_enabled", True))
     _apply_observability(cfg)
 
-    wdt_feed = _make_wdt_feed(cfg.get("platform", "maixcam2"))  # rule 1
+    wdt_feed = _make_wdt_feed(cfg.get("platform", "maixcam2"))  # rule 1: watchdog first
     wdt_feed()
 
     from framework.hal import Machine
@@ -186,7 +174,7 @@ def main() -> None:
 
     from app.coordinator import AppCoordinator
 
-    coordinator = AppCoordinator(bus)  # <-- per-project logic slot (rule 2)
+    coordinator = AppCoordinator(bus)  # per-project logic slot (rule 2)
     coordinator.set_sys_info(getattr(machine, "sys_info", None))
 
     manager = ModuleManager(

@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-zw_uart_module - UART driver for STM32 communication
+"""Wrap the HAL UART with a binary frame parser and event dispatch.
 
-Implements STM32UartInterface class that wraps SerialController for
-binary frame-based communication with state machine parsing.
+FrameParser reassembles frames byte by byte; STM32UartInterface owns the
+receiver callback, transmits frames under a lock, and publishes decoded events.
 """
 
 import enum
@@ -33,21 +32,21 @@ from utils.log_util import log_print
 
 
 class ParserState(enum.Enum):
-    """State machine states for frame parsing."""
+    """States of the frame parsing state machine."""
 
     WAITING_SOF = "WAITING_SOF"
-    GOT_SOF1 = "GOT_SOF1"   # Got 0xAA, waiting for 0x55
-    GOT_SOF = "GOT_SOF"     # Got 0xAA 0x55, reading Length
+    GOT_SOF1 = "GOT_SOF1"   # Received SOF1 (0xAA); waiting for SOF2 (0x55).
+    GOT_SOF = "GOT_SOF"     # Received both SOF bytes; reading the Length field.
     GOT_LEN = "GOT_LEN"
 
 
 
 class FrameParser:
-    """
-    State machine parser for binary frames.
+    """Reassemble binary frames from a byte stream using a state machine.
 
-    Processes incoming bytes and outputs complete frames when parsed.
-    No Python-level ring buffer needed - Linux kernel TTY handles buffering.
+    Bytes are fed one at a time and complete frames are returned. The kernel
+    TTY layer already buffers the serial stream, so no Python ring buffer is
+    needed.
     """
 
     def __init__(self):
@@ -61,20 +60,20 @@ class FrameParser:
         self._on_reject = callback
 
     def reset(self):
-        """Reset parser state."""
+        """Reset the parser to its initial state and discard buffered bytes."""
         self._state = ParserState.WAITING_SOF
         self._buffer.clear()
         self._expected_length = 0
 
     def feed(self, data: bytes) -> List[FrameData]:
         """
-        Feed data to the parser and return complete frames.
+        Feed received bytes into the parser and return complete frames.
 
         Args:
-            data: Raw bytes received from serial port
+            data: Raw bytes received from the serial port.
 
         Returns:
-            List of successfully parsed FrameData objects
+            Every FrameData completed by this batch of bytes.
         """
         frames = []
 
@@ -87,13 +86,13 @@ class FrameParser:
 
     def _process_byte(self, byte: int) -> Optional[FrameData]:
         """
-        Process a single byte through the state machine.
+        Process one byte through the state machine.
 
         Args:
-            byte: Single byte to process
+            byte: A single received byte.
 
         Returns:
-            FrameData if a complete frame was parsed, None otherwise
+            A FrameData when a frame completes, otherwise None.
         """
         if self._state == ParserState.WAITING_SOF:
             if byte == SOF1:
@@ -106,36 +105,33 @@ class FrameParser:
                 self._buffer.append(byte)
                 self._state = ParserState.GOT_SOF
             elif byte == SOF1:
-                # Re-arm: previous 0xAA was noise, this one is new SOF1
+                # Treat the previous 0xAA as noise and start a new frame here.
                 self._buffer = bytearray([SOF1])
             else:
                 self.reset()
             return None
 
         elif self._state == ParserState.GOT_SOF:
-            # This is the Length field
-            # Length = Type(1) + Payload(var) + CRC16(2)
-            # Minimum length is 3 (Type + CRC16, no payload)
-            # Maximum length is 255 (Type + 252 payload + CRC16)
+            # Length = Type (1) + Payload + CRC16 (2), so valid values are 3..255.
             if 3 <= byte <= 255:
                 self._expected_length = byte
                 self._buffer.append(byte)
                 self._state = ParserState.GOT_LEN
             else:
-                # Invalid length, reset
+                # Invalid length: discard the partial frame.
                 self._logger.warning(f"Invalid frame length: {byte}")
                 self.reset()
             return None
 
         elif self._state == ParserState.GOT_LEN:
-            # Accumulate bytes until we have complete frame
+            # Accumulate content bytes until the frame is complete.
             self._buffer.append(byte)
 
-            # Expected total size: SOF1(1) + SOF2(1) + Length(1) + (Length bytes)
+            # Total frame size: three header bytes plus Length content bytes.
             expected_size = 3 + self._expected_length
 
             if len(self._buffer) == expected_size:
-                # Complete frame received
+                # Validate the complete frame.
                 frame = self._parse_complete_frame()
                 self.reset()
                 return frame
@@ -145,7 +141,7 @@ class FrameParser:
         return None
 
     def _parse_complete_frame(self) -> Optional[FrameData]:
-        """Parse the accumulated buffer as a complete frame."""
+        """Validate the buffered bytes as a frame and report rejections."""
         raw = bytes(self._buffer)
         frame = parse_frame(raw)
         if frame is None:
@@ -158,30 +154,27 @@ class FrameParser:
 
 
 class STM32UartInterface:
-    """
-    UART interface for STM32 communication.
+    """UART interface for STM32 communication.
 
-    Wraps SerialController and provides:
-    - Error frame transmission
-    - Background frame parsing with state machine
-    - Frame dispatch via EventBus
+    Wraps the HAL Uart, parses frames from the receiver callback, serializes
+    transmits with a write lock, and publishes decoded events to an EventBus.
     """
 
     def __init__(self, uart: Uart):
         """
-        Initialize UART interface.
+        Initialize the interface around a HAL UART.
 
         Args:
-            uart: HAL Uart Protocol instance
+            uart: HAL UART instance.
         """
         self._uart = uart
         self._parser = FrameParser()
         self._parser.set_reject_callback(self._on_frame_rejected)
 
-        # Write lock for send operations
+        # Serialize all transmit operations.
         self._write_lock = threading.Lock()
 
-        # EventBus (set after init to avoid circular imports)
+        # EventBus reference; assigned later to avoid a circular import.
         self._event_bus = None
 
         # Logger
@@ -196,42 +189,40 @@ class STM32UartInterface:
 
     @property
     def is_connected(self) -> bool:
-        """Check if serial port is connected."""
+        """Return whether the underlying UART is connected."""
         return self._uart.is_connected
 
     def set_log_level(self, level: int):
         """
-        Set logging level.
+        Set the logger level.
 
         Args:
-            level: logging level (e.g., logging.DEBUG, logging.INFO)
+            level: A logging level constant.
         """
         self._logger.setLevel(level)
 
     def set_debug_hex(self, enabled: bool = True):
         """
-        Enable/disable hex dump of frames in debug logs.
+        Enable or disable hex dumps of frames in debug logs.
 
         Args:
-            enabled: True to enable hex dumps
+            enabled: True to dump frame bytes as hex.
         """
         self._debug_hex = enabled
 
     def start(self) -> bool:
         """
-        Start the UART interface.
-
-        Connects to serial port and starts background receiver.
+        Connect the UART and start the background receiver.
 
         Returns:
-            True if started successfully, False otherwise
+            True when the interface started successfully.
         """
         try:
             if not self._uart.connect():
                 self._logger.error(f"Failed to connect to UART")
                 return False
 
-            # Start async receiver with callback
+            # Register the receive callback; the HAL runs it on its receiver thread.
             self._uart.start_receiver(self._on_data_received)
 
             self._logger.info(
@@ -244,7 +235,7 @@ class STM32UartInterface:
             return False
 
     def stop(self):
-        """Stop the UART interface and cleanup resources."""
+        """Stop the receiver, disconnect, and reset the parser."""
         try:
             self._uart.stop_receiver()
             self._uart.disconnect()
@@ -254,23 +245,21 @@ class STM32UartInterface:
             self._logger.error(f"Error stopping UART interface: {e}")
 
     def __enter__(self) -> "STM32UartInterface":
-        """Context manager entry."""
+        """Start the interface and return it."""
         self.start()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
+        """Stop the interface when the context exits."""
         self.stop()
         return False
 
     def _on_data_received(self, data: bytes):
         """
-        Callback for received data from SerialController.
-
-        Feeds data to parser and processes parsed frames.
+        Handle bytes delivered by the HAL UART receiver callback.
 
         Args:
-            data: Raw bytes received from serial port
+            data: Raw bytes received from the serial port.
         """
         try:
             self._rx_bytes_total += len(data)
@@ -318,10 +307,10 @@ class STM32UartInterface:
 
     def _handle_frame(self, frame: FrameData):
         """
-        Handle a parsed frame from master (MSPM0).
+        Dispatch a validated frame received from the master (MSPM0).
 
         Args:
-            frame: Parsed frame data
+            frame: Validated frame data.
         """
         if frame.frame_type == TYPE_CMD_REQUEST:
             parsed = parse_cmd_request_payload(frame.payload)
@@ -368,7 +357,7 @@ class STM32UartInterface:
                 "Unexpected DATA_STREAM received (slave role)")
 
         elif frame.frame_type == TYPE_HEARTBEAT:
-            # [DEPRECATED] Silently ignore
+            # Deprecated heartbeat: ignore it.
             pass
 
         elif frame.frame_type == TYPE_EMERGENCY_STOP:
@@ -402,14 +391,14 @@ class STM32UartInterface:
 
     def send_error(self, error_type: int, error_value: int) -> bool:
         """
-        Send an error frame to STM32.
+        Build and send an error frame to the STM32.
 
         Args:
-            error_type: Error type (0=X, 1=Y, 2=Z, 3=Other)
-            error_value: Error value (int16, -32768~32767)
+            error_type: Error category (0=X, 1=Y, 2=Z, 3=other).
+            error_value: Signed 16-bit error value.
 
         Returns:
-            True if sent successfully, False otherwise
+            True when the entire frame was transmitted.
         """
         from .protocol import build_error_frame
 
@@ -445,7 +434,7 @@ class STM32UartInterface:
             return False
 
 
-# === Module test / demo ===
+# Module test / demo
 if __name__ == "__main__":
     import time
 
@@ -467,7 +456,7 @@ if __name__ == "__main__":
     if frames:
         log_print(f"  Type: 0x{frames[0].frame_type:02X}, Payload: {frames[0].payload.hex()}")
 
-    # Test ERROR frame: type=0, value=-3
+    # Build an ERROR frame: type 0, value -3.
     log_print("\n=== Error Frame Build Test ===")
     from .protocol import build_error_frame
     error_frame = build_error_frame(0, -3)

@@ -25,18 +25,17 @@ logger = logging.getLogger(__name__)
 
 @register_processor("AIInferenceProcessor")
 class AIInferenceProcessor(Processor):
-    """Runs the platform AI backend and turns its detections into a result.
+    """Run the AI backend and expose its detections as a VisionResult.
 
-    A failure is reported as `success=False` plus a stable `error_code`,
-    so the caller can tell a broken backend apart from a scene that simply
-    contains no target.
+    Failures carry success=False and a stable error_code, so a broken backend
+    is distinguishable from a scene that simply has no target.
     """
 
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self._ai: Optional[AIInference] = None
         self._handler = None
-        # Wall-clock time of the last filter aggregate log.
+        # Monotonic timestamp of the last aggregate discard log.
         self._last_discard_log_ts: float = 0.0
 
     def set_ai(self, ai: AIInference) -> None:
@@ -97,7 +96,7 @@ class AIInferenceProcessor(Processor):
                 error_message=str(e),
             )
 
-        # Filter detections before any downstream consumption
+        # Filter detections before building the result.
         pre_count = len(detections)
         discard_log: list[tuple[Detection, str]] = []
         detections = filter_detections(
@@ -106,14 +105,14 @@ class AIInferenceProcessor(Processor):
             image_height=h,
             on_discard=lambda obj, reason: discard_log.append((obj, reason)),
         )
-        # Count the reasons so a mis-tuned threshold shows up as a named
-        # cause instead of only a shrinking detection count.
+        # Count reasons so a mis-tuned threshold shows up as a named cause
+        # instead of only a falling detection count.
         reason_counts: dict[str, int] = {}
         for _obj, reason in discard_log:
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
         # Log one aggregate per second instead of one line per discarded
-        # object every frame.
+        # object on every frame.
         if discard_log:
             now = time.monotonic()
             if now - self._last_discard_log_ts >= 1.0:

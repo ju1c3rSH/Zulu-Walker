@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
-"""电量采样器: 快照的用法 + 异常值处理。
+"""Battery sampler: snapshot semantics and outlier handling.
 
-这些签名要保证的行为（都是"错了但看不出来"那一类）:
-  1. 没采过 = unknown，不是 0% —— 0% 会被读成"快没电了"；
-  2. 一次读失败不能让快照变成 0，也不能抛给调用方；
-  3. 单次跳到 0 不采纳（Pro 的 I2C 失败就返回 0），连续两次才采纳。
+The contract these tests pin down (all "wrong but invisible" cases):
 
-采集节拍（主循环慢节拍）由采集模块提供，不在本文件覆盖范围内: 那一层
-依赖比赛分支的主循环架构，尚未并入主干，它的用例留在分支上。
+1. Never sampled = unknown, not 0%, since 0% reads as "almost empty".
+2. One failed read must neither zero the snapshot nor raise to the caller.
+3. A single jump to 0 is rejected (Pro returns 0 on I2C failure); accept only
+   after two consecutive reads.
+
+Polling cadence (the main loop's slow tick) is provided by the sampler module
+and is out of scope here: that layer depends on the competition branch's
+main-loop architecture, not yet merged into main, so its tests stay there.
 """
 import os
 import sys
@@ -19,7 +22,7 @@ from framework.hal.interface.battery import BatteryReading
 
 
 class _ScriptedBattery:
-    """按脚本吐读数；脚本用完就重复最后一项。"""
+    """Emit readings from a script; repeat the last value once it is exhausted."""
 
     def __init__(self, *values):
         self._values = list(values) or [BatteryReading()]
@@ -37,7 +40,7 @@ def _reading(pct, mv=3900, charging=None):
     return BatteryReading(percent=pct, millivolts=mv, charging=charging)
 
 
-# ---------------- 快照的用法 ----------------
+# ---------------- snapshot semantics ----------------
 
 def test_untouched_snapshot_is_unknown_not_zero():
     s = BatterySampler(_ScriptedBattery(_reading(80)))
@@ -54,7 +57,7 @@ def test_first_poll_publishes_value_and_level():
 
 
 def test_level_thresholds():
-    """低于 20 才转红（严格小于）; 充电优先。"""
+    """Only a value below 20 turns red (strictly less than); charging wins."""
     for pct, level in ((100, "ok"), (21, "ok"), (20, "ok"), (19, "low"), (0, "low")):
         s = BatterySampler(_ScriptedBattery(_reading(pct)), low=20)
         s.poll()
@@ -74,7 +77,7 @@ def test_no_battery_reports_minus_one():
     assert s.snapshot().level == "unknown"
 
 
-# ---------------- 发布约定（"要不要打一行"的唯一依据） ----------------
+# ---------------- publication contract (the only "print a line" criterion) ----------------
 
 def test_poll_returns_the_published_snapshot():
     s = BatterySampler(_ScriptedBattery(_reading(80)))
@@ -84,7 +87,7 @@ def test_poll_returns_the_published_snapshot():
 
 
 def test_poll_returns_none_when_the_jump_is_rejected():
-    """拒收 = 没发布 = 返回 None。调用方因此不会把旧值当新值再打一遍。"""
+    """Rejected = not published = returns None, so callers do not print the stale value again."""
     s = BatterySampler(_ScriptedBattery(_reading(80), _reading(20)))
     assert s.poll() is not None
     assert s.poll() is None
@@ -96,10 +99,12 @@ def test_poll_returns_none_when_the_read_raises():
     assert s.poll() is None
 
 
-# ---------------- 异常值 ----------------
+# ---------------- outlier values ----------------
 
 def test_single_jump_to_zero_is_rejected_then_accepted():
-    """Pro 的 I2C 失败返回 0，与真耗尽不可区分: 一次不信，两次信。"""
+    """Pro returns 0 on I2C failure, indistinguishable from a true empty cell:
+    reject the first reading, accept the second.
+    """
     s = BatterySampler(_ScriptedBattery(_reading(87), _reading(0), _reading(0)))
     s.poll()
     s.poll()
@@ -109,7 +114,7 @@ def test_single_jump_to_zero_is_rejected_then_accepted():
 
 
 def test_small_drop_is_accepted_immediately():
-    """每次掉 <20 个点都立即采纳（只有大跳变才要两次确认）。"""
+    """Drops of fewer than 20 points are accepted at once; only large jumps need confirmation."""
     s = BatterySampler(_ScriptedBattery(_reading(87), _reading(72), _reading(60)))
     for _ in range(3):
         s.poll()
@@ -117,7 +122,9 @@ def test_small_drop_is_accepted_immediately():
 
 
 def test_drop_of_exactly_twenty_points_needs_confirmation():
-    """阈值边界: 72 -> 52 正好 20 个点，属于"不合理"，要第二次才采纳。"""
+    """At the threshold, 72 -> 52 is exactly 20 points: treated as implausible,
+    so it is accepted only on the second read.
+    """
     s = BatterySampler(_ScriptedBattery(_reading(72), _reading(52), _reading(52)))
     s.poll()
     s.poll()
@@ -143,7 +150,7 @@ def test_read_exception_keeps_previous_snapshot():
 
 
 def test_reason_survives_the_snapshot():
-    """快照是渲染/日志的唯一来源: HAL 说"为什么", 这里不能丢。"""
+    """The snapshot is the only source for rendering and logging; keep the HAL's reason."""
     s = BatterySampler(_ScriptedBattery(BatteryReading(reason="没装电池")))
     s.poll()
     assert s.snapshot().percent == -1 and s.snapshot().reason == "没装电池"

@@ -6,17 +6,18 @@ author: your-team
 desc: Device package for a project built on the zulu framework.
 desc[zh]: 基于本框架的项目设备打包清单模板
 
-# ── 用法 ─────────────────────────────────────────────────────────────
-# maixpack 要求 app.yaml 与固件入口 main.py 位于仓库根目录:
-#   1. 把 deploy/maixcam/ 下的 app.yaml 和 main.py 复制到仓库根目录
-#   2. 按项目需要增删下方 files 清单(默认=框架核心,不含 detectors)
-#   3. 在根目录执行 maixpack 打包
-# 完整工作示例见 release/2026H 分支根目录的 app.yaml。
+# Usage
+# maixpack expects app.yaml and the firmware entry main.py at the repository root:
+#   1. Copy app.yaml and main.py from deploy/maixcam/ to the repository root.
+#   2. Adjust the files list below (default: framework core, no detectors).
+#   3. Run maixpack from the repository root.
+# Entries in files take precedence over exclude. A complete working example is
+# at the repository root of the release/2026H branch.
 #
-# 启用一个 detector 方案(如 cargo)的打包三件事:
-#   a) files 增加 modules\zw_opencv_module\detectors\cargo_detector 目录
-#   b) files 增加 modules\zw_opencv_module\processors\cargo_processor.py
-#   c) 项目代码在流水线启动前 enable_optional(["TrackCargoProcessor"])
+# To package one detector variant (for example cargo):
+#   a) add modules\zw_opencv_module\detectors\cargo_detector to files
+#   b) add modules\zw_opencv_module\processors\cargo_processor.py to files
+#   c) call enable_optional(["TrackCargoProcessor"]) before starting the pipeline
 
 exclude:
   - .git

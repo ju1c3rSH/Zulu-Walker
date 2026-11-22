@@ -68,7 +68,7 @@ def create_ai() -> MaixCam2AI:
 
 
 def create_battery() -> MaixCam2Battery:
-    """Capability hook: CAM2 走 sysfs 电量计（无 AXP2101）。"""
+    """Return the battery capability backed by the sysfs fuel gauge (no AXP2101)."""
     return MaixCam2Battery()
 
 

@@ -7,8 +7,9 @@ from utils.boot_timing import boot_stage
 
 logger = logging.getLogger(__name__)
 
-# MaixCAM (cv181x) 的串口模块是 `maix.uart`（不是 CAM2 的 `maix.peripheral.uart`）。
-# 两条路径都试：CAM1 走第一条，CAM2 若复用本文件也能兜住。
+# MaixCAM (cv181x) exposes UART as ``maix.uart``, not CAM2's
+# ``maix.peripheral.uart``. Try both paths: CAM1 takes the first, and CAM2 can
+# reuse this module via the second.
 try:
     from maix import uart as _maix_uart
     _HAS_UART = True
@@ -22,16 +23,16 @@ except (ImportError, ModuleNotFoundError):
         logger.warning("maix UART module not available, UART will be a stub")
 
 
-# 非默认引脚必须先 set_pin_function 复用，否则打不开/无收发
-# （MaixPy docs/doc/zh/peripheral/uart.md「常见代码错误」点名过这种写法）。
-# TX 与 RX 都要设，只设 TX 是常见漏项。
+# Non-default pins must be muxed with set_pin_function or the port will not
+# open or transfer data (called out in MaixPy docs/doc/zh/peripheral/uart.md).
+# Set both TX and RX; setting only TX is a common oversight.
 #
-# ttyS0 故意不设 pinmap：A16/A17 出厂默认就是 UART0_TX/UART0_RX
-# （pinmap.md:42），对已是默认功能的引脚再调 set_pin_function 多此一举，
-# 且部分固件会返回非 ERR_NONE 造成误告警。真正需要复用的只有非默认引脚的
-# 串口（UART1 A19/A18、UART2 B0/B1）。
+# ttyS0 deliberately has no pinmap: A16/A17 default to UART0_TX/UART0_RX
+# (pinmap.md:42), so calling set_pin_function on already-default pins is
+# redundant and some firmware returns non-ERR_NONE, causing false warnings.
+# Only non-default ports need muxing (UART1 A19/A18, UART2 B0/B1).
 _UART_PINMAP = {
-    # 出厂默认即UART0 功能，不要调 set_pin_function（见上）
+    # UART0 by default; do not call set_pin_function (see above).
     "ttyS0": (),
     "ttyS1": (("A19", "UART1_TX"), ("A18", "UART1_RX")),
     "ttyS2": (("B0", "UART2_TX"), ("B1", "UART2_RX")),
@@ -39,10 +40,12 @@ _UART_PINMAP = {
 
 
 def _ensure_pinmap(port: str) -> None:
-    """把串口引脚复用为对应 UART 功能。失败只告警不抛。
+    """Mux the port's pins to their UART function; warn on failure instead of
+    raising.
 
-    返回 False 表示复用没设成功（调用方可据此把警告升级）——不抛是因为
-    部分固件/引脚组合本来就已默认复用，硬失败会误伤。
+    Return False when muxing could not be set so the caller can escalate the
+    warning. Do not raise: some firmware/pin combinations are already muxed by
+    default and a hard failure would be wrong.
     """
     key = ""
     for k in _UART_PINMAP:
@@ -54,7 +57,7 @@ def _ensure_pinmap(port: str) -> None:
         return False
     pins = _UART_PINMAP[key]
     if not pins:
-        # ttyS0: 出厂默认功能，跳过（不是"失败"）
+        # ttyS0: pins already serve UART by default, skip (not a failure).
         logger.warning("[CAM1] UART %s 使用出厂默认引脚功能(A16/A17)，跳过 pinmap", port)
         return True
     try:
@@ -75,30 +78,34 @@ def _ensure_pinmap(port: str) -> None:
 
 
 class MaixCam1Uart:
-    """MaixCAM 串口（对接 panzer_Brain USART1）。
+    """MaixCAM UART link to the panzer_Brain USART1.
 
-    端口说明（MaixPy 官方引脚表）:
+    Port map (MaixPy official pin table):
 
-    | 串口   | TX      | RX      | 设备         | 备注                |
-    |--------|---------|---------|--------------|---------------------|
-    | UART0  | A16     | A17     | /dev/ttyS0   | 本项目在用     |
-    | UART1  | A19     | A18     | /dev/ttyS1   | 官方推荐自定义通信   |
+    | Port  | TX  | RX  | Device       | Notes                      |
+    |-------|-----|-----|--------------|----------------------------|
+    | UART0 | A16 | A17 | /dev/ttyS0   | used by this project       |
+    | UART1 | A19 | A18 | /dev/ttyS1   | recommended for custom use |
 
-    本项目用 UART0（/dev/ttyS0, A16/A17）对接 Brain，接线已固定。A16/A17
-    出厂默认即 UART0_TX/UART0_RX（pinmap.md:42），无需 pinmap —— 见
-    _ensure_pinmap 里 ttyS0 故意留空的说明。
+    This project uses UART0 (/dev/ttyS0, A16/A17) to talk to the Brain with a
+    fixed wiring. A16/A17 default to UART0_TX/UART0_RX (pinmap.md:42), so no
+    pinmap is needed; see the empty ttyS0 entry in _ensure_pinmap.
 
-    UART0 的三个已知限制（MaixPy uart.md「MaixCAM/MaixCAM-Pro 串口使用注意点」）:
+    Three known UART0 limitations (MaixPy uart.md, "MaixCAM/MaixCAM-Pro
+    serial notes"):
 
-    1. 开机打印日志直到出现 `serial ready`。Brain 侧应丢弃开机段数据，
-       否则可能把启动日志当协议帧。
-    2. TX(A16) 是启动模式检测引脚，拉低 = 无法开机。做 3.3V↔5V 电平转换
-       电路时务必确保 TX 默认不拉低（保持浮空或用电平转换芯片）。若上电起不来，
-       先查 A16 是否被拉低。
-    3. UART0 同时是系统默认 maix protocol 串口：占用后 MaixVision IDE 的调试
-       通道会与本链路抢线，台架调试改用 SSH（`ssh root@<设备IP>`）或断开 IDE。
-       注意 `app.need_exit()` 走的是 maix protocol 通道，占用 UART0 时应用可能
-       无法通过 IDE 正常停止（急停可直接断电或用设备上的物理方式）。
+    1. Boot logs print until ``serial ready`` appears. The Brain must discard
+       the boot segment or it may treat startup logs as protocol frames.
+    2. TX (A16) is also the boot-mode detect pin; holding it low prevents
+       booting. In a 3.3V<->5V level shifter, keep TX from being pulled low
+       (leave it floating or use a level-shifter IC). If the board will not
+       boot, check whether A16 is held low.
+    3. UART0 is also the system's default maix protocol port: once claimed,
+       the MaixVision IDE debug channel contends for the same lines. Use SSH
+       (``ssh root@<device-ip>``) for bench debugging or disconnect the IDE.
+       ``app.need_exit()`` travels over the maix protocol channel, so while
+       UART0 is occupied the app may not stop normally from the IDE (use a
+       physical power cut for an emergency stop).
     """
 
     def __init__(self, port: str, baudrate: int = 115200) -> None:
@@ -110,22 +117,25 @@ class MaixCam1Uart:
 
         if not _HAS_UART:
             return
-        # 非默认引脚需先复用（A16/A17 出厂已是 UART0 功能，函数内会跳过）
+        # Mux non-default pins first (A16/A17 already default to UART0; the
+        # helper skips them).
         if not _ensure_pinmap(port):
             logger.warning("UART %s 未能确认引脚复用，链路可能不通", port)
-        # UART0 抢线计时段：系统 Maix Comm Protocol 原本占着 /dev/serial0，
-        #   本项目改用 UART0 后，这里 open 会把系统服务踢掉、触发一遍退出握手才把
-        #   串口交回来 —— 这一段是固件行为, 代码侧消不掉, 只能测出来评估是否
-        #   值得换 UART1(A19/A18)。分 pinmap / open 两段计时便于区分是抢线握手
-        #   还是串口配置本身。
+        # UART0 line-contention timing: the system Maix Comm Protocol owns
+        # /dev/serial0. Once this project claims UART0, open kicks the system
+        # service off and triggers an exit handshake before releasing the
+        # port. That is firmware behavior and cannot be removed in code; it is
+        # measured to decide whether switching to UART1 (A19/A18) is worth it.
+        # Timing pinmap and open separately distinguishes handshake contention
+        # from port configuration itself.
         with boot_stage("uart.pinmap"):
-            pass  # _ensure_pinmap 已在上面同步调用, 这里只借它划出时间边界
+            pass  # _ensure_pinmap was called above; this only marks a time boundary
         try:
             with boot_stage("uart.open"):
                 self._uart = _maix_uart.UART(port, baudrate)
             self._connected = True
         except TypeError:
-            # 老固件可能只认关键字
+            # Older firmware may accept only keywords.
             try:
                 with boot_stage("uart.open(kw)"):
                     self._uart = _maix_uart.UART(port=port, baudrate=baudrate)
@@ -188,8 +198,9 @@ class MaixCam1Uart:
     def receive(self, size: int = 1) -> Optional[bytes]:
         if not self._connected or self._uart is None:
             return None
-        # 回调模式与 read 混用会读出错（MaixPy UART FAQ 第6 条明确警告
-        # "设置了 callback 就不要再用 read"）。这里加守卫堵住"两个模式同时打开"的口子。
+        # Mixing callback mode with read gives wrong results (MaixPy UART FAQ
+        # item 6 warns: "do not use read once a callback is set"). Guard
+        # against having both modes active at once.
         if self._receiver_callback is not None:
             return None
         try:
@@ -215,7 +226,7 @@ class MaixCam1Uart:
         self._receiver_callback = callback
 
         def _wrapped(uart, data):
-            # MaixPy 回调签名是 (uart_instance, data)
+            # MaixPy callback signature is (uart_instance, data).
             if self._receiver_callback:
                 try:
                     self._receiver_callback(bytes(data))

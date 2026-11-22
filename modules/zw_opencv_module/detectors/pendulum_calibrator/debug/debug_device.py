@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""
-MaixCAM2 standalone pendulum calibration debug tool.
-Direct camera capture, interactive parameter tuning,
-LCD real-time preview, detailed diagnostics, and frame saving.
+"""Standalone pendulum calibration debug tool for MaixCAM2.
+
+Capture directly from the camera, tune parameters interactively, preview on
+the LCD, print diagnostics, and save frames.
 
 Usage:
   cd /maixapp/apps/Zulu-Walker
@@ -112,8 +112,8 @@ def _print_diagnostics(diag: dict, frame_no: int):
 
     fr = diag.get('fail_reason')
 
-    # Column-centroid diagnostics always print (success or fallback), so a
-    # failed primary stage is debuggable instead of being silently hidden.
+    # Always print column-centroid diagnostics so a failed primary stage
+    # remains visible whether it succeeded or fell back.
     cpts = diag.get('column_points')
     ct = diag.get('column_threshold')
     cmed = diag.get('column_median_h')
@@ -230,7 +230,7 @@ def _make_overlay(frame_bgr: np.ndarray, calibrator: PendulumCalibrator, result,
         cx, cy = rect[0]
         cv2.circle(overlay, (int(cx), int(cy)), 5, (255, 0, 0), -1)
 
-    # Bottom-edge column samples (red dots, subsampled every 4th column).
+    # Bottom-edge column samples as red dots, every fourth column.
     col_pts = calibrator.last_column_points
     if col_pts:
         for i, (px, py) in enumerate(col_pts):
@@ -262,7 +262,7 @@ def _make_overlay(frame_bgr: np.ndarray, calibrator: PendulumCalibrator, result,
 
 def _draw_cm_ruler_cv(overlay: np.ndarray, result, pixels_per_cm: float,
                       cm_interval: float, tick_len: int):
-    """Simulated cm ruler along the rail axis (cv2 drawing)."""
+    """Draw a simulated centimetre ruler along the rail axis with cv2."""
     h, w = overlay.shape[:2]
     step = pixels_per_cm * cm_interval
     if step <= 0:

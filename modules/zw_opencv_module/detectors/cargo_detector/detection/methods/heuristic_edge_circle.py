@@ -8,24 +8,11 @@ from .....models.color import Color
 
 
 class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
-    """Three-stage cargo circle detection.
+    """Detect cargo circles through three stages with decreasing confidence.
 
-    Stage 1 (confidence=100):  fitEllipse from EdgeDrawing contours
-        - EdgeDrawing -> contours -> fitEllipse (center used directly, no color-moments refinement)
-        - Color score verified but NOT used to shift center
-
-    Stage 2 (confidence=60):  color blob centroid
-        - findContours directly on raw color_mask
-        - Moments centroid from largest color blob
-        - Pure area-based, no edge dependency
-
-    Stage 3 (confidence=40):  heuristic moments from edge contours
-        - Moments centroid from existing edge contours
-        - Relaxed color threshold
-        - Handles partial/fragmented circles
-
-    Fallback:
-        Kalman prediction or history average (is_predicted=True, confidence=0)
+    Stage 1 fits ellipses to edge contours (confidence 100). Stage 2 uses the
+    centroid of the largest color blob (confidence 60). Stage 3 uses moments
+    of edge contours with a relaxed color threshold (confidence 40).
     """
 
     COLOR_BLOB_MIN_AREA = 2000
@@ -52,7 +39,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
 
         contours, color_mask = result
 
-        # === Stage 1: fitEllipse evaluation ===
+        # Stage 1: fitEllipse on edge contours.
         candidates = []
         for contour in contours:
             candidate = self._evaluate_contour(contour, color_mask, hsv, target_color)
@@ -67,7 +54,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
         if fs == 2:
             return None, None, None
 
-        # === Stage 2: color blob centroid ===
+        # Stage 2: centroid of the largest color blob.
         blob_result = self._try_color_blob(color_mask)
         if blob_result is not None:
             if fs == 0 or fs == 3:
@@ -76,7 +63,7 @@ class HeuristicEdgeCircleMethod(EdgeDrawingCircleMethod):
         if fs == 3:
             return None, None, None
 
-        # === Stage 3: heuristic moments from edge contours ===
+        # Stage 3: moments of edge contours under a relaxed color limit.
         stage3_candidates = []
         for contour in contours:
             candidate = self._evaluate_heuristic(contour, color_mask, target_color)

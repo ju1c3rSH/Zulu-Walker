@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-通用 State → Action 桥接层
+"""Declaratively bind state changes to actions.
 
-声明式绑定状态转换与动作执行，不绑定任何特定状态机实现。
+The bridge listens to a BaseStateMachine through its state-change callbacks
+and invokes registered actions; it contains no mission-specific logic.
 """
 
 from typing import Callable, Optional, Union, Set
@@ -10,10 +10,9 @@ from framework.state_machine.base import BaseStateMachine
 
 
 class StateActionBridge:
-    """
-    监听 BaseStateMachine 的状态变化，自动触发预注册的动作。
+    """Run registered actions when observed states are entered or exited.
 
-    Usage:
+    Example:
         bridge = StateActionBridge(mission_sm)
         bridge.when_enter("READ_QR", lambda: activate("qr_detect"))
         bridge.when_enter({"ALIGN_RAW", "ALIGN_TEMP"}, lambda: activate("track"))

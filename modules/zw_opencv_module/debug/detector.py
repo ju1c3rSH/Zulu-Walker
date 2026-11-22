@@ -2,13 +2,11 @@ from utils.log_util import log_print
 
 # -*- coding: utf-8 -*-
 """
-独立检测参数调试器
+Standalone detector parameter debugger.
 
-独立运行入口，用于实时整定检测参数。
+Run this module directly to tune detection parameters in real time:
 
-使用方法:
     python -m modules.zw_opencv_module.debug.detector
-    或
     python modules/zw_opencv_module/debug/detector.py
 """
 import os

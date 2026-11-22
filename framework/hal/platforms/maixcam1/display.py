@@ -10,21 +10,25 @@ from utils.boot_timing import boot_stage
 
 logger = logging.getLogger(__name__)
 
-# MaixCAM-Pro 面板物理尺寸; 显示对象打不开时 width()/height() 退回它。
+# Physical panel size of the MaixCAM-Pro; width()/height() fall back to it
+# when the display object cannot be opened.
 _FALLBACK_W, _FALLBACK_H = 552, 368
 
 
 class MaixCam1Display:
-    """MaixCAM / MaixCAM-Pro 显示。
+    """Display output for MaixCAM / MaixCAM-Pro.
 
-    构造签名按 CAM1 固件支持程度逐级简化：新固件支持 `open=True`，老固件的
-    `Display()` 不认该 kwarg（官方示例即`display.Display()`），故先试
-    带 kwarg 的、失败退回无参。MaixCAM-Pro 有触摸屏（552x368），调参页
-    与四页 KEY_OK 路由因此可原样保留。
+    Construction simplifies by firmware support: new firmware accepts
+    ``open=True`` while older firmware's ``Display()`` rejects the kwarg (the
+    official example is ``display.Display()``), so try the kwarg first and
+    fall back to no arguments. The MaixCAM-Pro has a 552x368 touchscreen, so
+    the tuning page and four-page KEY_OK routing work unchanged.
 
-    与相机同款的白跑风险（2026-10-08 打点）: `except TypeError: pass`
-    之后会继续尝试下一级。若 `Display(open=True)` 是"已经建好显示上下文才
-    抛 TypeError"，重试就是重复初始化。逐级打点后可见实际试了几次。
+    Like the camera, fallback can repeat expensive work: after
+    ``except TypeError: pass``, the next level is attempted. If
+    ``Display(open=True)`` created the display context before raising
+    TypeError, retrying reinitializes it. Per-level timing makes the number of
+    attempts visible.
     """
 
     def __init__(self) -> None:
@@ -54,10 +58,11 @@ class MaixCam1Display:
                 log_print(f"[CAM1] display.attempts={attempts}  <-- 降级重试")
 
     def show(self, frame) -> bool:
-        """显示一帧。
+        """Display one frame.
 
-        *frame* 可以是 maix.image.Image（零拷贝，显示路径首选）或 BGR
-        numpy（HUD 在 numpy 上绘制后回传）。与 MaixCam2Display 一致。
+        *frame* may be a maix.image.Image (zero-copy, preferred on the
+        display path) or a BGR numpy array (HUD drawn in numpy then passed
+        back). Same as MaixCam2Display.
         """
         if self._disp is None or frame is None:
             return False
@@ -68,7 +73,8 @@ class MaixCam1Display:
             return False
 
     def width(self) -> int:
-        """打不开时退回面板物理尺寸而非 0: 0 会让调试页 resize(0,0) 直接失败。"""
+        """Fall back to the physical panel size, not 0: the debug page's
+        resize(0, 0) would fail."""
         try:
             return self._disp.width() or _FALLBACK_W
         except Exception:

@@ -15,17 +15,17 @@ class Camera(Protocol):
         ...
 
     def read_raw(self) -> Optional[np.ndarray]:
-        """取一帧并返回与 last_raw 同帧的 BGR numpy（主流水线用它）。
+        """Return one frame as BGR ndarray, from the same frame as ``last_raw``.
 
-        返回的 numpy 帧与 last_raw 必须是同一帧：context["camera"].last_raw
-        供 maix C++ 零拷贝路径使用，numpy 帧供 cv2 回退路径。
-        停帧（无新帧）时返回 None，调用方不得复用旧帧。
+        Both views must refer to the same frame: ``context["camera"].last_raw``
+        feeds the zero-copy maix C++ path, the ndarray the cv2 fallback. Return
+        None when no new frame exists; callers must not reuse a stale frame.
         """
         ...
 
     @property
     def last_raw(self):
-        """最近一次读取的原始帧（maix Image；无 maix 的平台返回 None）。"""
+        """Most recent raw frame (a maix Image; None on platforms without maix)."""
         ...
 
     @property

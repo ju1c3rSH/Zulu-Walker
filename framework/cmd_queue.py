@@ -1,13 +1,9 @@
-"""Typed command queue: ordered, mergeable commands for the main loop.
+"""Carry ordered, mergeable commands from producers to the main loop.
 
-Producers (UART RX thread, UI callbacks, input sources) enqueue Cmd items;
-the main loop drains the queue once per tick and executes commands in order.
-Every command is a named, inspectable value - never an anonymous lambda - so
-the queue doubles as a pending-action audit log and is trivial to unit test.
-
-Selection rule (docs/architecture/thread_tick_topology.md): use a CmdQueue
-when an action must not be lost but repeats can be coalesced (calibration
-requests, record toggles, exit).
+Producers (UART RX thread, UI callbacks, input sources) enqueue ``Cmd`` items;
+the main loop drains them in order once per tick. Named values keep the queue
+inspectable and easy to unit test. Use a queue when an action must not be lost
+but repeats can be coalesced (calibration requests, record toggles, exit).
 """
 
 from __future__ import annotations

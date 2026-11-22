@@ -21,14 +21,11 @@ _COLOR_NAMES = {
 
 @register_processor("RingDiscoveryProcessor")
 class RingDiscoveryProcessor(Processor):
-    """色环发现处理器。
+    """Locate a colored ring and report its normalized offset from frame center.
 
-    输出 result_data:
-      percent_error_x: int, [-5000, 5000], 0=画面中心, 负=偏左, 正=偏右
-      percent_error_y: int, [-5000, 5000], 0=画面中心, 负=偏上, 正=偏下
-      coordinate: 色环中心像素坐标
-      confidence: float 置信度
-      target_color: Color 当前搜索的颜色
+    result_data holds percent_error_x and percent_error_y in [-5000, 5000]
+    (0 is frame center; negative is left/up, positive is right/down), the ring
+    center in pixels, a confidence score, and the current target color.
     """
 
     def __init__(self, name: str = "ring_discovery"):
