@@ -63,8 +63,8 @@ class MaixCam1Camera:
        30+ms —— 只限时延不限帧率（真机实测 [FPS] pipeline ~60fps 可达）。
        buff_num 再小也压不下帧龄; 推流率按 [FPS] pipeline 实测验收。
 
-    2. 镜头: 默认 M12 手动调焦镜头（CAM2 是固定焦距），靶标/爆炸物
-       标定几何（坑位 ROI、误差中心）不能直接沿用 CAM2 的值，需现场重标。
+    2. 镜头: 默认 M12 手动调焦镜头（CAM2 是固定焦距），标定几何
+       （ROI 与误差中心）不能直接沿用 CAM2 的值，需现场重标。
 
     3. constructor 签名: CAM1 走位置参数 `Camera(w, h, format)`，
        `device=`/`buff_num=` 等关键字在老固件上可能不认，故全部走 try/except
@@ -363,8 +363,8 @@ class MaixCam1Camera:
 
         延迟转换（`_lazy_convert` 为真时）: 不在这里做 `image2cv`（921KB 拷贝,
         实测 9~16ms）, 改为交出 `LazyFrame` 代理 —— 只有真正用到像素（cv2 回退 /
-        调参页 / RESCUE 传 numpy）时才转一次。TARGET/EXPLOSIVE 走 C++ find_blobs
-        时一次拷贝都不发生。`_last_frame` 仍置为转换后的 numpy 或 代理。
+        调参页 / 需要 numpy 的处理器）时才转一次。走 C++ find_blobs 的处理器
+        一次拷贝都不发生。`_last_frame` 仍置为转换后的 numpy 或 代理。
         """
         if raw is None:
             return None

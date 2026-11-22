@@ -1,8 +1,8 @@
 """On-screen UI state: button geometry and interaction gates.
 
 Pure logic - no pixel APIs - so it is unit-testable off device and reusable
-by any backend that can produce frame coordinates (D5: this-competition
-orchestration lives in app/).
+by any backend that can produce frame coordinates.  Project specific
+orchestration lives in app/.
 """
 
 from __future__ import annotations

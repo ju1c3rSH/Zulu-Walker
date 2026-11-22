@@ -1,4 +1,14 @@
-﻿from .ai import AIInference, Detection, Keypoint, MaskStats, SegmentResult
+﻿from .ai import (
+    AIError,
+    AIInference,
+    ContractError,
+    Detection,
+    Keypoint,
+    MaskStats,
+    ModelConfigError,
+    ModelLoadError,
+    SegmentResult,
+)
 from .battery import Battery, BatteryReading, NullBattery
 from .camera import Camera
 from .display import Display
@@ -7,7 +17,9 @@ from .uart import Uart
 from .watchdog import Watchdog
 
 __all__ = [
+    "AIError",
     "AIInference",
+    "ContractError",
     "Battery",
     "BatteryReading",
     "Camera",
@@ -17,6 +29,8 @@ __all__ = [
     "InputSource",
     "Keypoint",
     "MaskStats",
+    "ModelConfigError",
+    "ModelLoadError",
     "NullBattery",
     "SegmentResult",
     "SinkGroup",

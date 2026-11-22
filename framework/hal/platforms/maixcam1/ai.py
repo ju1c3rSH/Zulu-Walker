@@ -8,11 +8,23 @@ import numpy as np
 import maix.image
 import maix.nn
 
-from framework.hal.interface.ai import Detection, Keypoint, MaskStats, SegmentResult
+from framework.hal.interface.ai import (
+    ContractError,
+    Detection,
+    E_INFER_FAILED,
+    E_INVALID_INPUT,
+    E_MODEL_LOAD_FAILED,
+    E_MODEL_NOT_LOADED,
+    E_OUTPUT_LAYOUT_MISMATCH,
+    Keypoint,
+    MaskStats,
+    ModelConfigError,
+    SegmentResult,
+)
 
 logger = logging.getLogger(__name__)
 
-# MaixCAM (cv181x) 的模型类。人质模型走 YOLOv5 + .cvimodel（CVITEK 格式）。
+# MaixCAM (cv181x) 的模型类。当前部署走 YOLOv5 + .cvimodel（CVITEK 格式）。
 # 缺哪个类型就直接报错, 别拿别的类顶：固件缺 YOLOv8/YOLO11 时若回退到 YOLOv5，
 #   会用 YOLOv5 的后处理去解 YOLOv8/YOLO11 的输出——不抛异常、直接吐错误坐标，
 #   比"加载失败"危险得多。缺失一律置None，由 _resolve_class → switch 显式失败。
@@ -28,7 +40,7 @@ _DEFAULT_TYPE = "yolov5"
 
 
 class MaixCam1AI:
-    """MaixCAM / MaixCAM-Pro NPU 推理（人质形状识别）。
+    """MaixCAM / MaixCAM-Pro NPU 推理后端。
 
     与 MaixCam2AI 的差异:
 
@@ -39,11 +51,11 @@ class MaixCam1AI:
        YOLOv8/YOLO11 —— 缺失时显式失败, 不拿别的类型顶上，见 _SLOT_CLASSES 注释。
     3. 构造参数: YOLOv5 用 `model=<mud路径>` 关键字。`dual_buff`
        CAM1 是支持的（官方 docs/doc/zh/vision/dual_buff.md 就是 MaixCAM 文档），
-       且默认开启；但它会让 `detect()` 返回上一次调用的图结果 → 人质坑位
-       `first_seen` 定序引入一帧延迟（CAM1 约 30fps，即~33ms 机械位移）。
+       且默认开启；但它会让 `detect()` 返回上一次调用的图结果 → 按首次出现顺序
+       定序的任务引入一帧延迟（CAM1 约 30fps，即~33ms 机械位移）。
        故显式关掉，见 switch()。
-    4. 性能: CAM1 NPU 算力与内存都显著低于 CAM2，人质任务 320x240
-       输入是可接受的既有配置，勿盲目上640。
+    4. 性能: CAM1 NPU 算力与内存都显著低于 CAM2，低分辨率输入是可接受的
+       既有配置，勿盲目上640。
     """
 
     def __init__(self) -> None:
@@ -52,6 +64,10 @@ class MaixCam1AI:
         self._model = None
         self._model_type: str = ""
         self._model_path: str = ""
+
+        self._last_error_code: str = ""
+        self._error_count: int = 0
+        self._degraded: bool = False
 
     # ------------------------------------------------------------------ #
     #  Registry API
@@ -68,6 +84,18 @@ class MaixCam1AI:
     @property
     def model_type(self) -> str:
         return self._model_type
+
+    @property
+    def last_error_code(self) -> str:
+        return self._last_error_code
+
+    @property
+    def error_count(self) -> int:
+        return self._error_count
+
+    @property
+    def degraded(self) -> bool:
+        return self._degraded
 
     def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
         if nick_name in self._registry:
@@ -97,8 +125,8 @@ class MaixCam1AI:
         """加载并激活一个已注册模型。
 
         CAM1 每次 switch 都从 flash 重新加载 .cvimodel 到 NPU，耗时与
-        CAM2 同量级（~200-500ms）。当前只有人质一个模型，不构成问题；
-        若将来加第二个模型，注意 RESCUE 订阅期内的首次 switch 会阻塞
+        CAM2 同量级（~200-500ms）。当前只部署单个模型，不构成问题；
+        若将来加第二个模型，注意数据订阅期内的首次 switch 会阻塞
         推流一拍。
         """
         if nick_name not in self._registry:
@@ -120,8 +148,8 @@ class MaixCam1AI:
 
         # CAM1: YOLOv5(model=<mud>, dual_buff=False)
         # 显式 dual_buff=False：CAM1 支持该参数且默认为 True，而它会让
-        # detect() 返回上一次调用的图结果 —— 人质坑位 first_seen 定序与
-        # x_crop 像素判断会因此吃到一帧延迟（约 33ms @30fps）。关掉换实时性。
+        # detect() 返回上一次调用的图结果 —— 按首次出现定序与像素裁剪判断
+        # 会因此吃到一帧延迟（约 33ms @30fps）。关掉换实时性。
         # 旧固件若不认该 kwarg，用 TypeError 消息特征区分"签名不兼容"与
         # "模型本身坏了"，避免无谓重试一次 NPU 加载并掩盖真实错误。
         kwargs.setdefault("dual_buff", False)
@@ -135,17 +163,21 @@ class MaixCam1AI:
                 try:
                     self._model = slot_cls(model=path, **kwargs)
                 except Exception as e2:
-                    logger.error("Failed to load model '%s' from %s: %s",
-                                 nick_name, path, e2)
+                    self._report_error(
+                        E_MODEL_LOAD_FAILED,
+                        f"Failed to load model '{nick_name}' from {path}: {e2}")
                     self._model = None
                     return False
             else:
-                logger.error("Failed to load model '%s' from %s: %s",
-                             nick_name, path, e)
+                self._report_error(
+                    E_MODEL_LOAD_FAILED,
+                    f"Failed to load model '{nick_name}' from {path}: {e}")
                 self._model = None
                 return False
         except Exception as e:
-            logger.error("Failed to load model '%s' from %s: %s", nick_name, path, e)
+            self._report_error(
+                E_MODEL_LOAD_FAILED,
+                f"Failed to load model '{nick_name}' from {path}: {e}")
             self._model = None
             return False
 
@@ -222,26 +254,27 @@ class MaixCam1AI:
         """Run object detection on frame.
 
         *frame* 可以是 BGR numpy（常规流水线路径）或 `maix.image.Image`
-        （零拷贝路径，传`_raw=True`）。人质任务当前走 numpy 路径。
+        （零拷贝路径，传`_raw=True`）。当前任务走 numpy 路径。
 
-        无模型/推理失败时返回空 list —— 上层 gks_task_processor 据此
-        出错也不中断（零值心跳）, 不崩。
+        无模型/推理失败时返回空 list —— 上层据此继续出零值心跳, 不中断。
+        契约类错误（后处理与输出格式不匹配）改为抛出, 见 E_OUTPUT_LAYOUT_MISMATCH。
         """
         conf_th = kwargs.pop("conf_th", 0.48)
         iou_th = kwargs.pop("iou_th", 0.5)
         _is_raw = kwargs.pop("_raw", False)
 
         if self._model is None:
-            logger.warning("detect() called but no model is loaded")
+            self._report_error(
+                E_MODEL_NOT_LOADED, "detect() called but no model is loaded")
             return []
 
         if not hasattr(self._model, "detect"):
-            logger.warning(
-                "detect() requires a model with detect() method, "
-                "current model type=%s (nick_name=%s)",
-                type(self._model).__name__, self._active_name or "N/A",
+            # The runtime class cannot decode this model's output: refuse
+            # instead of returning an empty list that reads as "no target".
+            self._fail_contract(
+                f"Model class {type(self._model).__name__} provides no detect(); "
+                f"type '{self._model_type}' does not match the output layout"
             )
-            return []
 
         try:
             if _is_raw:
@@ -250,7 +283,7 @@ class MaixCam1AI:
                 frame_rgb = frame[:, :, ::-1]
                 img = maix.image.cv2image(frame_rgb, bgr=False, copy=True)
         except Exception as e:
-            logger.error("cv2image conversion failed: %s", e)
+            self._report_error(E_INVALID_INPUT, f"cv2image conversion failed: {e}")
             return []
 
         try:
@@ -259,12 +292,12 @@ class MaixCam1AI:
             # 不做"丢掉 iou_th 重试"：CAM1 官方 nn_yolov5.py / yolov5.md 都带
             # iou_th，TypeError 更可能来自 detect 内部，吞掉它再重试只会掩盖
             # 真实错误、并悄悄改掉检测结果。
-            logger.error("Model detect() failed: %s", e)
+            self._report_error(E_INFER_FAILED, f"Model detect() failed: {e}")
             return []
 
         # 必须在 try 之外做`or []`：部分固件无目标时 detect() 返回 None 而非
         #   空 list，`for o in None` 会抛 TypeError 逃出本函数直达
-        #   gks_task_processor._process_rescue（该处无 try 包裹）→ 打断整帧处理，
+        #   上层调用点（该处无 try 包裹）→ 打断整帧处理，
         #   违反上面"返回空 list 让上层自己处理"的承诺。
         objects = [o for o in (objects or []) if o.score >= conf_th]
         if not objects:
@@ -281,7 +314,7 @@ class MaixCam1AI:
             else:
                 angle = None
 
-            # CAM1 YOLOv5 无人质分割需求，seg_mask 分支保留占位以对齐接口
+            # CAM1 YOLOv5 无分割需求，seg_mask 分支保留占位以对齐接口
             seg_mask_np: Optional[np.ndarray] = None
             mask_stats: Optional[MaskStats] = None
             if hasattr(obj, "seg_mask") and obj.seg_mask is not None:
@@ -322,21 +355,23 @@ class MaixCam1AI:
 
     def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
         if self._model is None:
-            logger.warning("classify() called but no model is loaded")
+            self._report_error(
+                E_MODEL_NOT_LOADED, "classify() called but no model is loaded")
             return []
         if not hasattr(self._model, "classify"):
-            logger.warning("classify() requires a classify() method, current type=%s",
-                           type(self._model).__name__)
-            return []
+            self._fail_contract(
+                f"Model class {type(self._model).__name__} provides no classify(); "
+                f"type '{self._model_type}' does not match the output layout"
+            )
         try:
             img = maix.image.cv2image(frame, bgr=True, copy=True)
         except Exception as e:
-            logger.error("cv2image conversion failed: %s", e)
+            self._report_error(E_INVALID_INPUT, f"cv2image conversion failed: {e}")
             return []
         try:
             results = self._model.classify(img)
         except Exception as e:
-            logger.error("Model classify() failed: %s", e)
+            self._report_error(E_INFER_FAILED, f"Model classify() failed: {e}")
             return []
         top_k = kwargs.get("top_k", 1)
         out: list[tuple[int, float]] = []
@@ -364,6 +399,25 @@ class MaixCam1AI:
     #  Internal helpers
     # ------------------------------------------------------------------ #
 
+    def _report_error(self, code: str, message: str) -> None:
+        """Record a recoverable failure so it stays visible to the caller."""
+        self._last_error_code = code
+        self._error_count += 1
+        self._degraded = True
+        logger.error("[%s] %s", code, message)
+
+    def _fail_contract(self, message: str) -> None:
+        """Record a contract violation and raise it.
+
+        The violation is never downgraded to an empty result: an empty list
+        is indistinguishable from "the scene contains no target".
+        """
+        self._last_error_code = E_OUTPUT_LAYOUT_MISMATCH
+        self._error_count += 1
+        self._degraded = True
+        logger.error("[%s] %s", E_OUTPUT_LAYOUT_MISMATCH, message)
+        raise ContractError(message, E_OUTPUT_LAYOUT_MISMATCH)
+
     @staticmethod
     def _resolve_class(model_type):
         """返回 CAM1 上对应的 MaixPy NN 类；None = 不支持。
@@ -376,8 +430,11 @@ class MaixCam1AI:
             return _SLOT_CLASSES[model_type]
         if isinstance(model_type, type):
             return model_type
-        logger.warning("Unknown model_type '%s', falling back to yolov5", model_type)
-        return _SLOT_CLASSES[_DEFAULT_TYPE]
+        # Unknown type: fail explicitly.  Falling back to yolov5 would run
+        # the wrong post-processing on the output and silently yield wrong
+        # boxes, which is worse than a visible failure.
+        raise ModelConfigError(
+            f"Unsupported model type '{model_type}'", E_MODEL_TYPE_UNSUPPORTED)
 
     @staticmethod
     def _convert_keypoints(obj, model_type: str = "") -> list[Keypoint]:

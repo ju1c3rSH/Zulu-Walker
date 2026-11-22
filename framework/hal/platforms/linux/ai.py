@@ -5,17 +5,27 @@ from typing import Optional
 
 import numpy as np
 
-from framework.hal.interface.ai import Detection
+from framework.hal.interface.ai import Detection, E_INFER_FAILED, E_MODEL_NOT_LOADED
 
 logger = logging.getLogger(__name__)
 
 
 class LinuxAI:
+    """Placeholder AI backend for generic Linux hosts.
+
+    No inference engine is bound yet, so every call reports a failure code
+    instead of pretending that the scene is empty.
+    """
+
     def __init__(self) -> None:
         self._registry: dict[str, dict] = {}
         self._active_name: str = ""
         self._model_type: str = ""
         self._model_path: str = ""
+
+        self._last_error_code: str = ""
+        self._error_count: int = 0
+        self._degraded: bool = False
 
     # ------------------------------------------------------------------ #
     #  Registry API
@@ -55,11 +65,12 @@ class LinuxAI:
 
     def switch(self, nick_name: str) -> bool:
         if nick_name not in self._registry:
-            logger.error("Cannot switch to unknown model '%s'", nick_name)
+            self._report_error(
+                E_MODEL_NOT_LOADED, f"Cannot switch to unknown model '{nick_name}'")
             return False
         if self._active_name == nick_name:
             return True
-        logger.warning("LinuxAI: model switching is a no-op (no NPU available)")
+        logger.warning("LinuxAI: model switching is a no-op (no inference engine bound)")
         self._active_name = nick_name
         info = self._registry[nick_name]
         self._model_path = info["path"]
@@ -102,20 +113,32 @@ class LinuxAI:
     def model_path(self) -> str:
         return self._model_path
 
+    @property
+    def last_error_code(self) -> str:
+        return self._last_error_code
+
+    @property
+    def error_count(self) -> int:
+        return self._error_count
+
+    @property
+    def degraded(self) -> bool:
+        return self._degraded
+
     # ------------------------------------------------------------------ #
-    #  Inference (stub)
+    #  Inference
     # ------------------------------------------------------------------ #
 
     def detect(self, frame: np.ndarray, **kwargs) -> list[Detection]:
-        logger.warning("LinuxAI.detect() called but no NPU is available")
+        self._report_error(E_INFER_FAILED, "LinuxAI.detect() called but no inference engine is bound")
         return []
 
     def segment(self, frame: np.ndarray, **kwargs) -> list:
-        logger.warning("LinuxAI.segment() called but no NPU is available")
+        self._report_error(E_INFER_FAILED, "LinuxAI.segment() called but no inference engine is bound")
         return []
 
     def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
-        logger.warning("LinuxAI.classify() called but no NPU is available")
+        self._report_error(E_INFER_FAILED, "LinuxAI.classify() called but no inference engine is bound")
         return []
 
     def get_mask(self, index: int = 0) -> Optional[np.ndarray]:
@@ -130,3 +153,14 @@ class LinuxAI:
 
     def __exit__(self, *args):
         self.unload()
+
+    # ------------------------------------------------------------------ #
+    #  Internal helpers
+    # ------------------------------------------------------------------ #
+
+    def _report_error(self, code: str, message: str) -> None:
+        """Record a recoverable failure so it stays visible to the caller."""
+        self._last_error_code = code
+        self._error_count += 1
+        self._degraded = True
+        logger.error("[%s] %s", code, message)

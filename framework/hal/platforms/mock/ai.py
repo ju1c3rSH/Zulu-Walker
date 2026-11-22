@@ -5,16 +5,27 @@ from typing import Optional
 
 import numpy as np
 
-from framework.hal.interface.ai import Detection
+from framework.hal.interface.ai import Detection, E_INFER_FAILED
 
 logger = logging.getLogger(__name__)
 
 
 class MockAI:
+    """AI backend stub for development and CI runs without hardware.
+
+    It accepts the full registry API but never produces detections, and it
+    reports a failure code so callers can tell "no inference" apart from
+    "the scene is empty".
+    """
+
     def __init__(self) -> None:
         self._registry: dict[str, dict] = {}
         self._active_name: str = ""
         self._model_type: str = ""
+
+        self._last_error_code: str = ""
+        self._error_count: int = 0
+        self._degraded: bool = False
 
     @property
     def models(self) -> list[str]:
@@ -78,16 +89,28 @@ class MockAI:
             return self._registry[self._active_name]["path"]
         return ""
 
+    @property
+    def last_error_code(self) -> str:
+        return self._last_error_code
+
+    @property
+    def error_count(self) -> int:
+        return self._error_count
+
+    @property
+    def degraded(self) -> bool:
+        return self._degraded
+
     def detect(self, frame: np.ndarray, **kwargs) -> list[Detection]:
-        logger.warning("MockAI: detect() called but no NPU available")
+        self._report_error(E_INFER_FAILED, "MockAI: detect() called but no inference backend is bound")
         return []
 
     def segment(self, frame: np.ndarray, **kwargs) -> list:
-        logger.warning("MockAI: segment() called but no NPU available")
+        self._report_error(E_INFER_FAILED, "MockAI: segment() called but no inference backend is bound")
         return []
 
     def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
-        logger.warning("MockAI: classify() called but no NPU available")
+        self._report_error(E_INFER_FAILED, "MockAI: classify() called but no inference backend is bound")
         return []
 
     def get_mask(self, index: int = 0) -> Optional[np.ndarray]:
@@ -98,3 +121,10 @@ class MockAI:
 
     def __exit__(self, *args):
         self.unload()
+
+    def _report_error(self, code: str, message: str) -> None:
+        """Record a recoverable failure so it stays visible to the caller."""
+        self._last_error_code = code
+        self._error_count += 1
+        self._degraded = True
+        logger.error("[%s] %s", code, message)
