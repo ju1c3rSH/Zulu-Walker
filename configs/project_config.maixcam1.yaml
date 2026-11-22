@@ -1,0 +1,49 @@
+# MaixCAM / MaixCAM-Pro (cv181x) 运行配置模板。
+#
+# 用法（不覆盖工作区的 project_config.yaml）:
+#     set ZWULU_CONFIG=configs/project_config.maixcam1.yaml
+#     python run.py main
+#
+# 与 MaixCAM2 默认配置的逐项差异见
+# docs/architecture/maixcam1_platform.md。
+
+platform: maixcam1
+
+display_enabled: true
+# CAM1 面板 552x368, 比 CAM2 慢; 100ms = 10Hz, HUD 绘制与上屏同频节流
+display_show_interval_ms: 100
+
+debug_console_enabled: false      # Rich TUI 独立线程, 省 CPU/内存
+
+observability:
+  perf: true
+  perf_detail: false
+  perf_interval_s: 10
+
+cameras:
+  - camera_id: "main"
+    source: null
+    width: 640
+    height: 480
+    fps: 60
+    camera_stream_queue_size: 2
+
+uart_defaults:
+  # UART0 = A16(TX)/A17(RX)。A16/A17 出厂默认即 UART0 功能, 平台层会跳过 pinmap。
+  # 接线注意: TX(A16) 是启动模式检测引脚, 低电平会导致无法开机。
+  port: "/dev/ttyS0"
+  baudrate: 115200
+
+ai:
+  models:
+    # CVITEK .cvimodel。CAM2 的 .axmodel / nn.YOLO11 在 CAM1 不可用, 两者不通用。
+    # mud 用 `model =` 指向同目录 cvimodel, 两者须同目录同名。
+    # 模型文件不入库, 需自行部署到 /root/models/ (见文档"部署"一节)。
+    - nick_name: "eod_hostage"
+      model: "/root/models/model_239147.mud"
+      model_type: "yolov5"   # CAM1 无 YOLO11 类, 显式指定避免落到 "auto" 歧义
+  active: "eod_hostage"
+
+streaming:
+  # zw_wifi_stream 模块声明 PLATFORMS = ("maixcam2",), 在 CAM1 上会被跳过
+  wifi_mode: "off"

@@ -1,4 +1,5 @@
 ﻿from .ai import MaixCam2AI
+from .battery import MaixCam2Battery
 from .camera import MaixCam2Camera
 from .display import MaixCam2Display
 from .uart import MaixCam2Uart
@@ -66,6 +67,11 @@ def create_ai() -> MaixCam2AI:
     return MaixCam2AI()
 
 
+def create_battery() -> MaixCam2Battery:
+    """Capability hook: CAM2 走 sysfs 电量计（无 AXP2101）。"""
+    return MaixCam2Battery()
+
+
 _fill_light_led = [None]
 
 
@@ -95,10 +101,12 @@ def enable_fill_light() -> bool:
 
 __all__ = [
     "MaixCam2AI",
+    "MaixCam2Battery",
     "MaixCam2Camera",
     "MaixCam2Display",
     "MaixCam2Uart",
     "create_ai",
+    "create_battery",
     "create_camera",
     "create_display",
     "create_uart",

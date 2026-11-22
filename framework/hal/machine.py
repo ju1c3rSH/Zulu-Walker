@@ -8,7 +8,7 @@ from typing import Optional
 import yaml
 
 from framework.hal.camera_hub import CameraHub
-from framework.hal.interface import AIInference, Display, Uart
+from framework.hal.interface import AIInference, Battery, Display, Uart
 try:
     from utils.cpu_affinity import configure as configure_cpu_affinity
 except ImportError:
@@ -31,6 +31,7 @@ class Machine:
         exit_check: Optional[object] = None,
         sys_info: Optional[object] = None,
         platform: Optional[str] = None,
+        battery: Optional[Battery] = None,
     ) -> None:
         self.camera_hub = camera_hub
         self.display = display
@@ -40,6 +41,9 @@ class Machine:
         # Platform capability hooks (probed via getattr, never hard imports):
         self.exit_check = exit_check
         self.sys_info = sys_info
+        # 电量计（可选能力）: 有 PMU/sysfs 电量计的平台为实例，
+        # 其余为 None。构造在 create 阶段完成，不碰主循环。
+        self.battery = battery
 
     @classmethod
     def create(cls, config_path: str = "project_config.yaml") -> "Machine":
@@ -134,6 +138,18 @@ class Machine:
             logger.warning("UART creation failed (non-fatal): %s", e)
             uart = None
 
+        # 电量: 与 display/uart 一样在 create 阶段初始化（Pro 上 open i2c-4, ~2.4ms）。
+        # 不能留到第一次 read —— 那把一次冷 import 塞进了主循环的一拍。
+        # 平台没提供 create_battery 时保持 None（能力探测，不硬导入）。
+        battery: Optional[Battery] = None
+        battery_factory = getattr(platform_mod, "create_battery", None)
+        if callable(battery_factory):
+            try:
+                battery = battery_factory()
+            except Exception as e:
+                logger.warning("Battery creation failed (non-fatal): %s", e)
+                battery = None
+
         # --- AI initialization ---
         ai: Optional[AIInference] = None
         if ai_config is not None:
@@ -170,6 +186,7 @@ class Machine:
             exit_check=exit_check,
             sys_info=sys_info,
             platform=platform,
+            battery=battery,
         )
 
     def close(self) -> None:
