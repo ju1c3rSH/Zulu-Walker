@@ -2,17 +2,19 @@ platform: maixcam2
 
 debug_console_enabled: false
 display_enabled: true
-# LCD 呈现节拍(ms)。缺省或 0 = 不节流: 主循环每拍只要有新帧就上屏,
-# 实际帧率由视觉线程与 sink 的新旧帧判定决定。
-# >0 = 按时间限流, 同时把视觉侧 HUD 重建窗口对齐到同一周期(下限 33ms),
-# 避免"画了不 show"。MaixCAM2 面板可跑满, 一般不用配; 换慢屏或省 GIL 时填 100。
+# LCD present interval in milliseconds. Unset or zero: present each new frame,
+# with the effective rate governed by frame freshness in the vision thread and
+# the sink. Positive: throttle presentation and align the vision-side HUD
+# rebuild window to the same period, with a 33 ms floor, so the HUD is not
+# redrawn for frames that will never be presented. The MaixCAM2 panel runs at
+# full rate by default; set 100 for a slower panel or to reduce GIL contention.
 # display_show_interval_ms: 100
 
 display:
-  detection_list: false              # 左上角检测文字列表; 比赛置 false (省每帧 draw_string), 调试置 true
+  detection_list: false              # Draw the per-detection text list; disable in competition to avoid per-frame draw_string cost.
 
 fill_light:
-  start_on: false                      # 启动默认补光灯状态; 运行中点击手电筒按钮切换后持久化到 logs/fill_light.state (启动时该文件优先)
+  start_on: false                      # Initial fill-light state. Button toggles update in-memory state only; no state file is read at startup.
   icon_on: "assets/flashlight_on.png"   # 48x48
   icon_off: "assets/flashlight_off.png" # 48x48
 
@@ -23,20 +25,25 @@ cameras:
     height: 352
     fps: 60
     camera_stream_queue_size: 3
-    exposure_us: 3000
+    # Exposure and gain are set on top of the ISP's own AE loop, so the
+    # usable range is narrow: at 3000 us the settled frame is too dark
+    # (mean 71, 5th percentile 0 - crushed blacks); 20000 us settles near
+    # mean 126 (5th percentile 44, 95th percentile 192) and is the value
+    # the AEC loop can hold on top of.
+    exposure_us: 20000
     gain: 200
     aec:
       enabled: true
-      adjust_interval_frames: 60   # 每N帧调整一次 (~1s @ 60fps)
-      target_mean: 80              # ROI目标亮度 0-255, 越低越暗
-      gain_min: 50                 # 增益下限, 避免过暗
-      gain_max: 600                # 增益上限, 避免噪点过多
-      kp: 0.5                      # PI比例系数
-      ki: 0.05                     # PI积分系数
-      max_i: 100                   # 积分器抗饱和钳位 [灰度级×帧]
-      deadband: 8                  # 死区, |err|<=此值时跳过
-      roi: [0.4, 0.7, 0.0, 1.0]   # [y0_frac, y1_frac, x0_frac, x1_frac]
-      ema_alpha: 0.1               # EMA平滑系数, 越小越平滑
+      adjust_interval_frames: 60   # Frames between gain adjustments (~1 s at 60 fps).
+      target_mean: 120             # Target mean grayscale of the ROI, 0-255.
+      gain_min: 100                # Lower gain bound; below it the frame goes dark.
+      gain_max: 1600               # Upper gain bound; higher values add noise.
+      kp: 0.5                      # Proportional term of the gain controller.
+      ki: 0.05                     # Integral term of the gain controller.
+      max_i: 100                   # Clamp for the accumulated grayscale error.
+      deadband: 8                  # Skip adjustment when |error| is at most this value.
+      roi: [0.4, 0.7, 0.0, 1.0]   # Sampling window as [y0, y1, x0, x1] fractions of frame height and width.
+      ema_alpha: 0.1               # Smoothing factor applied to the measured ROI mean.
 
 uart_defaults:
   port: "/dev/ttyS4"
@@ -50,22 +57,22 @@ ai:
   active: "yolo11n"
 
 battery:
-  enabled: true              # false = 完全不采（省一次 I2C 事务）
-  poll_interval_ms: 10000    # 采集周期; 平台 min_poll_s 更长时以平台为准
-  low_percent: 20            # 低于这个百分比记为 low
+  enabled: true              # Disable to skip all sampling and its I2C transaction.
+  poll_interval_ms: 10000    # Sampling period; the platform's min_poll_s takes precedence when longer.
+  low_percent: 20            # Percentage below which the snapshot is flagged low.
 
 pendulum:
-  pixels_per_cm: 51.0           # 实测: 5cm 处虚拟刻度落后真实 0.1cm → 50+1.0
+  pixels_per_cm: 51.0           # Measured scale: at 5 cm the virtual ruler lagged the true value by 0.1 cm, hence 50 + 1.0.
   length_cm: 25.0
-  cm_interval: 1.0              # 轨道绘制: 模拟厘米刻度间隔 (cm), 用于验证 pixels_per_cm
-  draw_rail: false                  # 测试用: 显示帧上绘制标定轨道轴线 + 原点 + 钢球投影点 + 厘米刻度 (比赛置 false)
-  # calib_params:                  # 可选，按需解除注释
+  cm_interval: 1.0              # Spacing of simulated cm ticks on the debug rail.
+  draw_rail: false                  # Draw the calibrated axis, origin, ball projection, and cm ticks on display frames; disable in competition.
+  # calib_params:                  # Optional tuning; uncomment as needed.
   #   binary_threshold: 127
   #   min_contour_area_ratio: 0.04
-  #   max_contour_area_ratio: 0.55   # contour 回退: 拒绝整帧色块(面积>帧55%), 防 angle 恒0
+  #   max_contour_area_ratio: 0.55   # Contour fallback: reject a blob covering more than 55% of the frame so angle cannot stay at zero.
   #   min_aspect_ratio: 1.0
-  #   column_threshold: 180        # 列中心线法: 首个阈值, 失败自动降级 150->120; 高度门限按帧中位数自适应
-  # rail_calibration:          # Auto-generated after Phase 2 origin calibration
+  #   column_threshold: 180        # Column-centreline method: first threshold; falls back to 150 then 120. Height gate adapts to the frame median.
+  # rail_calibration:          # Optional rail origin and direction computed by calibration.
   #   origin_x: 320.0
   #   origin_y: 320.0
   #   angle_rad: 0.0
@@ -76,6 +83,6 @@ pendulum:
 streaming:
   wifi_mode: "ap"           # "ap" | "sta" | "off"
   ap_ssid: "Zulu-Walker"
-  ap_password: ""           # 填你自己的密码;不要提交真实值(OPS-01 教训)
+  ap_password: ""           # Set a local password; never commit a real credential.
   sta_ssid: ""
   sta_password: ""
