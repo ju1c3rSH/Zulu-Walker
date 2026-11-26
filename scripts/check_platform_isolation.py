@@ -4,7 +4,7 @@
 Rule set - docs/architecture/inference/01-scope-and-boundaries.md S1.2:
 
 * platform libraries (maix, serial) may only be imported under
-  framework/hal/platforms/,
+  framework/hal/platforms/ or framework/inference/engines/,
 * engine libraries (ncnn, onnxruntime, rknn_lite, rknn, torch, espdl,
   llama_cpp) may only be imported under framework/inference/engines/,
 * cv2 may only be imported by framework/inference/ops.py.
@@ -32,7 +32,7 @@ ENGINE_LIBS = re.compile(
 )
 CV2_LIBS = re.compile(r"^\s*(?:import|from)\s+(cv2)\b")
 
-PLATFORM_EXEMPT_DIRS = ("hal/platforms",)
+PLATFORM_EXEMPT_DIRS = ("hal/platforms", "inference/engines")
 ENGINE_EXEMPT_DIRS = ("hal/platforms", "inference/engines")
 CV2_EXEMPT_DIRS = ("hal/platforms",)
 CV2_EXEMPT_FILES = ("inference/ops.py",)
@@ -55,7 +55,8 @@ RULES = (
         PLATFORM_EXEMPT_DIRS,
         (),
         "Platform modules belong under framework/hal/platforms/<name>/, "
-        "behind HAL protocols or probed capability hooks.",
+        "behind HAL protocols or probed capability hooks. The engine "
+        "adapters are the one other place a platform binding may appear.",
     ),
     Rule(
         "engine library",

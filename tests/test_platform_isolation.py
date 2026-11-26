@@ -95,11 +95,17 @@ def test_engine_library_in_platforms_is_not_flagged(tmp_path):
 # ---------- platform libraries: no exemption outside the platform layer ---------- #
 
 
-def test_platform_library_in_engines_is_flagged(tmp_path):
+def test_platform_library_in_engines_is_not_flagged(tmp_path):
     root = _tree(tmp_path)
     _write(root, "framework/inference/engines/maix_nn.py", "import maix.nn\n")
+    assert _violations(root) == []
+
+
+def test_platform_library_in_the_inference_kernel_is_flagged(tmp_path):
+    root = _tree(tmp_path)
+    _write(root, "framework/inference/runtime.py", "import maix.image\n")
     assert _violations(root) == [
-        "framework/inference/engines/maix_nn.py:1: import maix.nn"
+        "framework/inference/runtime.py:1: import maix.image"
     ]
 
 
