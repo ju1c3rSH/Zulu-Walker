@@ -1,7 +1,9 @@
 numpy>=1.21
 pyyaml>=5.4
-rich>=13.0
 pyzbar>=0.1.9
+# rich is optional: the debug console is off on the device, and the app
+# degrades to no console when rich is absent.  Install it on a host with
+# requirements-dev.txt when you want the TUI.
 
 # Linux (Orange Pi 5B / desktop):
 #   pip install -r requirements-linux.txt
