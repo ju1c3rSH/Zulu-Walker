@@ -17,8 +17,8 @@ artifacts:
     wrapper_params: {}
     preprocess: { resize: baked, norm: baked }
     io:
-      inputs: {}
-      outputs: {}
+      inputs: { image: "image" }
+      outputs: { objects: "objects" }
 
   onnxruntime:
     file: steelball_1280x352.onnx

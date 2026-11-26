@@ -80,6 +80,11 @@ artifacts:
 
 **帧形态**（`input.frame`）声明模型要什么帧，与相机实际给的帧不一致时由前处理转换，不是报错。
 
+**io 映射**（`artifacts.<engine>.io`）把逻辑名映射到引擎的物理名，两张表都不能为空。
+逻辑输入名固定是 `image`；引擎没有物理名时（maix.nn）逻辑名与物理名相同，
+例如 `inputs: { image: "image" }` 与 `outputs: { objects: "objects" }`。
+主输出是 `outputs` 的第一个键，wrapper 按这个键取结果，不写死名字。
+
 **分辨率策略**（`input.resize.mode`）三选一：
 
 | mode | 做法 |
