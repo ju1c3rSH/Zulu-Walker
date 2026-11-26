@@ -27,9 +27,11 @@ class FakeEngine:
     def __init__(self, outputs: dict[str, Any]) -> None:
         self._outputs = outputs
         self.runs: list[dict[str, Any]] = []
+        self.options: list[dict[str, Any]] = []
 
-    def run(self, inputs: dict[str, Any]) -> dict[str, Any]:
+    def run(self, inputs: dict[str, Any], **options: Any) -> dict[str, Any]:
         self.runs.append(dict(inputs))
+        self.options.append(dict(options))
         return self._outputs
 
 
@@ -342,6 +344,66 @@ def test_end2end_dialect_maps_angle_and_keypoints():
 
     assert detections[0].angle == pytest.approx(45.0)
     assert detections[0].keypoints == points
+
+
+def end2end_runtime(objects, params=None):
+    io = FakeIOMapping(outputs={"objects": "objects"})
+    return FakeRuntime(
+        engine=FakeEngine({"objects": objects}),
+        artifact=FakeArtifact(io=io),
+        labels=LABELS,
+        transform=letterbox_transform(),
+        params=params,
+    )
+
+
+def test_end2end_dialect_hands_the_thresholds_to_the_engine():
+    runtime = end2end_runtime(
+        [FakeObject(x=1, y=2, w=3, h=4, score=0.75, class_id=0)]
+    )
+
+    build_end2end(runtime).detect(np.zeros((100, 200, 3), dtype=np.uint8))
+
+    assert runtime.engine.options == [{"conf_th": 0.3, "iou_th": 0.4}]
+
+
+def test_end2end_dialect_accepts_per_call_thresholds():
+    runtime = end2end_runtime(
+        [FakeObject(x=1, y=2, w=3, h=4, score=0.75, class_id=0)]
+    )
+
+    build_end2end(runtime).detect(
+        np.zeros((100, 200, 3), dtype=np.uint8), conf_th=0.5, iou_th=0.45
+    )
+
+    assert runtime.engine.options == [{"conf_th": 0.5, "iou_th": 0.45}]
+
+
+def test_end2end_dialect_takes_the_thresholds_from_the_wrapper_params():
+    runtime = end2end_runtime(
+        [FakeObject(x=1, y=2, w=3, h=4, score=0.75, class_id=0)],
+        params={"conf_th": 0.6, "iou_th": 0.5},
+    )
+
+    build_end2end(runtime).detect(np.zeros((100, 200, 3), dtype=np.uint8))
+
+    assert runtime.engine.options == [{"conf_th": 0.6, "iou_th": 0.5}]
+
+
+def test_end2end_dialect_drops_objects_below_the_threshold():
+    runtime = end2end_runtime(
+        [
+            FakeObject(x=1, y=2, w=3, h=4, score=0.75, class_id=0),
+            FakeObject(x=5, y=6, w=7, h=8, score=0.25, class_id=1),
+        ]
+    )
+
+    detections = build_end2end(runtime).detect(
+        np.zeros((100, 200, 3), dtype=np.uint8)
+    )
+
+    assert len(detections) == 1
+    assert detections[0].score == pytest.approx(0.75)
 
 
 def test_capability_objects_declare_the_detect_capability():

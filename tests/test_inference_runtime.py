@@ -141,7 +141,7 @@ class FakeEngine:
             load_holds_gil=False,
         )
 
-    def run(self, inputs: dict[str, Any]) -> dict[str, Any]:
+    def run(self, inputs: dict[str, Any], **options: Any) -> dict[str, Any]:
         self.received.append(inputs)
         return {"pred": np.zeros((1, 6, 1), dtype=np.float32)}
 

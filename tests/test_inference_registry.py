@@ -58,9 +58,11 @@ class _FakeModel:
     def __init__(self, objects):
         self._objects = objects
         self.frames = []
+        self.calls = []
 
     def detect(self, frame, **kwargs):
         self.frames.append(frame)
+        self.calls.append(dict(kwargs))
         return self._objects
 
 
@@ -246,6 +248,28 @@ def test_run_returns_the_decoded_objects_under_the_logical_output_name(tmp_path)
 
     assert result == {"objects": objects}
     assert model.frames == ["frame"]
+
+
+def test_run_forwards_the_thresholds_and_drops_the_unknown_options(tmp_path):
+    engine = MaixNnEngine()
+    model = _FakeModel([])
+    engine._model = model
+    engine._artifact = _artifact(str(tmp_path / "model.mud"))
+
+    engine.run({"image": "frame"}, conf_th=0.3, iou_th=0.4, unknown=1)
+
+    assert model.calls == [{"conf_th": 0.3, "iou_th": 0.4}]
+
+
+def test_run_without_options_leaves_the_runtime_defaults_alone(tmp_path):
+    engine = MaixNnEngine()
+    model = _FakeModel([])
+    engine._model = model
+    engine._artifact = _artifact(str(tmp_path / "model.mud"))
+
+    engine.run({"image": "frame"})
+
+    assert model.calls == [{}]
 
 
 def test_run_uses_the_first_logical_output_of_the_artifact(tmp_path):

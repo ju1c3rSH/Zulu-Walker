@@ -232,7 +232,8 @@ def test_inference_engine_method_signatures():
     assert list(load.parameters) == ["self", "artifact", "opts"]
     assert load.parameters["opts"].kind is inspect.Parameter.VAR_KEYWORD
     run = inspect.signature(InferenceEngine.run)
-    assert list(run.parameters) == ["self", "inputs"]
+    assert list(run.parameters) == ["self", "inputs", "options"]
+    assert run.parameters["options"].kind is inspect.Parameter.VAR_KEYWORD
     assert run.return_annotation == "dict[str, Any]"
     assert inspect.signature(InferenceEngine.input_specs).return_annotation == "list[TensorSpec]"
     assert inspect.signature(InferenceEngine.output_specs).return_annotation == "list[TensorSpec]"

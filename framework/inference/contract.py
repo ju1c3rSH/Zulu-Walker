@@ -108,6 +108,11 @@ class InferenceEngine(Protocol):
 
     An engine knows nothing about task semantics, never interprets its own
     outputs and never receives a raw frame.
+
+    The run options carry the numeric parameters a dialect wants the engine
+    to apply, such as the score threshold of an end-to-end engine that
+    filters internally.  The engine forwards them to its runtime and ignores
+    the ones its runtime does not know; it never interprets them.
     """
 
     engine_id: str
@@ -124,7 +129,7 @@ class InferenceEngine(Protocol):
     def capabilities(self) -> Capabilities:
         ...
 
-    def run(self, inputs: dict[str, Any]) -> dict[str, Any]:
+    def run(self, inputs: dict[str, Any], **options: Any) -> dict[str, Any]:
         ...
 
     def unload(self) -> None:

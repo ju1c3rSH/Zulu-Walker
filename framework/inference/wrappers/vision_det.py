@@ -94,7 +94,10 @@ class End2endDetAPI:
     """End-to-end dialect: map the objects the engine already decoded.
 
     The engine has done resize, normalisation, inference, decoding and NMS,
-    so this class must not post-process the objects again.
+    so this class must not decode or suppress the boxes again.  The
+    thresholds are handed to the engine, which filters with them, and the
+    score filter is repeated afterwards because a runtime may not honour the
+    threshold it was given.
     """
 
     provides = frozenset({"detect"})
@@ -102,12 +105,23 @@ class End2endDetAPI:
     def __init__(self, rt: ModelRuntime) -> None:
         self._rt = rt
         self._main_out = _main_output_name(rt)
+        params = _params(rt)
+        self._conf_th = float(params.get("conf_th", DEFAULT_CONF_TH))
+        self._iou_th = float(params.get("iou_th", DEFAULT_IOU_TH))
 
     def detect(self, frame: Any, **kwargs: Any) -> list[Detection]:
         """Run one detection on a frame and return source frame detections."""
-        objects = self._rt.engine.run({LOGICAL_INPUT_NAME: frame})[self._main_out]
+        conf_th = float(kwargs.pop("conf_th", self._conf_th))
+        iou_th = float(kwargs.pop("iou_th", self._iou_th))
+        objects = self._rt.engine.run(
+            {LOGICAL_INPUT_NAME: frame}, conf_th=conf_th, iou_th=iou_th
+        )[self._main_out]
         labels = _label_list(self._rt)
-        return [_to_detection(obj, labels) for obj in objects]
+        return [
+            _to_detection(obj, labels)
+            for obj in objects
+            if _score_of(obj) >= conf_th
+        ]
 
 
 def build_raw(rt: ModelRuntime) -> RawDetAPI:
@@ -156,6 +170,17 @@ def _to_detection(obj: Any, labels: Sequence[str]) -> Detection:
         angle=_optional_float_attr(obj, "angle"),
         keypoints=_to_keypoints(getattr(obj, "keypoints", None)),
     )
+
+
+def _score_of(obj: Any) -> float:
+    """Return the score the engine reports for one object."""
+    value = getattr(obj, "score", None)
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _label_for(class_id: int, labels: Sequence[str]) -> str:

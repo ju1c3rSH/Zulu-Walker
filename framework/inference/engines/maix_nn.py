@@ -199,11 +199,15 @@ class MaixNnEngine:
             load_cost_hint="200-500ms",
         )
 
-    def run(self, inputs: dict[str, Any]) -> dict[str, Any]:
+    def run(self, inputs: dict[str, Any], **options: Any) -> dict[str, Any]:
         """Run one inference step and return the decoded objects.
 
         The objects are returned untouched under the logical output name
         declared by the artifact; interpreting them is the wrapper's job.
+
+        The run options are forwarded to the runtime's own detect call, so a
+        dialect can set the thresholds the runtime filters with instead of
+        relying on the runtime defaults.
         """
         if self._model is None:
             raise AIError(
@@ -216,10 +220,19 @@ class MaixNnEngine:
             )
         frame = self._to_native_frame(inputs[LOGICAL_INPUT_NAME])
         try:
-            objects = self._model.detect(frame)
+            objects = self._model.detect(frame, **self._detect_options(options))
         except Exception as exc:
             raise AIError(f"maix.nn detect() failed: {exc}", E_INFER_FAILED) from exc
         return {self._output_name(): objects}
+
+    @staticmethod
+    def _detect_options(options: dict[str, Any]) -> dict[str, float]:
+        """Keep the options the runtime understands, drop the rest."""
+        return {
+            key: float(options[key])
+            for key in ("conf_th", "iou_th")
+            if key in options and options[key] is not None
+        }
 
     def unload(self) -> None:
         """Release the model reference."""
