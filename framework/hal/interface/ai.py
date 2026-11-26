@@ -38,6 +38,10 @@ E_MODEL_LOAD_FAILED = "E_MODEL_LOAD_FAILED"
 E_OUTPUT_LAYOUT_MISMATCH = "E_OUTPUT_LAYOUT_MISMATCH"
 E_INFER_FAILED = "E_INFER_FAILED"
 E_INVALID_INPUT = "E_INVALID_INPUT"
+E_ENGINE_UNAVAILABLE = "E_ENGINE_UNAVAILABLE"
+E_CONTRACT_MISSING = "E_CONTRACT_MISSING"
+E_DIALECT_UNSUPPORTED = "E_DIALECT_UNSUPPORTED"
+E_SWITCH_TIMEOUT = "E_SWITCH_TIMEOUT"
 
 
 class AIError(Exception):
@@ -77,6 +81,22 @@ class ContractError(AIError):
     """Model output does not match the declared output layout."""
 
     code = E_OUTPUT_LAYOUT_MISMATCH
+
+
+class ManifestError(AIError):
+    """The model manifest does not satisfy the engine contract.
+
+    Raised when a required manifest field is absent, when the manifest
+    declares no artifact for the selected engine, or when the artifact
+    file name disagrees with the configured name.  Kept apart from
+    `ContractError`, which reports a mismatch between the declared
+    output layout and the produced output.
+    """
+
+    code = E_CONTRACT_MISSING
+
+    def __init__(self, message: str = "", code: str = "") -> None:
+        super().__init__(message, code)
 
 
 class DetectKwargs(TypedDict, total=False):
