@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -59,9 +60,14 @@ def _base_manifest() -> dict:
     }
 
 
-def _run(tmp_path: Path, doc: dict) -> int:
+def _write_manifest(tmp_path: Path, doc: dict) -> Path:
     path = tmp_path / "manifest.yaml"
     path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _run(tmp_path: Path, doc: dict) -> int:
+    path = _write_manifest(tmp_path, doc)
     return checker.main([str(SCRIPT_PATH), str(path)])
 
 
@@ -265,3 +271,145 @@ def test_repository_instance_manifest_has_no_errors(capsys):
     assert _errors(out) == []
     assert "0 error(s)" in out
     assert len(_warnings(out)) == 4
+
+
+# --- the checker must never be laxer than the run-time parser ---------------
+
+def _parser_rejects(tmp_path: Path, doc: dict) -> str:
+    """Assert the run-time parser rejects the manifest and return its reason."""
+    path = _write_manifest(tmp_path, doc)
+    runtime = checker.load_runtime()
+    with pytest.raises(runtime.manifest_error) as excinfo:
+        runtime.load_manifest(path)
+    return str(excinfo.value)
+
+
+def test_unknown_schema_version_is_an_error(tmp_path, capsys):
+    doc = _base_manifest()
+    doc["schema_version"] = 2
+    reason = _parser_rejects(tmp_path, doc)
+    assert "schema_version" in reason
+    code = _run(tmp_path, doc)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert any("schema_version" in e for e in _errors(out))
+
+
+def test_resize_anchor_on_a_non_crop_mode_is_an_error(tmp_path, capsys):
+    doc = _base_manifest()
+    doc["input"]["resize"]["anchor"] = "center"
+    reason = _parser_rejects(tmp_path, doc)
+    assert "anchor" in reason
+    code = _run(tmp_path, doc)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert any("anchor" in e and "crop" in e for e in _errors(out))
+
+
+def test_missing_labels_file_is_an_error(tmp_path, capsys):
+    doc = _base_manifest()
+    doc.pop("labels")
+    doc["labels_file"] = "missing_labels.txt"
+    reason = _parser_rejects(tmp_path, doc)
+    assert "labels_file" in reason
+    code = _run(tmp_path, doc)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert any("labels_file" in e for e in _errors(out))
+
+
+def test_norm_scale_must_be_a_number(tmp_path, capsys):
+    doc = _base_manifest()
+    doc["input"]["norm"]["scale"] = "abc"
+    reason = _parser_rejects(tmp_path, doc)
+    assert "scale" in reason
+    code = _run(tmp_path, doc)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert any("scale" in e for e in _errors(out))
+
+
+def test_label_entries_must_be_non_empty_strings(tmp_path, capsys):
+    doc = _base_manifest()
+    doc["labels"] = [1, 2]
+    reason = _parser_rejects(tmp_path, doc)
+    assert "labels[0]" in reason
+    code = _run(tmp_path, doc)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert any("labels[0]" in e for e in _errors(out))
+
+
+def test_a_manifest_the_runtime_parser_accepts_passes_the_checker(tmp_path,
+                                                                 capsys):
+    doc = _base_manifest()
+    path = _write_manifest(tmp_path, doc)
+    runtime = checker.load_runtime()
+    assert runtime.load_manifest(path).name == "demo"
+    code = checker.main([str(SCRIPT_PATH), str(path)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert _errors(out) == []
+    assert "0 error(s)" in out
+
+
+def test_the_real_registries_are_used():
+    from framework.inference.engines import REGISTRY
+    from framework.inference.wrappers import BUILTIN
+
+    runtime = checker.load_runtime()
+    assert runtime.engines == set(REGISTRY)
+    assert set(runtime.builtin) == set(BUILTIN)
+
+
+# --- the fallback path (no framework package) --------------------------------
+
+_FRAMEWORK_MODULES = (
+    "framework",
+    "framework.hal",
+    "framework.hal.interface",
+    "framework.hal.interface.ai",
+    "framework.inference",
+    "framework.inference.manifest",
+    "framework.inference.engines",
+    "framework.inference.wrappers",
+)
+
+
+def _hide_framework(monkeypatch) -> None:
+    """Make the framework package unimportable, as on a bare checkout."""
+    for name in _FRAMEWORK_MODULES:
+        monkeypatch.setitem(sys.modules, name, None)
+
+
+def test_fallback_runs_when_the_framework_cannot_be_imported(tmp_path, capsys,
+                                                             monkeypatch):
+    _hide_framework(monkeypatch)
+    code = _run(tmp_path, _base_manifest())
+    out = capsys.readouterr().out
+    assert code == 0
+    assert _errors(out) == []
+    assert any("run-time registry unavailable" in w for w in _warnings(out))
+
+
+def test_fallback_still_rejects_an_invalid_manifest(tmp_path, capsys,
+                                                     monkeypatch):
+    _hide_framework(monkeypatch)
+    doc = _base_manifest()
+    doc["schema_version"] = 2
+    code = _run(tmp_path, doc)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert any("schema_version" in e for e in _errors(out))
+
+
+def test_fallback_still_rejects_a_missing_labels_file(tmp_path, capsys,
+                                                       monkeypatch):
+    _hide_framework(monkeypatch)
+    doc = _base_manifest()
+    doc.pop("labels")
+    doc["labels_file"] = "missing_labels.txt"
+    code = _run(tmp_path, doc)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert any("labels_file" in e for e in _errors(out))

@@ -4,6 +4,13 @@ The manifest is the contract between a logical model and its per-engine
 artifacts.  A wrong field here shows up as silently wrong boxes on the
 device, so the checks are fail-loud: errors exit 1, warnings exit 0.
 
+The run-time parser (framework.inference.manifest) is the authority.  This
+script runs it over the manifest first, so a manifest the checker accepts
+is a manifest the device accepts at startup.  The checks below therefore
+add what the parser cannot know (artifact files on disk, engine ids,
+wrapper dialects, the build recipe, the runtime configuration) and must
+never be laxer than the parser.
+
 Usage:
     python scripts/check_manifest.py deploy/maixcam/models/steelball_1280x352/manifest.yaml
     python scripts/check_manifest.py <manifest> --engine maix_nn --model /root/models/x/x.mud
@@ -13,6 +20,7 @@ configuration: the manifest must declare an artifact for that engine, and
 that artifact's file must be the one the runtime loads.
 
 Checks:
+  - the run-time parser accepts the manifest (schema, labels, artifacts)
   - schema_version is known
   - the logical-model block (name / family / input / labels) is complete
   - the frame contract (input.frame) and the resize policy (input.resize) are sane
@@ -34,6 +42,13 @@ from typing import Any
 
 import yaml
 
+# The repository root has to be importable: under the documented invocation
+# `python scripts/check_manifest.py ...` sys.path[0] is the scripts
+# directory, so `framework` would not be found without this.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 SUPPORTED_SCHEMA = 3
 RESIZE_OWNERS = {"framework", "baked"}
 NORM_OWNERS = {"framework", "engine", "baked"}
@@ -47,34 +62,73 @@ LAYOUTS = {"hwc"}
 BUILD_LAYOUTS = {"hwc", "nchw", "nhwc"}
 CANONICAL_INPUT_NAMES = {"image"}
 
-# Fallback copy of the engine registry.  framework.inference.engines lands in a
-# later Phase 0 batch, so until then the checker knows the engine ids itself.
+# Fallback copy of the engine registry, used only when the framework
+# package cannot be imported at all.
 KNOWN_ENGINES = {"maix_nn", "ncnn", "onnxruntime", "rknn_lite"}
 
-# Fallback copy of framework.inference.wrappers.BUILTIN.  That module does not
-# exist yet (Phase 0), so the checker carries its own copy of the names and the
-# families they accept.  Once the module lands, the real registry wins and the
-# two cannot drift.
+# Fallback copy of framework.inference.wrappers.BUILTIN.  It carries the
+# names and the families they accept, so the checker keeps working when
+# the framework package is unavailable.
 _FALLBACK_BUILTIN: dict[str, dict[str, Any]] = {
     "vision.det.raw": {"families": {"yolo11", "yolov5"}, "provides": {"detect"}},
     "vision.det.end2end": {"families": {"yolo11", "yolov5"}, "provides": {"detect"}},
 }
 
 
-def builtin_wrappers() -> dict[str, dict[str, Any]]:
-    try:
-        from framework.inference.wrappers import BUILTIN  # type: ignore
-    except Exception:
-        return _FALLBACK_BUILTIN
-    return dict(BUILTIN)
+class Runtime:
+    """The real run-time parser and registries.
+
+    Held together so the checker always uses one consistent view of the
+    framework: the parser that validates a manifest, the wrapper dialects
+    it accepts and the engine ids it knows.
+    """
+
+    def __init__(self, load_manifest: Any, check_artifact_against_config: Any,
+                 manifest_error: type[BaseException],
+                 builtin: dict[str, dict[str, Any]],
+                 engines: set[str]) -> None:
+        self.load_manifest = load_manifest
+        self.check_artifact_against_config = check_artifact_against_config
+        self.manifest_error = manifest_error
+        self.builtin = builtin
+        self.engines = engines
 
 
-def known_engines() -> set[str]:
-    try:
-        from framework.inference.engines import REGISTRY  # type: ignore
-    except Exception:
-        return set(KNOWN_ENGINES)
-    return set(REGISTRY)
+def load_runtime() -> Runtime:
+    """Import the run-time parser and the real registries.
+
+    Raises ImportError when the framework package is not available.  No
+    other exception is caught: a syntax error or a broken initialiser
+    inside the framework is a bug that must surface, not a reason to fall
+    back to a stale copy of the registries.
+    """
+    from framework.hal.interface.ai import ManifestError
+    from framework.inference.engines import REGISTRY
+    from framework.inference.manifest import (
+        check_artifact_against_config,
+        load_manifest,
+    )
+    from framework.inference.wrappers import BUILTIN
+
+    return Runtime(
+        load_manifest=load_manifest,
+        check_artifact_against_config=check_artifact_against_config,
+        manifest_error=ManifestError,
+        builtin=dict(BUILTIN),
+        engines=set(REGISTRY),
+    )
+
+
+def builtin_wrappers(runtime: Runtime | None = None) -> dict[str, dict[str, Any]]:
+    if runtime is not None:
+        return runtime.builtin
+    return _FALLBACK_BUILTIN
+
+
+def known_engines(runtime: Runtime | None = None) -> set[str]:
+    if runtime is not None:
+        return runtime.engines
+    return set(KNOWN_ENGINES)
 
 
 class Report:
@@ -138,13 +192,15 @@ def check_logical_model(doc: dict[str, Any], base: Path, rep: Report) -> None:
             rep.error(f"'input.resize.mode' must be one of {sorted(RESIZE_MODES)}, "
                       f"got {mode!r}")
         anchor = resize.get("anchor")
-        if anchor is not None:
+        # The parser validates the mode first and stops there, so the
+        # anchor is only judged on a valid mode.
+        if anchor is not None and mode in RESIZE_MODES:
             if anchor not in CROP_ANCHORS:
                 rep.error(f"'input.resize.anchor' must be one of "
                           f"{sorted(CROP_ANCHORS)}, got {anchor!r}")
             if mode != "crop":
-                rep.warn(f"'input.resize.anchor' only applies to mode='crop', "
-                         f"mode is {mode!r}")
+                rep.error(f"'input.resize.anchor' is only meaningful for "
+                          f"mode='crop', the mode is {mode!r}")
         value = resize.get("value")
         if value == "transparent":
             if channels is not None and channels != 4:
@@ -160,6 +216,9 @@ def check_logical_model(doc: dict[str, Any], base: Path, rep: Report) -> None:
     if not isinstance(norm, dict) or "scale" not in norm:
         rep.error("'input.norm' must be a mapping with a 'scale'")
     else:
+        scale = norm.get("scale")
+        if isinstance(scale, bool) or not isinstance(scale, (int, float)):
+            rep.error(f"'input.norm.scale' must be a number, got {scale!r}")
         mean = norm.get("mean")
         std = norm.get("std")
         if not isinstance(mean, list) or not isinstance(std, list):
@@ -175,6 +234,11 @@ def check_logical_model(doc: dict[str, Any], base: Path, rep: Report) -> None:
                 if len(std) != channels:
                     rep.error(f"'input.norm.std' has {len(std)} entries but the "
                               f"frame has {channels} channels")
+            for field, values in (("mean", mean), ("std", std)):
+                for index, item in enumerate(values):
+                    if isinstance(item, bool) or not isinstance(item, (int, float)):
+                        rep.error(f"'input.norm.{field}[{index}]' must be a "
+                                  f"number, got {item!r}")
 
     labels = doc.get("labels")
     labels_file = doc.get("labels_file")
@@ -183,18 +247,35 @@ def check_logical_model(doc: dict[str, Any], base: Path, rep: Report) -> None:
     elif labels_file is not None:
         p = base / str(labels_file)
         if not p.is_file():
-            rep.warn(f"labels_file not found: {p}")
+            rep.error(f"labels_file does not exist: {p}")
         else:
-            lines = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines()
-                     if ln.strip()]
-            if not lines:
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError as exc:
+                rep.error(f"labels_file cannot be read: {p} ({exc})")
+                text = ""
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            if not lines and text:
                 rep.error(f"labels_file is empty: {p}")
             elif isinstance(labels, list) and len(labels) != len(lines):
                 rep.error(f"'labels' has {len(labels)} entries but "
                           f"{labels_file} has {len(lines)}")
+    if labels is not None and labels_file is None:
+        # The parser reads the labels from labels_file when both are
+        # given, so the inline list is only judged on its own.
+        if not isinstance(labels, list):
+            rep.error(f"'labels' must be a list, got {type(labels).__name__}")
+        elif not labels:
+            rep.error("'labels' must not be empty")
+        else:
+            for index, item in enumerate(labels):
+                if not isinstance(item, str) or not item.strip():
+                    rep.error(f"labels[{index}] must be a non-empty string, "
+                              f"got {item!r}")
 
 
-def check_wrapper(wrapper: Any, engine: str, family: str, rep: Report) -> None:
+def check_wrapper(wrapper: Any, engine: str, family: str, rep: Report,
+                  runtime: Runtime | None = None) -> None:
     if not wrapper or not isinstance(wrapper, str):
         rep.error(f"{engine}: missing 'wrapper'")
         return
@@ -203,7 +284,7 @@ def check_wrapper(wrapper: Any, engine: str, family: str, rep: Report) -> None:
         if not mod or not attr:
             rep.error(f"{engine}: bad wrapper path '{wrapper}'")
         return
-    builtin = builtin_wrappers()
+    builtin = builtin_wrappers(runtime)
     entry = builtin.get(wrapper)
     if entry is None:
         rep.error(f"{engine}: unknown wrapper '{wrapper}' "
@@ -259,11 +340,11 @@ def check_build(build: Any, engine: str, doc: dict[str, Any], rep: Report) -> No
 def check_version_agreement(art: dict[str, Any], engine: str,
                             rep: Report) -> None:
     """The pinned runtime version and the recorded build version must agree."""
-    runtime = art.get("runtime")
+    runtime_block = art.get("runtime")
     build = art.get("build")
-    if not isinstance(runtime, dict) or not isinstance(build, dict):
+    if not isinstance(runtime_block, dict) or not isinstance(build, dict):
         return
-    runtime_version = runtime.get("version")
+    runtime_version = runtime_block.get("version")
     build_version = build.get("version")
     if runtime_version is None or build_version is None:
         return
@@ -272,7 +353,8 @@ def check_version_agreement(art: dict[str, Any], engine: str,
                   f"build.version {build_version!r}")
 
 
-def check_artifacts(doc: dict[str, Any], base: Path, rep: Report) -> list[str]:
+def check_artifacts(doc: dict[str, Any], base: Path, rep: Report,
+                    runtime: Runtime | None = None) -> list[str]:
     arts = doc.get("artifacts")
     if not isinstance(arts, dict) or not arts:
         rep.error("'artifacts' must be a non-empty mapping")
@@ -281,7 +363,7 @@ def check_artifacts(doc: dict[str, Any], base: Path, rep: Report) -> list[str]:
     family = doc.get("family") or ""
     logical_inputs: set[str] = set()
     engines: list[str] = []
-    known = known_engines()
+    known = known_engines(runtime)
 
     for engine, art in arts.items():
         engines.append(engine)
@@ -303,8 +385,14 @@ def check_artifacts(doc: dict[str, Any], base: Path, rep: Report) -> list[str]:
             p = base / str(art["bin"])
             if not p.is_file():
                 rep.warn(f"{engine}: weight file not present yet: {p.name}")
+        elif "bin" in art and not isinstance(art.get("bin"), str):
+            rep.error(f"{engine}: 'bin' must be a string")
 
-        check_wrapper(art.get("wrapper"), engine, family, rep)
+        for block in ("wrapper_params", "runtime", "build"):
+            if block in art and not isinstance(art.get(block), dict):
+                rep.error(f"{engine}: '{block}' must be a mapping")
+
+        check_wrapper(art.get("wrapper"), engine, family, rep, runtime)
         check_preprocess(art.get("preprocess"), engine, rep)
 
         io = art.get("io")
@@ -327,8 +415,8 @@ def check_artifacts(doc: dict[str, Any], base: Path, rep: Report) -> list[str]:
                                   f"{sorted(CANONICAL_INPUT_NAMES)}")
                     logical_inputs.add(key)
 
-        runtime = art.get("runtime")
-        if isinstance(runtime, dict) and not runtime.get("version"):
+        runtime_block = art.get("runtime")
+        if isinstance(runtime_block, dict) and not runtime_block.get("version"):
             rep.error(f"{engine}: runtime.version is required (the runtime "
                       f"version must be pinned and compared at load time)")
 
@@ -342,7 +430,9 @@ def check_artifacts(doc: dict[str, Any], base: Path, rep: Report) -> list[str]:
 
 
 def check_against_config(doc: dict[str, Any], engine: str | None,
-                          model: str | None, rep: Report) -> None:
+                         model: str | None, rep: Report,
+                         runtime: Runtime | None = None,
+                         runtime_manifest: Any = None) -> None:
     """Cross-check the manifest against the runtime configuration.
 
     The runtime names exactly one engine and one exact artifact file
@@ -357,6 +447,14 @@ def check_against_config(doc: dict[str, Any], engine: str | None,
                       f"manifest (declared: {sorted(arts)})")
             return
     if model is None:
+        return
+    if runtime is not None and runtime_manifest is not None and engine is not None:
+        # The run-time parser owns this comparison.
+        try:
+            runtime.check_artifact_against_config(runtime_manifest, engine, model)
+        except runtime.manifest_error as exc:
+            rep.error(f"config model '{model}' does not match the artifact "
+                      f"declared for engine '{engine}': {exc}")
         return
     want = Path(model).name
     candidates = [engine] if engine in arts else list(arts)
@@ -393,32 +491,63 @@ def main(argv: list[str]) -> int:
         print(f"check_manifest: {path} not found", file=sys.stderr)
         return 2
 
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    base = path.parent
     rep = Report()
 
-    version = doc.get("schema_version")
-    if version != SUPPORTED_SCHEMA:
-        if isinstance(version, int) and version < SUPPORTED_SCHEMA:
-            rep.warn(f"schema_version {version} is older than {SUPPORTED_SCHEMA}; "
-                     f"the parser will branch on it")
-        else:
+    # The run-time parser and the real registries are the authority.  Only
+    # an ImportError (the framework package is absent) falls back to the
+    # built-in copies; any other failure is a bug in the framework and is
+    # allowed to surface.
+    runtime: Runtime | None = None
+    try:
+        runtime = load_runtime()
+    except ImportError as exc:
+        rep.warn(f"run-time registry unavailable ({exc}); the checker falls back "
+                 f"to its built-in copies of the engine and wrapper registries")
+
+    doc: Any = None
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        print(f"check_manifest: cannot read {path}: {exc}", file=sys.stderr)
+        return 2
+    except yaml.YAMLError as exc:
+        rep.error(f"cannot parse {path}: {exc}")
+        doc = None
+    if doc is not None and not isinstance(doc, dict):
+        rep.error(f"the top level of {path} must be a mapping "
+                  f"(got {type(doc).__name__})")
+        doc = None
+
+    # The run-time parser decides the schema verdict.
+    runtime_manifest: Any = None
+    if runtime is not None:
+        try:
+            runtime_manifest = runtime.load_manifest(path)
+        except runtime.manifest_error as exc:
+            rep.error(f"run-time parser rejected the manifest: {exc}")
+
+    engines: list[str] = []
+    if doc is not None:
+        version = doc.get("schema_version")
+        if version != SUPPORTED_SCHEMA:
             rep.error(f"unknown schema_version {version!r} "
                       f"(this checker knows {SUPPORTED_SCHEMA})")
 
-    check_logical_model(doc, base, rep)
-    engines = check_artifacts(doc, base, rep)
-    check_against_config(doc, cfg_engine, cfg_model, rep)
+        check_logical_model(doc, path.parent, rep)
+        engines = check_artifacts(doc, path.parent, rep, runtime)
+        check_against_config(doc, cfg_engine, cfg_model, rep, runtime,
+                             runtime_manifest)
 
+    printable = doc if isinstance(doc, dict) else {}
     print(f"manifest: {path}")
-    print(f"  schema_version: {version}")
-    print(f"  model: {doc.get('name')} (family={doc.get('family')})")
-    inp = doc.get("input") or {}
+    print(f"  schema_version: {printable.get('schema_version')}")
+    print(f"  model: {printable.get('name')} (family={printable.get('family')})")
+    inp = printable.get("input") or {}
     frame = inp.get("frame") or {}
     print(f"  frame: color={frame.get('color')} dtype={frame.get('dtype')} "
           f"layout={frame.get('layout')}")
     print(f"  input: size={inp.get('size')} resize={(inp.get('resize') or {}).get('mode')}")
-    for engine, art in (doc.get("artifacts") or {}).items():
+    for engine, art in (printable.get("artifacts") or {}).items():
         if not isinstance(art, dict):
             continue
         pre = art.get("preprocess") or {}
