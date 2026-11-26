@@ -14,7 +14,7 @@
 加载期还会校验 `labels.txt` 行数与模型输出一致。
 
 mud 自带 labels，maix.nn 能自述；框架仍以 `labels.txt` 为准，装载期与 mud 的 labels 比对，
-不一致直接报错。
+不一致直接报错（Phase 1 落地）。
 
 ## 部署
 
@@ -102,6 +102,11 @@ artifacts:
 | `baked` | 已烘焙进工件 | 不写 |
 
 ## 加载期会校验的东西
+
+manifest 自身的结构一致性由 `framework/inference/manifest.py` 在解析期校验，失败抛
+`E_CONTRACT_MISSING`；离线由 `scripts/check_manifest.py` 校验同一份 schema。
+
+下列检查属于运行期加载期，Phase 1 随协议拆分落地，当前尚未实现：
 
 - `family` 在该 wrapper 接受的族内（否则 `E_MODEL_TYPE_UNSUPPORTED`）
 - `input.frame` / `input.size` 与工件自述一致
