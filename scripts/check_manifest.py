@@ -16,11 +16,13 @@ Checks:
   - schema_version is known
   - the logical-model block (name / family / input / labels) is complete
   - the frame contract (input.frame) and the resize policy (input.resize) are sane
+  - the normalisation lists match the channel count of the frame
   - every artifact declares a file, a wrapper, a preprocess triple and an io map
-  - every artifact uses the SAME logical input name
+  - every io map is non-empty and uses the SAME logical input name
+  - every artifact key is a known engine id
   - the model family is one the chosen wrapper accepts
-  - the build recipe agrees with the logical model (size / colour) and the
-    runtime block pins a version
+  - the build recipe agrees with the logical model (size / colour / layout) and
+    the runtime block pins a version that matches the build version
   - artifact files exist (missing binaries are a warning, not an error)
 """
 
@@ -38,10 +40,16 @@ NORM_OWNERS = {"framework", "engine", "baked"}
 RESIZE_MODES = {"letterbox", "crop", "stretch"}
 CROP_ANCHORS = {"center", "top", "bottom", "left", "right"}
 FORMULAS = {"yolo", "substract_mean_normalize"}
-COLORS = {"rgb", "bgr"}
+COLORS = {"rgb", "bgr", "rgba"}
+COLOR_CHANNELS = {"rgb": 3, "bgr": 3, "rgba": 4}
 DTYPES = {"uint8", "float32"}
 LAYOUTS = {"hwc"}
+BUILD_LAYOUTS = {"hwc", "nchw", "nhwc"}
 CANONICAL_INPUT_NAMES = {"image"}
+
+# Fallback copy of the engine registry.  framework.inference.engines lands in a
+# later Phase 0 batch, so until then the checker knows the engine ids itself.
+KNOWN_ENGINES = {"maix_nn", "ncnn", "onnxruntime", "rknn_lite"}
 
 # Fallback copy of framework.inference.wrappers.BUILTIN.  That module does not
 # exist yet (Phase 0), so the checker carries its own copy of the names and the
@@ -49,7 +57,7 @@ CANONICAL_INPUT_NAMES = {"image"}
 # two cannot drift.
 _FALLBACK_BUILTIN: dict[str, dict[str, Any]] = {
     "vision.det.raw": {"families": {"yolo11", "yolov5"}, "provides": {"detect"}},
-    "vision.det.end2end": {"families": {"yolo11"}, "provides": {"detect"}},
+    "vision.det.end2end": {"families": {"yolo11", "yolov5"}, "provides": {"detect"}},
 }
 
 
@@ -59,6 +67,14 @@ def builtin_wrappers() -> dict[str, dict[str, Any]]:
     except Exception:
         return _FALLBACK_BUILTIN
     return dict(BUILTIN)
+
+
+def known_engines() -> set[str]:
+    try:
+        from framework.inference.engines import REGISTRY  # type: ignore
+    except Exception:
+        return set(KNOWN_ENGINES)
+    return set(REGISTRY)
 
 
 class Report:
@@ -92,12 +108,15 @@ def check_logical_model(doc: dict[str, Any], base: Path, rep: Report) -> None:
         return
 
     frame = inp.get("frame")
+    channels: int | None = None
     if not isinstance(frame, dict):
         rep.error("missing 'input.frame' (the frame shape the model expects)")
     else:
         if frame.get("color") not in COLORS:
             rep.error(f"'input.frame.color' must be one of {sorted(COLORS)}, "
                       f"got {frame.get('color')!r}")
+        else:
+            channels = COLOR_CHANNELS[frame["color"]]
         if frame.get("dtype") not in DTYPES:
             rep.error(f"'input.frame.dtype' must be one of {sorted(DTYPES)}, "
                       f"got {frame.get('dtype')!r}")
@@ -127,7 +146,12 @@ def check_logical_model(doc: dict[str, Any], base: Path, rep: Report) -> None:
                 rep.warn(f"'input.resize.anchor' only applies to mode='crop', "
                          f"mode is {mode!r}")
         value = resize.get("value")
-        if value is not None and value != "transparent":
+        if value == "transparent":
+            if channels is not None and channels != 4:
+                rep.error(f"'input.resize.value' = 'transparent' needs a "
+                          f"4-channel frame (rgba), the frame has {channels} "
+                          f"channels")
+        elif value is not None:
             if not (isinstance(value, int) and value >= 0):
                 rep.error(f"'input.resize.value' must be a non-negative int or "
                           f"'transparent', got {value!r}")
@@ -140,9 +164,17 @@ def check_logical_model(doc: dict[str, Any], base: Path, rep: Report) -> None:
         std = norm.get("std")
         if not isinstance(mean, list) or not isinstance(std, list):
             rep.error("'input.norm' needs both 'mean' and 'std' lists")
-        elif len(mean) != len(std):
-            rep.error(f"'input.norm.mean' has {len(mean)} entries but 'std' "
-                      f"has {len(std)}")
+        else:
+            if len(mean) != len(std):
+                rep.error(f"'input.norm.mean' has {len(mean)} entries but 'std' "
+                          f"has {len(std)}")
+            if channels is not None:
+                if len(mean) != channels:
+                    rep.error(f"'input.norm.mean' has {len(mean)} entries but the "
+                              f"frame has {channels} channels")
+                if len(std) != channels:
+                    rep.error(f"'input.norm.std' has {len(std)} entries but the "
+                              f"frame has {channels} channels")
 
     labels = doc.get("labels")
     labels_file = doc.get("labels_file")
@@ -219,6 +251,25 @@ def check_build(build: Any, engine: str, doc: dict[str, Any], rep: Report) -> No
     if "color" in build and "color" in frame and build["color"] != frame["color"]:
         rep.error(f"{engine}: build.color {build['color']!r} != "
                   f"input.frame.color {frame['color']!r}")
+    if "layout" in build and build["layout"] not in BUILD_LAYOUTS:
+        rep.error(f"{engine}: build.layout must be one of "
+                  f"{sorted(BUILD_LAYOUTS)}, got {build['layout']!r}")
+
+
+def check_version_agreement(art: dict[str, Any], engine: str,
+                            rep: Report) -> None:
+    """The pinned runtime version and the recorded build version must agree."""
+    runtime = art.get("runtime")
+    build = art.get("build")
+    if not isinstance(runtime, dict) or not isinstance(build, dict):
+        return
+    runtime_version = runtime.get("version")
+    build_version = build.get("version")
+    if runtime_version is None or build_version is None:
+        return
+    if str(runtime_version) != str(build_version):
+        rep.error(f"{engine}: runtime.version {runtime_version!r} != "
+                  f"build.version {build_version!r}")
 
 
 def check_artifacts(doc: dict[str, Any], base: Path, rep: Report) -> list[str]:
@@ -230,12 +281,16 @@ def check_artifacts(doc: dict[str, Any], base: Path, rep: Report) -> list[str]:
     family = doc.get("family") or ""
     logical_inputs: set[str] = set()
     engines: list[str] = []
+    known = known_engines()
 
     for engine, art in arts.items():
         engines.append(engine)
         if not isinstance(art, dict):
             rep.error(f"artifact '{engine}' must be a mapping")
             continue
+        if engine not in known:
+            rep.error(f"artifact '{engine}': unknown engine id "
+                      f"(known: {sorted(known)})")
 
         file = art.get("file")
         if not file:
@@ -255,22 +310,22 @@ def check_artifacts(doc: dict[str, Any], base: Path, rep: Report) -> list[str]:
         io = art.get("io")
         if not isinstance(io, dict):
             rep.error(f"{engine}: missing 'io'")
-            continue
-        ins = io.get("inputs")
-        outs = io.get("outputs")
-        if not isinstance(ins, dict) or not isinstance(outs, dict):
-            rep.error(f"{engine}: io.inputs / io.outputs must be mappings")
-            continue
-        if not ins:
-            logical_inputs |= CANONICAL_INPUT_NAMES  # implicit io (maix.nn)
-            continue
-        if not outs:
-            rep.error(f"{engine}: io.outputs is empty but io.inputs is not")
-        for key in ins:
-            if key not in CANONICAL_INPUT_NAMES:
-                rep.error(f"{engine}: logical input '{key}' is not one of "
-                          f"{sorted(CANONICAL_INPUT_NAMES)}")
-            logical_inputs.add(key)
+        else:
+            ins = io.get("inputs")
+            outs = io.get("outputs")
+            if not isinstance(ins, dict) or not isinstance(outs, dict):
+                rep.error(f"{engine}: io.inputs / io.outputs must be mappings")
+            else:
+                if not ins:
+                    rep.error(f"{engine}: io.inputs is empty (the logical input "
+                              f"name must be declared)")
+                if not outs:
+                    rep.error(f"{engine}: io.outputs is empty")
+                for key in ins:
+                    if key not in CANONICAL_INPUT_NAMES:
+                        rep.error(f"{engine}: logical input '{key}' is not one of "
+                                  f"{sorted(CANONICAL_INPUT_NAMES)}")
+                    logical_inputs.add(key)
 
         runtime = art.get("runtime")
         if isinstance(runtime, dict) and not runtime.get("version"):
@@ -278,6 +333,7 @@ def check_artifacts(doc: dict[str, Any], base: Path, rep: Report) -> list[str]:
                       f"version must be pinned and compared at load time)")
 
         check_build(art.get("build"), engine, doc, rep)
+        check_version_agreement(art, engine, rep)
 
     if len(logical_inputs) > 1:
         rep.error(f"artifacts disagree on the logical input name: "
@@ -367,8 +423,8 @@ def main(argv: list[str]) -> int:
             continue
         pre = art.get("preprocess") or {}
         io = art.get("io") or {}
-        ins = ",".join((io.get("inputs") or {}).keys()) or "(implicit)"
-        outs = ",".join((io.get("outputs") or {}).keys()) or "(implicit)"
+        ins = ",".join((io.get("inputs") or {}).keys()) or "(none)"
+        outs = ",".join((io.get("outputs") or {}).keys()) or "(none)"
         print(f"  - {engine}: file={art.get('file')} wrapper={art.get('wrapper')}")
         print(f"      preprocess resize={pre.get('resize')} norm={pre.get('norm')} "
               f"formula={pre.get('formula')}")
