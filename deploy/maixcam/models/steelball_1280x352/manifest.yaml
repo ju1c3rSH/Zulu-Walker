@@ -1,0 +1,62 @@
+schema_version: 3
+name: steelball_1280x352
+family: yolo11
+
+input:
+  frame: { color: rgb, dtype: uint8, layout: hwc }
+  size: [1280, 352]
+  resize: { mode: letterbox, value: 114 }
+  norm: { scale: 0.00392156862745098, mean: [0, 0, 0], std: [1, 1, 1] }
+
+labels_file: labels.txt
+
+artifacts:
+  maix_nn:
+    file: steelball_1280x352.mud
+    wrapper: "vision.det.end2end"
+    wrapper_params: {}
+    preprocess: { resize: baked, norm: baked }
+    io:
+      inputs: { image: "image" }
+      outputs: { objects: "objects" }
+
+  onnxruntime:
+    file: steelball_1280x352.onnx
+    wrapper: "vision.det.raw"
+    wrapper_params:
+      output_layout: auto
+      score_activation: none
+    preprocess: { resize: framework, norm: framework, formula: yolo }
+    io:
+      inputs: { image: "images" }
+      outputs: { pred: "output0" }
+    build:
+      tool: onnx-export
+      source: steelball_1280x352.pt
+      opset: 17
+      input_size: [1280, 352]
+      layout: nchw
+      color: rgb
+      output: raw_head
+
+  ncnn:
+    file: steelball_1280x352.param
+    bin: steelball_1280x352.bin
+    wrapper: "vision.det.raw"
+    wrapper_params:
+      output_layout: auto
+      score_activation: none
+    preprocess: { resize: framework, norm: engine, formula: substract_mean_normalize }
+    io:
+      inputs: { image: "data" }
+      outputs: { pred: "output" }
+    build:
+      tool: ncnnoptimize
+      source: steelball_1280x352.onnx
+      target: aarch64
+      fp16: none
+      int8: none
+      input_size: [1280, 352]
+      layout: hwc
+      color: rgb
+      output: raw_head

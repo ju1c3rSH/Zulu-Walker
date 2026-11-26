@@ -25,14 +25,19 @@ cameras:
     height: 352
     fps: 60
     camera_stream_queue_size: 3
-    exposure_us: 3000
+    # Exposure and gain are set on top of the ISP's own AE loop, so the
+    # usable range is narrow: at 3000 us the settled frame is too dark
+    # (mean 71, 5th percentile 0 - crushed blacks); 20000 us settles near
+    # mean 126 (5th percentile 44, 95th percentile 192) and is the value
+    # the AEC loop can hold on top of.
+    exposure_us: 20000
     gain: 200
     aec:
       enabled: true
       adjust_interval_frames: 60   # Frames between gain adjustments (~1 s at 60 fps).
-      target_mean: 80              # Target mean grayscale of the ROI, 0-255.
-      gain_min: 50                 # Lower gain bound.
-      gain_max: 600                # Upper gain bound; higher values add noise.
+      target_mean: 120             # Target mean grayscale of the ROI, 0-255.
+      gain_min: 100                # Lower gain bound; below it the frame goes dark.
+      gain_max: 1600               # Upper gain bound; higher values add noise.
       kp: 0.5                      # Proportional term of the gain controller.
       ki: 0.05                     # Integral term of the gain controller.
       max_i: 100                   # Clamp for the accumulated grayscale error.

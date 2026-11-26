@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 import sys
 import threading
@@ -8,13 +10,33 @@ from typing import Dict, Optional
 
 _VISIBLE_LOG_LINES = 30
 
-from rich.console import Console
-from rich.layout import Layout
-from rich.live import Live
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
-from rich.box import SIMPLE
+_HAS_RICH = False
+
+
+def _load_rich() -> bool:
+    """Import rich on demand and publish it as module globals.
+
+    The console is a host-side tool: on the device it stays off, and rich
+    must not be pulled into a 128 MB user space just to ask whether the
+    console runs.  A missing rich is not an error, it means no console.
+    """
+    global _HAS_RICH, SIMPLE, Console, Layout, Live, Panel, Table, Text
+    if _HAS_RICH:
+        return True
+    try:
+        from rich.box import SIMPLE as _SIMPLE
+        from rich.console import Console as _Console
+        from rich.layout import Layout as _Layout
+        from rich.live import Live as _Live
+        from rich.panel import Panel as _Panel
+        from rich.table import Table as _Table
+        from rich.text import Text as _Text
+    except ImportError:
+        return False
+    SIMPLE, Console, Layout, Live = _SIMPLE, _Console, _Layout, _Live
+    Panel, Table, Text = _Panel, _Table, _Text
+    _HAS_RICH = True
+    return True
 
 
 _UPDATE_INTERVAL = 0.1
@@ -25,11 +47,13 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 class DebugConsole:
     _instance: Optional["DebugConsole"] = None
     _singleton_lock = threading.Lock()
-    _global_enabled: bool = True
+    _global_enabled: bool = False
 
     @classmethod
     def set_global_enabled(cls, enabled: bool) -> None:
-        cls._global_enabled = enabled
+        if enabled and not _load_rich():
+            enabled = False
+        cls._global_enabled = bool(enabled)
 
     def __new__(cls):
         if cls._instance is None:
@@ -52,7 +76,7 @@ class DebugConsole:
         self._stop_event = threading.Event()
         self._status_lock = threading.Lock()
         self._log_lock = threading.Lock()
-        self._console = Console(stderr=True)
+        self._console = Console(stderr=True) if _HAS_RICH else None
 
     # ---- public API ----
 
@@ -83,6 +107,9 @@ class DebugConsole:
         if self._running:
             return
         if not DebugConsole._global_enabled:
+            self._running = True
+            return
+        if not _HAS_RICH:
             self._running = True
             return
         self._running = True

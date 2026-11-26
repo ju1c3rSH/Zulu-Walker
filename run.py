@@ -60,6 +60,20 @@ def run_debug(args):
 
 
 def _init_debug_console():
+    # The console switch comes from the project config, and rich is imported
+    # only when the console is actually enabled: on the device it stays off.
+    import os
+
+    import yaml
+
+    config_path = os.environ.get("ZWULU_CONFIG", "project_config.yaml")
+    enabled = True
+    try:
+        with open(config_path) as f:
+            enabled = bool((yaml.safe_load(f) or {}).get("debug_console_enabled", True))
+    except Exception:
+        pass
+    DebugConsole.set_global_enabled(enabled)
     DebugConsole().start()
     ConsoleCapture.install()
 

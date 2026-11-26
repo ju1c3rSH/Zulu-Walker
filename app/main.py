@@ -142,6 +142,7 @@ def main() -> None:
     import yaml
 
     from utils.debug_console import DebugConsole
+    from utils.log_util import start_log_writer, stop_log_writer
 
     # Config path: default to the workspace project_config.yaml; ZWULU_CONFIG
     # can point elsewhere (e.g. configs/project_config.maixcam1.yaml) so
@@ -153,6 +154,7 @@ def main() -> None:
     except Exception:
         cfg = {}
     DebugConsole.set_global_enabled(cfg.get("debug_console_enabled", True))
+    start_log_writer()
     _apply_observability(cfg)
 
     wdt_feed = _make_wdt_feed(cfg.get("platform", "maixcam2"))  # rule 1: watchdog first
@@ -187,10 +189,13 @@ def main() -> None:
     # TODO(project): add modules per need ("zw_uart_module", "zw_wifi_stream").
     manager.register_many(["zw_opencv_module", "zw_battery_module"])
 
-    manager.run_main_loop(
-        coordinator=coordinator,
-        display_callback=_build_tick(manager, machine, cfg),
-    )
+    try:
+        manager.run_main_loop(
+            coordinator=coordinator,
+            display_callback=_build_tick(manager, machine, cfg),
+        )
+    finally:
+        stop_log_writer()
 
 
 if __name__ == "__main__":
