@@ -77,6 +77,9 @@ def draw(canvas: Canvas, state: HudState, buttons: Sequence[Button] = (),
         canvas.rect(0, BAR_H + LINE2_H, w, ALERT_H, RED, fill=True)
         canvas.text(6, BAR_H + LINE2_H + 2, state.alert, T_SMALL, (16, 8, 8))
     for hit in state.hits:
+        # Dark halo first: a green box on a green object is invisible without
+        # it, and the tracker's boxes land on exactly that kind of scene.
+        canvas.rect(hit.x, hit.y, hit.w, hit.h, BLACK, width=4)
         canvas.rect(hit.x, hit.y, hit.w, hit.h, hit.color, width=2)
         if hit.text:
             _th = canvas.text_size(hit.text, T_SMALL)[1]
