@@ -57,6 +57,39 @@ $env:ZWULU_CONFIG="configs/project_config.desktop.yaml"; python run.py main
 
 **串口**：`port: "auto"` 由平台层（`framework/hal/platforms/linux/uart.py`）解析本机系统串口（Linux 优先 `/dev/ttyUSB*`、`/dev/ttyACM*`；Windows 用 `COM3` 及以上）。解析不到时 UART 缺席，**应用照常启动**——串口缺失不是致命错误。
 
+## 3.5 桌面面板 UI
+
+桌面端有一个**设备同源的 HUD**：`framework/hal/platforms/linux/panel.py` 把相机画面与 `framework/ui` 的语义 HUD 合成到一块面板缓冲区，再由 `CvWindow` 放大上屏。
+
+```
+相机帧 ──letterbox──> 面板缓冲区 ──hud.draw──> 面板缓冲区 ──CvWindow──> 窗口
+```
+
+- **语义层**（`framework/ui/`）：`Panel` 几何、`hud` 状态与绘制、`widgets` 按钮，与后端无关；
+- **像素后端**（`framework/hal/platforms/linux/`）：`CvCanvas`（画）、`CvWindow`（窗口 + 键鼠）、`DesktopPanel`（合成）；
+- **应用层**（`app/main.py`）：只喂数据——相机帧、检测框、HUD 状态，不碰像素。
+
+配置：
+
+```yaml
+display:
+  backend: "panel"
+  width: 640
+  height: 480
+  scale: 2
+  title: "Zulu-Walker"
+```
+
+交互：`q` / `Esc` / 关闭窗口 / 左下角 `EXIT` 按钮 → 面板置 `exit_requested` → 主循环的 `exit_check` 返回 True → 主循环退出。
+
+**三个已经踩过的坑**：
+
+| 坑 | 后果 | 对策 |
+|---|---|---|
+| 管线 id ≠ 相机 id（`cam_main` 对 `main`） | 面板按管线 id 去相机中枢取图永远取不到 → **画面全黑，只剩 HUD 上的框** | 面板经 `vm.get_pipeline(pid).camera` 拿相机 |
+| 显示侧直接 `read_raw()` 取帧 | 和推理抢同一个队列，推理掉帧 | 显示读相机的 `last_frame` 缓存（采集线程写引用，显示侧只读） |
+| 相机**首次**读失败 | `_last_ok_time` 未初始化 → 采集线程抛 AttributeError 死掉，画面永远不来 | `__init__` 里初始化为 0.0 |
+
 ## 4. 依赖矩阵与 GPU
 
 | 后端 | 安装 | GPU | 说明 |
@@ -179,6 +212,7 @@ python scripts/check_engine_equivalence.py --synthetic   # 微型模型对, 不�
 |---|---|---|
 | ORT 适配器加载真实 YOLO11n | 通过 | `bus.jpg` 检出 5 个目标、`zidane.jpg` 3 个，`last_error_code` 为空 |
 | 桌面主程序端到端启动 | 通过 | `python run.py main --config configs/project_config.desktop.yaml`：开摄像头、持续出检测框 |
+| 桌面面板 UI | 通过 | 真相机 + 真模型渲染：HUD 状态栏（MODE/LINK/T/FPS）、检测框与标签、EXIT 按钮，检测为 person 0.91 / laptop 0.80 / keyboard 0.33 |
 | 无串口启动 | 通过 | 同上；串口缺席只打印 `UART creation failed (non-fatal)`，应用照常运行 |
 | ncnn 适配器（微型模型对） | 通过 | 与 ORT 的最大绝对误差 1.5e-05 |
 | ncnn 适配器（真实 YOLO11n） | **未验证** | 本机没有 `onnx2ncnn`（需源码编译），`pnnx` 的 ONNX 导入器遇 `Expand` 崩溃、TorchScript 路线产出**形状错误**的图（21×8400 ≠ 84×8400）；ncnn 的 io 绑定目前只有微型模型对这一级别的证据 |
