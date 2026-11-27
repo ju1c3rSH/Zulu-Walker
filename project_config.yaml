@@ -79,25 +79,6 @@ battery:
   poll_interval_ms: 10000    # Sampling period; the platform's min_poll_s takes precedence when longer.
   low_percent: 20            # Percentage below which the snapshot is flagged low.
 
-pendulum:
-  pixels_per_cm: 51.0           # Measured scale: at 5 cm the virtual ruler lagged the true value by 0.1 cm, hence 50 + 1.0.
-  length_cm: 25.0
-  cm_interval: 1.0              # Spacing of simulated cm ticks on the debug rail.
-  draw_rail: false                  # Draw the calibrated axis, origin, ball projection, and cm ticks on display frames; disable in competition.
-  # calib_params:                  # Optional tuning; uncomment as needed.
-  #   binary_threshold: 127
-  #   min_contour_area_ratio: 0.04
-  #   max_contour_area_ratio: 0.55   # Contour fallback: reject a blob covering more than 55% of the frame so angle cannot stay at zero.
-  #   min_aspect_ratio: 1.0
-  #   column_threshold: 180        # Column-centreline method: first threshold; falls back to 150 then 120. Height gate adapts to the frame median.
-  # rail_calibration:          # Optional rail origin and direction computed by calibration.
-  #   origin_x: 320.0
-  #   origin_y: 320.0
-  #   angle_rad: 0.0
-  #   dir_cos: 1.0
-  #   dir_sin: 0.0
-  #   calibrated: true
-
 streaming:
   wifi_mode: "ap"           # "ap" | "sta" | "off"
   ap_ssid: "Zulu-Walker"

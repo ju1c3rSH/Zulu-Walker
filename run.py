@@ -30,7 +30,7 @@ _RUNNER_MAP = {
     "circle": ("modules.zw_opencv_module.detectors.circle_target_detector.debug.runner", "CircleTargetDebugRunner"),
     "ring":   ("modules.zw_opencv_module.detectors.ring_detector.debug.runner", "RingDebugRunner"),
     "line":   ("modules.zw_opencv_module.detectors.line_detector.debug.runner", "LineDebugRunner"),
-    "pendulum_calib": ("modules.zw_opencv_module.detectors.pendulum_calibrator.debug.runner", "PendulumCalibDebugRunner"),
+    "pendulum_calib": ("tools.pendulum_calib.debug.runner", "PendulumCalibDebugRunner"),
 }
 
 

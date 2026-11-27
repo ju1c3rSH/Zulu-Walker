@@ -6,7 +6,7 @@ the LCD, print diagnostics, and save frames.
 
 Usage:
   cd /maixapp/apps/Zulu-Walker
-  python3 modules/zw_opencv_module/detectors/pendulum_calibrator/debug/debug_device.py
+  python3 tools/pendulum_calib/debug/debug_device.py
 """
 
 import os
@@ -25,10 +25,11 @@ import maix.display
 import maix.image
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, '..', '..', '..', '..', '..'))
+# tools/pendulum_calib/debug -> repository root is three levels up.
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, '..', '..', '..'))
 sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.zw_opencv_module.detectors.pendulum_calibrator import PendulumCalibrator
+from tools.pendulum_calib import PendulumCalibrator
 
 _YAML_PATH = os.path.join(_SCRIPT_DIR, 'calib_debug.yaml')
 
