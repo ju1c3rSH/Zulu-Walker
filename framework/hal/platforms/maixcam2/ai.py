@@ -113,7 +113,12 @@ class MaixCam2AI:
         """Model family resolved from the model declaration."""
         return self._model_family
 
-    def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
+    def add(
+        self, nick_name: str, model_path: str, model_type: str = "auto",
+        *, manifest_path: Optional[str] = None, **kwargs
+    ) -> bool:
+        # manifest_path is the kernel's contract for a model; the MaixCAM
+        # backend reads the MUD file instead, so the manifest is ignored.
         if nick_name in self._registry:
             logger.warning("Model '%s' already registered, overwriting", nick_name)
         self._registry[nick_name] = {

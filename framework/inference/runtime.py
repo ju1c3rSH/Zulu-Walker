@@ -175,7 +175,9 @@ class ModelRuntime:
 
         self._verify_artifact_files()
         started = time.perf_counter()
-        engine.load(artifact)
+        # The canonical contract travels with the artifact: an engine that
+        # normalises on the device needs the parameters it must apply.
+        engine.load(artifact, canonical=self._canonical)
         self._stats.load_ms = (time.perf_counter() - started) * 1000.0
 
         self._capability = self._build_capability(wrapper_factory)

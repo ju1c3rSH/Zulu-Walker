@@ -1,2 +1,20 @@
 pyserial>=3.5
 opencv-contrib-python>=4.5
+
+# Desktop inference engines.  The versions below match the pins in
+# deploy/models/yolo11n/manifest.yaml: a manifest pins the runtime the
+# artifact was validated against, and the engine compares that pin with the
+# installed library when it loads the artifact (E_MODEL_LOAD_FAILED on a
+# mismatch).
+#
+# The CPU build of onnxruntime is the baseline; the GPU builds share the
+# module name, so uninstall the others first:
+#   pip uninstall -y onnxruntime onnxruntime-gpu onnxruntime-directml
+#   pip install onnxruntime-gpu      # CUDA EP, needs CUDA and cuDNN 9
+#   pip install onnxruntime-directml # DirectML EP, Windows
+onnxruntime>=1.26,<1.27
+
+# ncnn: the wheel is the CPU build.  The Vulkan build needs a source
+# compile, see docs/architecture/desktop_inference_backends.md.  ncnn numbers
+# its releases by date, so the pin names the exact build.
+ncnn==1.0.20261020

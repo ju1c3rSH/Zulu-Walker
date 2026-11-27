@@ -1,6 +1,9 @@
 ﻿from .ai import (
     AIError,
     AIInference,
+    AIInferenceClassify,
+    AIInferenceMask,
+    AIInferenceSegment,
     ClassifyKwargs,
     ContractError,
     DetectKwargs,
@@ -33,6 +36,9 @@ from .watchdog import Watchdog
 __all__ = [
     "AIError",
     "AIInference",
+    "AIInferenceClassify",
+    "AIInferenceMask",
+    "AIInferenceSegment",
     "Battery",
     "BatteryReading",
     "Camera",

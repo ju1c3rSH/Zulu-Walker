@@ -6,10 +6,10 @@ except ImportError:
     import logging
     log_print = logging.getLogger(__name__).info
 
-from .ai import LinuxAI
+from .ai import DEFAULT_ENGINE_ID, LinuxAI
 from .camera import LinuxCamera
 from .display import LinuxDisplay
-from .uart import LinuxUart
+from .uart import LinuxUart, resolve_serial_port
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +51,21 @@ def create_display() -> LinuxDisplay:
     return LinuxDisplay()
 
 
-def create_uart(port: str, baudrate: int = 921600) -> LinuxUart:
-    return LinuxUart(port=port, baudrate=baudrate)
+def create_uart(port: str = "", baudrate: int = 921600) -> LinuxUart:
+    """Open the host serial port, when the machine has one.
+
+    A machine without a serial port is not a broken machine: the caller
+    treats the UART as absent and the application keeps running.
+    """
+    resolved = resolve_serial_port(port)
+    if not resolved:
+        raise RuntimeError("no host serial port available")
+    return LinuxUart(port=resolved, baudrate=baudrate)
 
 
-def create_ai(**kwargs) -> LinuxAI:
-    return LinuxAI()
+def create_ai(engine: str = "", **kwargs) -> LinuxAI:
+    """Build the desktop AI backend for the configured engine."""
+    return LinuxAI(engine or DEFAULT_ENGINE_ID, **kwargs)
 
 
 def create_battery() -> "NullBattery":

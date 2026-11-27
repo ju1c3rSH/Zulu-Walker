@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from typing import Callable, Optional
@@ -8,6 +9,65 @@ from typing import Callable, Optional
 import serial
 
 logger = logging.getLogger(__name__)
+
+# The literal that asks for the host's own serial port instead of a named one.
+AUTO_PORT = "auto"
+
+# The board serial devices of the MaixCAM platforms: they are not host ports
+# and must not be picked by the automatic selection.
+_EXCLUDED_LINUX_PORTS = frozenset({"/dev/ttyS3", "/dev/ttyS4"})
+
+
+def resolve_serial_port(port: str = "") -> Optional[str]:
+    """Resolve the serial port to open.
+
+    An empty port or the literal "auto" selects the first usable host serial
+    port; an explicit port is returned unchanged.  None means there is no
+    port to open, which the caller treats as a non-fatal condition.
+    """
+    wanted = (port or "").strip()
+    if wanted and wanted.lower() != AUTO_PORT:
+        return wanted
+    return _first_host_serial_port()
+
+
+def _first_host_serial_port() -> Optional[str]:
+    """Return the first host serial port, preferring USB devices."""
+    try:
+        from serial.tools import list_ports
+    except Exception as exc:
+        logger.info("Serial port enumeration unavailable: %s", exc)
+        return None
+    try:
+        ports = list(list_ports.comports())
+    except Exception as exc:
+        logger.info("Serial port enumeration failed: %s", exc)
+        return None
+    usb: list[str] = []
+    acm: list[str] = []
+    other: list[str] = []
+    for info in ports:
+        device = str(getattr(info, "device", "") or "")
+        if not device or device in _EXCLUDED_LINUX_PORTS:
+            continue
+        if device.startswith("/dev/ttyUSB"):
+            usb.append(device)
+        elif device.startswith("/dev/ttyACM"):
+            acm.append(device)
+        elif device.startswith("/dev/ttyS"):
+            other.append(device)
+        elif re.match(r"^COM\d+$", device, re.IGNORECASE):
+            # COM1 is the classic system port on Windows; the robot link is
+            # never on it.
+            if int(device[3:]) >= 3:
+                other.append(device)
+    for group in (usb, acm, other):
+        if group:
+            chosen = sorted(group)[0]
+            logger.info("Auto-selected host serial port: %s", chosen)
+            return chosen
+    logger.info("No host serial port found")
+    return None
 
 
 class LinuxUart:

@@ -46,3 +46,11 @@ logs/
 # Throwaway scripts at the repository root
 .tmp_*.py
 /_*.py
+
+# Model artifacts: produced by the offline toolchain, deployed next to their
+# manifest.  The manifest and the label list are the contract and are kept.
+deploy/models/**/*.onnx
+deploy/models/**/*.param
+deploy/models/**/*.bin
+deploy/models/**/*.mud
+deploy/models/**/*.pt

@@ -201,6 +201,14 @@ def filter_detections(
 
 @runtime_checkable
 class AIInference(Protocol):
+    """The base contract every AI backend satisfies.
+
+    It carries the model registry, the state of the active model and the
+    detection task.  The tasks that not every model provides live in their
+    own optional protocols, so a backend that cannot segment says so
+    instead of quietly reporting an empty scene.
+    """
+
     @property
     def models(self) -> list[str]:
         ...
@@ -213,19 +221,9 @@ class AIInference(Protocol):
     def model_type(self) -> str:
         ...
 
-    def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
-        ...
-
-    def remove(self, nick_name: str) -> None:
-        ...
-
-    def switch(self, nick_name: str) -> bool:
-        ...
-
-    def load(self, model_path: str, model_type: str = "auto", **kwargs) -> bool:
-        ...
-
-    def unload(self) -> None:
+    @property
+    def model_family(self) -> str:
+        """The family of the active model, as declared by its manifest."""
         ...
 
     @property
@@ -263,11 +261,44 @@ class AIInference(Protocol):
         """True while the backend runs but does not produce valid output."""
         ...
 
+    def add(
+        self, nick_name: str, model_path: str, model_type: str = "auto",
+        *, manifest_path: Optional[str] = None, **kwargs
+    ) -> bool:
+        """Register a model; the manifest carries its frame contract."""
+        ...
+
+    def remove(self, nick_name: str) -> None:
+        ...
+
+    def switch(self, nick_name: str) -> bool:
+        ...
+
+    def load(
+        self, model_path: str, model_type: str = "auto",
+        *, manifest_path: Optional[str] = None, **kwargs
+    ) -> bool:
+        ...
+
+    def unload(self) -> None:
+        ...
+
     def detect(
         self, frame: np.ndarray,
         **kwargs: Unpack[DetectKwargs]
     ) -> list[Detection]:
         ...
+
+    def __enter__(self):
+        ...
+
+    def __exit__(self, *args):
+        ...
+
+
+@runtime_checkable
+class AIInferenceSegment(Protocol):
+    """Optional capability: the backend can segment the frame."""
 
     def segment(
         self, frame: np.ndarray,
@@ -275,17 +306,21 @@ class AIInference(Protocol):
     ) -> list[SegmentResult]:
         ...
 
+
+@runtime_checkable
+class AIInferenceClassify(Protocol):
+    """Optional capability: the backend can classify the frame."""
+
     def classify(
         self, frame: np.ndarray,
         **kwargs: Unpack[ClassifyKwargs]
     ) -> list[tuple[int, float]]:
         ...
 
+
+@runtime_checkable
+class AIInferenceMask(Protocol):
+    """Optional capability: the backend exposes the mask of the last run."""
+
     def get_mask(self, index: int = 0) -> Optional[np.ndarray]:
-        ...
-
-    def __enter__(self):
-        ...
-
-    def __exit__(self, *args):
         ...

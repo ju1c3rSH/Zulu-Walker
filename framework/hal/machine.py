@@ -152,17 +152,40 @@ class Machine:
                 battery = None
 
         # --- AI initialization ---
+        # Two paths.  An explicit engine in the config selects the kernel
+        # driven backend, which owns the artifact and the manifest; without
+        # an engine the platform keeps its own backend (the MaixCAM
+        # platforms bind maix.nn directly and read the MUD file).
         ai: Optional[AIInference] = None
         if ai_config is not None:
+            engine_id = str(ai_config.get("engine") or "").strip()
             try:
-                ai = platform_mod.create_ai()
+                if engine_id:
+                    ai = platform_mod.create_ai(
+                        engine=engine_id,
+                        switch_timeout_ms=int(
+                            ai_config.get("switch_timeout_ms", 2000)
+                        ),
+                        frame=ai_config.get("frame"),
+                    )
+                else:
+                    ai = platform_mod.create_ai()
                 models_cfg = ai_config.get("models", [])
                 for m in models_cfg:
-                    ai.add(
-                        nick_name=m["nick_name"],
-                        model_path=m["model"],
-                        model_type=m.get("model_type", "auto"),
-                    )
+                    manifest_path = m.get("manifest")
+                    if manifest_path:
+                        ai.add(
+                            nick_name=m["nick_name"],
+                            model_path=m["model"],
+                            model_type=m.get("model_type", "auto"),
+                            manifest_path=manifest_path,
+                        )
+                    else:
+                        ai.add(
+                            nick_name=m["nick_name"],
+                            model_path=m["model"],
+                            model_type=m.get("model_type", "auto"),
+                        )
                 active = ai_config.get("active")
                 if active:
                     if active in ai.models:
@@ -175,6 +198,12 @@ class Machine:
                         )
             except Exception as e:
                 logger.error("Failed to initialize AI: %s", e)
+                if engine_id:
+                    # An explicitly configured engine that cannot be brought
+                    # up is a startup failure.  A silent downgrade would run
+                    # the system an order of magnitude slower with no visible
+                    # cause, so the failure stays visible.
+                    raise
                 ai = None
         if bt:
             bt.summary("TOTAL")
