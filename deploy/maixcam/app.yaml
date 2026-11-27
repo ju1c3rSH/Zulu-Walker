@@ -14,10 +14,11 @@ desc[zh]: 基于本框架的项目设备打包清单模板
 # Entries in files take precedence over exclude. A complete working example is
 # at the repository root of the release/2026H branch.
 #
-# To package one detector variant (for example cargo):
-#   a) add modules\zw_opencv_module\detectors\cargo_detector to files
-#   b) add modules\zw_opencv_module\processors\cargo_processor.py to files
-#   c) call enable_optional(["TrackCargoProcessor"]) before starting the pipeline
+# To package the line-follow detector:
+#   a) add modules\zw_opencv_module\detectors\line_detector to files
+#   b) add modules\zw_opencv_module\processors\line_follow_processor.py to files
+#   c) call enable_optional(["LineFollowProcessor"]) from your project code
+#      before the pipeline starts; nothing in the framework calls it for you
 
 exclude:
   - .git
