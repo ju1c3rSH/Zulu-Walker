@@ -148,6 +148,7 @@ class ModelRuntime:
         family: str = "",
         frame_spec: Optional[FrameSpec] = None,
         wrapper_factory: Optional[Callable[["ModelRuntime"], Any]] = None,
+        runtime_options: Optional[dict[str, Any]] = None,
     ) -> None:
         self._engine = engine
         self._artifact = artifact
@@ -177,7 +178,13 @@ class ModelRuntime:
         started = time.perf_counter()
         # The canonical contract travels with the artifact: an engine that
         # normalises on the device needs the parameters it must apply.
-        engine.load(artifact, canonical=self._canonical)
+        # The runtime options are the deployment's choice of accelerator;
+        # the engine merges them over the block the artifact declares.
+        engine.load(
+            artifact,
+            canonical=self._canonical,
+            runtime=dict(runtime_options or {}),
+        )
         self._stats.load_ms = (time.perf_counter() - started) * 1000.0
 
         self._capability = self._build_capability(wrapper_factory)

@@ -80,6 +80,7 @@ def test_capabilities_declares_exactly_the_documented_fields():
         "load_holds_gil",
         "memory_hint",
         "load_cost_hint",
+        "device_detail",
     ]
 
 

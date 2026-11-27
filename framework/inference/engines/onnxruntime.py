@@ -12,7 +12,10 @@ Three facts shape the implementation:
   created, so a model load must be started from the main loop.
 * a requested execution provider that is not installed is dropped by the
   runtime without an error, so the adapter compares the request with the
-  session and reports a silent downgrade instead of hiding it.
+  session and, by default, refuses to start.  A GPU request that quietly
+  lands on the CPU is a configuration that looks healthy and runs an order
+  of magnitude slower; the caller can opt into that with
+  runtime.fallback: allow, but has to say so.
 """
 
 from __future__ import annotations
@@ -36,6 +39,14 @@ from framework.hal.interface.ai import (
     ModelLoadError,
 )
 from framework.inference.contract import ArtifactRef, Capabilities, TensorSpec
+from framework.inference.engines.devices import (
+    DEFAULT_PROVIDERS,
+    FALLBACK_FORBID,
+    ORT_PROVIDER_DEVICES,
+    install_hint,
+    missing_accelerators,
+    parse_provider_request,
+)
 from framework.inference.engines.version import check_runtime_version
 
 logger = logging.getLogger(__name__)
@@ -45,18 +56,8 @@ __all__ = ["ENGINE_ID", "OnnxRuntimeEngine", "create_engine"]
 ENGINE_ID = "onnxruntime"
 LOGICAL_INPUT_NAME = "image"
 
-DEFAULT_PROVIDERS = ("CPUExecutionProvider",)
 DEFAULT_GRAPH_OPTIMIZATION_LEVEL = "ORT_ENABLE_ALL"
 DEFAULT_EXECUTION_MODE = "ORT_SEQUENTIAL"
-
-# The providers that mean "not the CPU", and the device name each of them
-# reports.  The first one that is actually active wins.
-_GPU_PROVIDERS = {
-    "CUDAExecutionProvider": "cuda",
-    "DmlExecutionProvider": "dml",
-    "ROCMExecutionProvider": "rocm",
-    "TensorrtExecutionProvider": "tensorrt",
-}
 
 _DTYPE_NAMES = {
     "tensor(float)": "float32",
@@ -81,7 +82,7 @@ class OnnxRuntimeEngine:
         self._output_name: str = ""
         self._logical_output: str = ""
         self._providers: tuple[str, ...] = ()
-        self._requested_providers: tuple[str, ...] = ()
+        self._request: Any = None
         self._input_dtype: Optional[np.dtype] = None
         self._quant: str = "fp32"
 
@@ -104,24 +105,38 @@ class OnnxRuntimeEngine:
             ENGINE_ID,
             package="onnxruntime",
         )
-        providers = self._resolve_providers(runtime)
+        request = parse_provider_request(
+            runtime.get("providers"),
+            options=runtime.get("provider_options"),
+            fallback=runtime.get("fallback"),
+            default=DEFAULT_PROVIDERS,
+        )
         options = self._build_session_options(ort, runtime)
+        self._check_available_providers(ort, request)
         try:
             session = ort.InferenceSession(
-                artifact.path, sess_options=options, providers=list(providers)
+                artifact.path,
+                sess_options=options,
+                providers=request.session_argument(),
             )
         except Exception as exc:
             raise ModelLoadError(
                 f"Failed to load model '{artifact.path}': {exc}", E_MODEL_LOAD_FAILED
             ) from exc
         self._check_io(artifact, session)
+        active = tuple(str(name) for name in session.get_providers())
+        self._check_providers(request, active)
         self._session = session
         self._artifact = artifact
-        self._requested_providers = providers
-        self._providers = tuple(session.get_providers())
+        self._request = request
+        self._providers = active
         self._input_dtype = self._resolve_input_dtype(session)
         self._quant = self._resolve_quant()
-        self._report_providers()
+        logger.info(
+            "onnxruntime session ready, providers=%s, device=%s",
+            list(self._providers),
+            self.capabilities().device,
+        )
 
     def input_specs(self) -> list[TensorSpec]:
         """The tensor specs the session declares for its inputs."""
@@ -139,8 +154,8 @@ class OnnxRuntimeEngine:
         """Describe the runtime that is actually in use."""
         device = "cpu"
         for name in self._providers:
-            if name in _GPU_PROVIDERS:
-                device = _GPU_PROVIDERS[name]
+            if name in ORT_PROVIDER_DEVICES:
+                device = ORT_PROVIDER_DEVICES[name]
                 break
         return Capabilities(
             device=device,
@@ -153,6 +168,7 @@ class OnnxRuntimeEngine:
             load_holds_gil=True,
             memory_hint="session graph and activations",
             load_cost_hint="200-800ms",
+            device_detail=", ".join(self._providers),
         )
 
     def run(self, inputs: dict[str, Any], **options: Any) -> dict[str, Any]:
@@ -186,24 +202,72 @@ class OnnxRuntimeEngine:
         self._session = None
         self._artifact = None
         self._providers = ()
-        self._requested_providers = ()
+        self._request = None
         self._input_dtype = None
 
     # ------------------------------------------------------------------ #
     # Internals
     # ------------------------------------------------------------------ #
 
-    def _resolve_providers(self, runtime: dict[str, Any]) -> tuple[str, ...]:
-        """The execution providers the artifact asks for."""
-        raw = runtime.get("providers") or DEFAULT_PROVIDERS
-        if isinstance(raw, str):
-            raw = [raw]
-        providers = tuple(str(item) for item in raw)
-        if not providers:
+    @staticmethod
+    def _check_available_providers(ort: Any, request: Any) -> None:
+        """Refuse an accelerator this build cannot provide, before loading.
+
+        The session would be built and then silently lose the provider, so
+        the check runs first: it is cheap, it does not read the model, and
+        it keeps the failure at the configuration level instead of the
+        weight loading level.
+        """
+        lister = getattr(ort, "get_available_providers", None)
+        if lister is None:
+            return
+        try:
+            available = tuple(str(name) for name in lister())
+        except Exception as exc:
+            logger.debug("onnxruntime did not list its providers: %s", exc)
+            return
+        missing = missing_accelerators(request, available)
+        if not missing:
+            return
+        hints = "; ".join(
+            hint for hint in (install_hint(name) for name in missing) if hint
+        )
+        message = (
+            f"the onnxruntime build has no {list(missing)} "
+            f"(it provides {list(available)}). {hints or 'install the matching runtime'}"
+        )
+        if request.fallback == FALLBACK_FORBID:
             raise ModelConfigError(
-                "runtime.providers must not be empty", E_CONTRACT_MISSING
+                message + "; set runtime.fallback: allow to accept the CPU",
+                E_ENGINE_UNAVAILABLE,
             )
-        return providers
+        logger.warning("%s (runtime.fallback: allow)", message)
+
+    @staticmethod
+    def _check_providers(request: Any, active: tuple[str, ...]) -> None:
+        """Refuse a run that lost the accelerator it asked for.
+
+        onnxruntime drops an unavailable provider in silence, so the only
+        evidence of a downgrade is the difference between the request and
+        the session.  By default that difference is a startup failure; only
+        an explicit runtime.fallback: allow turns it into a warning.
+        """
+        missing = missing_accelerators(request, active)
+        if not missing:
+            return
+        hints = "; ".join(
+            hint for hint in (install_hint(name) for name in missing) if hint
+        )
+        message = (
+            f"the session was asked for {list(missing)} but only "
+            f"{list(active)} are active. {hints or 'install the matching runtime'}"
+        )
+        if request.fallback == FALLBACK_FORBID:
+            raise ModelConfigError(
+                message + "; set runtime.fallback: allow to accept the CPU",
+                E_ENGINE_UNAVAILABLE,
+            )
+        logger.warning("%s (runtime.fallback: allow)", message)
 
     def _build_session_options(self, ort: Any, runtime: dict[str, Any]) -> Any:
         """Build the session options the artifact asks for."""
@@ -295,18 +359,6 @@ class OnnxRuntimeEngine:
             if any(dim < 0 for dim in spec.shape):
                 return True
         return False
-
-    def _report_providers(self) -> None:
-        """Report a provider that was asked for but is not in use."""
-        missing = [name for name in self._requested_providers if name not in self._providers]
-        if missing:
-            logger.warning(
-                "Requested execution providers %s are not active; "
-                "the session runs on %s",
-                missing,
-                list(self._providers),
-            )
-        logger.info("onnxruntime session ready, providers=%s", list(self._providers))
 
     @staticmethod
     def _specs(metas: Any) -> list[TensorSpec]:

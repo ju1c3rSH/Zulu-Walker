@@ -22,6 +22,22 @@ The ncnn artifact is a pair of files, a .param with the graph and a .bin
 with the weights.  The .bin carries neither the tensor names nor the
 shapes, so the manifest is the only declaration of the io mapping and the
 graph is only cross-checked against it.
+
+The Vulkan path has four properties that are easy to get wrong, and every
+one of them costs either correctness or an order of magnitude of speed:
+
+* the device has to be bound, and use_vulkan_compute has to be on, before
+  the graph is loaded, because load_model packs the weights for the device
+  that is active at that moment;
+* "auto" must follow get_default_gpu_index(), not index 0.  ncnn ranks its
+  devices and index 0 is frequently the integrated GPU, so forcing 0 turns
+  a working configuration into a slow one;
+* create_gpu_instance() and destroy_gpu_instance() are reference counted by
+  the library and must be called in pairs, otherwise a reload leaks a
+  Vulkan instance per cycle;
+* the CPU fp16 knobs (use_fp16_packed / storage / arithmetic) do not decide
+  the Vulkan precision.  The device negotiates that itself, so the adapter
+  reports the flags it set and does not claim fp16 because of them.
 """
 
 from __future__ import annotations
@@ -47,6 +63,12 @@ from framework.hal.interface.ai import (
 )
 from framework.inference import ops
 from framework.inference.contract import ArtifactRef, Capabilities, TensorSpec
+from framework.inference.engines.devices import (
+    VULKAN_AUTO,
+    describe_vulkan_devices,
+    normalise_ncnn_device,
+    select_vulkan_device,
+)
 from framework.inference.engines.version import check_runtime_version
 
 logger = logging.getLogger(__name__)
@@ -58,6 +80,10 @@ LOGICAL_INPUT_NAME = "image"
 
 DEFAULT_DEVICE = "cpu"
 ALIGNMENT_BYTES = 16
+
+FP16_AUTO = "auto"
+FP16_MODES = frozenset({FP16_AUTO, "on", "off"})
+FP16_OPTION_NAMES = ("use_fp16_packed", "use_fp16_storage", "use_fp16_arithmetic")
 
 
 class NcnnEngine:
@@ -72,12 +98,16 @@ class NcnnEngine:
         self._output_blob: str = ""
         self._logical_output: str = ""
         self._device: str = DEFAULT_DEVICE
+        self._device_index: Optional[int] = None
+        self._device_detail: str = ""
         self._quant: str = "fp32"
         self._canonical: Any = None
         self._norm_owner: str = "framework"
         self._norm_params: Optional[tuple[list[float], list[float]]] = None
         self._buffer: Optional[np.ndarray] = None
         self._buffer_key: Optional[tuple[Any, ...]] = None
+        self._ncnn: Any = None
+        self._gpu_instance: bool = False
 
     # ------------------------------------------------------------------ #
     # InferenceEngine
@@ -103,35 +133,47 @@ class NcnnEngine:
             ENGINE_ID,
             package="ncnn",
         )
-        device = str(runtime.get("device", DEFAULT_DEVICE)).strip().lower()
-        if device not in ("cpu", "vulkan"):
-            raise ModelConfigError(
-                f"unknown ncnn device '{device}', expected 'cpu' or 'vulkan'",
-                E_CONTRACT_MISSING,
-            )
+        device = normalise_ncnn_device(runtime.get("device", DEFAULT_DEVICE))
         net = ncnn.Net()
-        if device == "vulkan":
-            self._prepare_vulkan(ncnn, net, runtime)
-        num_threads = int(runtime.get("num_threads", 0) or 0)
-        if num_threads > 0:
-            net.opt.num_threads = num_threads
-        if runtime.get("use_fp16_storage"):
-            option = getattr(net.opt, "use_fp16_storage", None)
-            if option is not None:
-                net.opt.use_fp16_storage = True
         try:
+            if device == "vulkan":
+                self._create_gpu_instance(ncnn)
+                self._configure_vulkan(ncnn, net, runtime)
+            self._apply_options(net, runtime)
             self._load_graph(net, artifact)
-        except ModelLoadError:
+        except AIError:
+            # A refused device is reported as what it is; the net and the
+            # instance the failed attempt created are released so a retry
+            # starts clean.  The net has to go first: a loaded Vulkan net
+            # holds device pointers, and destroying the instance under it
+            # crashes the driver teardown.
+            net = None
+            self._release_gpu_instance()
             raise
         except Exception as exc:
+            net = None
+            self._release_gpu_instance()
             raise ModelLoadError(
                 f"Failed to load model '{artifact.path}': {exc}", E_MODEL_LOAD_FAILED
             ) from exc
+        self._ncnn = ncnn
         self._net = net
         self._artifact = artifact
         self._device = device
         self._quant = self._resolve_quant(artifact)
-        self._bind_io(artifact)
+        try:
+            self._bind_io(artifact)
+        except Exception:
+            # A blob the graph does not declare is a contract error, but the
+            # engine has already opened the net and the Vulkan instance; both
+            # are released so the failure does not leave them behind.
+            self.unload()
+            raise
+        logger.info(
+            "ncnn net ready, device=%s%s",
+            device,
+            f" ({self._device_detail})" if self._device_detail else "",
+        )
 
     def input_specs(self) -> list[TensorSpec]:
         """Empty: ncnn declares no tensor level specs.
@@ -159,7 +201,17 @@ class NcnnEngine:
             load_holds_gil=True,
             memory_hint="graph weights plus the input buffer",
             load_cost_hint="fast",
+            device_detail=self._device_detail,
         )
+
+    @property
+    def device_index(self) -> Optional[int]:
+        """The Vulkan device index in use, or None on the CPU path.
+
+        Exposed because "vulkan" alone does not say which GPU was bound, and
+        a probe or a benchmark needs to name it.
+        """
+        return self._device_index
 
     def run(self, inputs: dict[str, Any], **options: Any) -> dict[str, Any]:
         """Run one inference and return the raw output blob."""
@@ -192,29 +244,52 @@ class NcnnEngine:
         return {self._logical_output: result}
 
     def unload(self) -> None:
-        """Release the graph."""
+        """Release the graph and the GPU instance this engine created.
+
+        The net is dropped before the instance: a loaded Vulkan net keeps
+        pointers into the device, so destroying the instance first is a
+        segmentation fault in the driver teardown.
+        """
+        net = self._net
         self._net = None
+        del net
+        self._release_gpu_instance()
         self._artifact = None
+        self._ncnn = None
         self._buffer = None
         self._buffer_key = None
         self._norm_params = None
+        self._device_index = None
+        self._device_detail = ""
 
     # ------------------------------------------------------------------ #
     # Internals
     # ------------------------------------------------------------------ #
 
-    def _prepare_vulkan(self, ncnn: Any, net: Any, runtime: dict[str, Any]) -> None:
-        """Bring up the Vulkan device, or fail loudly.
+    def _create_gpu_instance(self, ncnn: Any) -> None:
+        """Create the process wide Vulkan instance, or fail loudly.
 
-        A Vulkan request that cannot be honoured is a startup failure: a
-        silent fallback to the CPU would look like a working configuration
-        while running an order of magnitude slower.
+        The call is reference counted by the library, so it is paired with
+        destroy_gpu_instance() in unload(); without the pair every reload
+        leaks one instance and the driver eventually refuses to serve.
         """
         get_count = getattr(ncnn, "get_gpu_count", None)
         if get_count is None:
             raise ModelConfigError(
                 "this ncnn build has no Vulkan support", E_ENGINE_UNAVAILABLE
             )
+        create_instance = getattr(ncnn, "create_gpu_instance", None)
+        if create_instance is not None:
+            try:
+                create_instance()
+            except Exception as exc:
+                raise ModelConfigError(
+                    f"the ncnn Vulkan instance could not be created: {exc}",
+                    E_ENGINE_UNAVAILABLE,
+                ) from exc
+            # The instance exists from here on, so a later failure in this
+            # load has to release it.
+            self._gpu_instance = True
         try:
             count = int(get_count())
         except Exception as exc:
@@ -226,20 +301,75 @@ class NcnnEngine:
             raise ModelConfigError(
                 "no Vulkan device is available for ncnn", E_ENGINE_UNAVAILABLE
             )
-        create_instance = getattr(ncnn, "create_gpu_instance", None)
-        if create_instance is not None:
-            try:
-                create_instance()
-            except Exception as exc:
-                raise ModelConfigError(
-                    f"the ncnn Vulkan instance could not be created: {exc}",
-                    E_ENGINE_UNAVAILABLE,
-                ) from exc
-        device_index = int(runtime.get("vulkan_device", 0) or 0)
+
+    def _release_gpu_instance(self) -> None:
+        """Release the Vulkan instance, pairing the call made at load time."""
+        if not self._gpu_instance:
+            return
+        self._gpu_instance = False
+        ncnn = self._ncnn or _import_ncnn()
+        destroy_instance = getattr(ncnn, "destroy_gpu_instance", None)
+        if destroy_instance is None:
+            return
+        try:
+            destroy_instance()
+        except Exception as exc:
+            logger.warning("the ncnn Vulkan instance could not be released: %s", exc)
+
+    def _configure_vulkan(self, ncnn: Any, net: Any, runtime: dict[str, Any]) -> None:
+        """Bind the Vulkan device and turn Vulkan compute on.
+
+        Both have to happen before the graph is loaded: load_model packs the
+        weights for the device that is active at that moment.
+
+        A Vulkan request that cannot be honoured is a startup failure, since
+        a silent fallback to the CPU would look like a working configuration
+        while running an order of magnitude slower.
+        """
+        devices = _vulkan_devices(ncnn)
+        default_index = int(
+            getattr(ncnn, "get_default_gpu_index", lambda: devices[0][0])()
+        )
+        index = select_vulkan_device(
+            runtime.get("vulkan_device", VULKAN_AUTO), devices, default_index
+        )
         setter = getattr(net, "set_vulkan_device", None)
         if setter is not None:
-            setter(device_index)
+            setter(index)
         net.opt.use_vulkan_compute = True
+        self._device_index = index
+        self._device_detail = f"{_name_of(devices, index)} (#{index})"
+        logger.info(
+            "ncnn Vulkan device %s selected; devices: %s",
+            self._device_detail,
+            describe_vulkan_devices(devices, default_index),
+        )
+
+    def _apply_options(self, net: Any, runtime: dict[str, Any]) -> None:
+        """Apply the thread and precision options of the artifact."""
+        num_threads = int(runtime.get("num_threads", 0) or 0)
+        if num_threads > 0:
+            net.opt.num_threads = num_threads
+        self._apply_fp16(net, runtime)
+
+    def _apply_fp16(self, net: Any, runtime: dict[str, Any]) -> None:
+        """Apply the CPU fp16 knobs the artifact asks for.
+
+        These flags decide how the CPU kernels store and pack the weights;
+        they do not decide the Vulkan precision, which the device negotiates
+        itself.  "auto" therefore leaves the build defaults alone, and the
+        legacy use_fp16_storage key keeps its old meaning of "storage only".
+        """
+        mode = _fp16_mode(runtime)
+        if mode == FP16_AUTO:
+            if runtime.get("use_fp16_storage"):
+                if getattr(net.opt, "use_fp16_storage", None) is not None:
+                    net.opt.use_fp16_storage = True
+            return
+        value = mode == "on"
+        for name in FP16_OPTION_NAMES:
+            if getattr(net.opt, name, None) is not None:
+                setattr(net.opt, name, value)
 
     def _load_graph(self, net: Any, artifact: ArtifactRef) -> None:
         """Load the .param and the .bin of the artifact.
@@ -396,6 +526,48 @@ def _per_channel(values: Any, channels: int) -> list[float]:
             E_CONTRACT_MISSING,
         )
     return [float(value) for value in array]
+
+
+def _vulkan_devices(ncnn: Any) -> tuple[tuple[int, str], ...]:
+    """The Vulkan devices the library lists, as (index, name) pairs.
+
+    A build that reports a count but no names still yields usable entries:
+    the name falls back to the index, so selection by name reports "no match"
+    instead of crashing on a missing accessor.
+    """
+    count = int(getattr(ncnn, "get_gpu_count", lambda: 0)())
+    get_info = getattr(ncnn, "get_gpu_info", None)
+    devices: list[tuple[int, str]] = []
+    for index in range(count):
+        name = f"device {index}"
+        if get_info is not None:
+            try:
+                name = str(get_info(index).device_name())
+            except Exception as exc:
+                logger.debug("ncnn did not report the name of device %s: %s", index, exc)
+        devices.append((index, name))
+    return tuple(devices)
+
+
+def _name_of(devices: tuple[tuple[int, str], ...], index: int) -> str:
+    """The name of one device of the list."""
+    for candidate, name in devices:
+        if candidate == index:
+            return name
+    return f"device {index}"
+
+
+def _fp16_mode(runtime: dict[str, Any]) -> str:
+    """The precision setting of the artifact, in its canonical form."""
+    raw = runtime.get("fp16", FP16_AUTO)
+    mode = str(raw).strip().lower()
+    if mode not in FP16_MODES:
+        raise ModelConfigError(
+            f"runtime.fp16: unknown mode {raw!r}, expected one of "
+            f"{sorted(FP16_MODES)}",
+            E_CONTRACT_MISSING,
+        )
+    return mode
 
 
 def _runtime_options(artifact: ArtifactRef, opts: dict[str, Any]) -> dict[str, Any]:

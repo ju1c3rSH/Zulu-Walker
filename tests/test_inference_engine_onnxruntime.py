@@ -149,13 +149,194 @@ def test_the_engine_reports_a_provider_that_is_not_in_use(tmp_path):
     artifact = _artifact_of(tmp_path)
     runtime = dict(artifact.runtime or {})
     runtime["providers"] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    runtime["fallback"] = "allow"
     engine = create_engine()
     engine.load(artifact, runtime=runtime)
 
     capabilities = engine.capabilities()
-    if "CUDAExecutionProvider" in capabilities.device:
+    if "cuda" in capabilities.device:
         pytest.skip("this machine has a CUDA provider")
     assert capabilities.device == "cpu"
+    assert "CPUExecutionProvider" in capabilities.device_detail
+
+
+def test_a_requested_accelerator_that_is_not_active_is_a_startup_failure(tmp_path):
+    """The default policy: an accelerator request that lands on the CPU fails."""
+    artifact = _artifact_of(tmp_path)
+    runtime = dict(artifact.runtime or {})
+    runtime["providers"] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    engine = create_engine()
+
+    if "CUDAExecutionProvider" in ort.get_available_providers():
+        pytest.skip("this machine has a CUDA provider")
+
+    with pytest.raises(ModelConfigError) as caught:
+        engine.load(artifact, runtime=runtime)
+
+    assert caught.value.code == E_ENGINE_UNAVAILABLE
+    assert "onnxruntime-gpu" in str(caught.value)
+
+
+def test_the_failed_load_leaves_the_engine_unloaded(tmp_path):
+    """A refused accelerator must not leave a half-ready engine behind."""
+    artifact = _artifact_of(tmp_path)
+    runtime = dict(artifact.runtime or {})
+    runtime["providers"] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    engine = create_engine()
+
+    if "CUDAExecutionProvider" in ort.get_available_providers():
+        pytest.skip("this machine has a CUDA provider")
+
+    with pytest.raises(ModelConfigError):
+        engine.load(artifact, runtime=runtime)
+
+    with pytest.raises(Exception) as caught:
+        engine.run({"image": np.zeros((4, 4, 3), dtype=np.float32)})
+    assert caught.value.code == E_MODEL_NOT_LOADED
+
+
+def test_an_explicit_allow_accepts_the_cpu_downgrade(tmp_path, caplog):
+    artifact = _artifact_of(tmp_path)
+    runtime = dict(artifact.runtime or {})
+    runtime["providers"] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    runtime["fallback"] = "allow"
+    engine = create_engine()
+
+    if "CUDAExecutionProvider" in ort.get_available_providers():
+        pytest.skip("this machine has a CUDA provider")
+
+    with caplog.at_level("WARNING"):
+        engine.load(artifact, runtime=runtime)
+
+    assert engine.capabilities().device == "cpu"
+    assert any("CUDAExecutionProvider" in record.message for record in caplog.records)
+
+
+def test_a_cpu_only_request_never_fails(tmp_path):
+    artifact = _artifact_of(tmp_path)
+    runtime = dict(artifact.runtime or {})
+    runtime["providers"] = ["CPUExecutionProvider"]
+    runtime["fallback"] = "forbid"
+    engine = create_engine()
+    engine.load(artifact, runtime=runtime)
+
+    assert engine.capabilities().device == "cpu"
+
+
+def test_an_unknown_provider_name_is_refused_before_the_session_is_built(tmp_path):
+    artifact = _artifact_of(tmp_path)
+    runtime = dict(artifact.runtime or {})
+    runtime["providers"] = ["CudaExecutionProvider"]
+    engine = create_engine()
+
+    with pytest.raises(ModelConfigError) as caught:
+        engine.load(artifact, runtime=runtime)
+
+    assert caught.value.code == E_CONTRACT_MISSING
+    assert "CUDAExecutionProvider" in str(caught.value)
+
+
+def test_provider_options_reach_the_session_in_dict_form(tmp_path, monkeypatch):
+    """device_id and friends are unreachable through a plain name list."""
+    artifact = _artifact_of(tmp_path)
+    runtime = dict(artifact.runtime or {})
+    runtime["providers"] = ["CPUExecutionProvider"]
+    runtime["provider_options"] = {"CPUExecutionProvider": {"arena_extend_strategy": "kSameAsRequested"}}
+    spy = _spy_ort(ort)
+    monkeypatch.setattr(
+        "framework.inference.engines.onnxruntime._import_onnxruntime", lambda: spy
+    )
+    engine = create_engine()
+    engine.load(artifact, runtime=runtime)
+
+    assert spy.providers == [
+        {"CPUExecutionProvider": {"arena_extend_strategy": "kSameAsRequested"}}
+    ]
+
+
+def test_the_device_is_derived_from_the_provider_the_session_activated(tmp_path, monkeypatch):
+    """A CUDA session must report cuda even when the host has no GPU to prove it."""
+    artifact = _artifact_of(tmp_path)
+    runtime = dict(artifact.runtime or {})
+    runtime["providers"] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    spy = _spy_ort(ort, active=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setattr(
+        "framework.inference.engines.onnxruntime._import_onnxruntime", lambda: spy
+    )
+    engine = create_engine()
+    engine.load(artifact, runtime=runtime)
+
+    capabilities = engine.capabilities()
+    assert capabilities.device == "cuda"
+    assert "CUDAExecutionProvider" in capabilities.device_detail
+
+
+def test_a_missing_accelerator_does_not_fail_when_the_session_reports_it_active(
+    tmp_path, monkeypatch
+):
+    artifact = _artifact_of(tmp_path)
+    runtime = dict(artifact.runtime or {})
+    runtime["providers"] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    spy = _spy_ort(ort, active=["CUDAExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setattr(
+        "framework.inference.engines.onnxruntime._import_onnxruntime", lambda: spy
+    )
+    engine = create_engine()
+    engine.load(artifact, runtime=runtime)
+
+    assert engine.capabilities().device == "cuda"
+
+
+class _Session:
+    """A session that reports the providers the test wants to see active."""
+
+    def __init__(self, inner, active):
+        self._inner = inner
+        self._active = active
+
+    def get_providers(self):
+        return list(self._active)
+
+    def get_inputs(self):
+        return self._inner.get_inputs()
+
+    def get_outputs(self):
+        return self._inner.get_outputs()
+
+    def run(self, *args, **kwargs):
+        return self._inner.run(*args, **kwargs)
+
+
+class _SpyOrt:
+    """A stand-in onnxruntime module that records how the session was built."""
+
+    def __init__(self, real, active):
+        self.__version__ = real.__version__
+        self.SessionOptions = real.SessionOptions
+        self.ExecutionMode = real.ExecutionMode
+        self.GraphOptimizationLevel = real.GraphOptimizationLevel
+        self._real = real
+        self._active = active
+        self.providers = None
+
+    def get_available_providers(self):
+        """Report the providers the test believes are installed."""
+        if self._active is None:
+            return self._real.get_available_providers()
+        return list(self._active)
+
+    def InferenceSession(self, path, sess_options=None, providers=None):
+        self.providers = providers
+        inner = self._real.InferenceSession(
+            path, sess_options=sess_options, providers=providers
+        )
+        if self._active is None:
+            return inner
+        return _Session(inner, self._active)
+
+
+def _spy_ort(real, active=None):
+    return _SpyOrt(real, active)
 
 
 def test_the_engine_refuses_to_run_without_a_model():
