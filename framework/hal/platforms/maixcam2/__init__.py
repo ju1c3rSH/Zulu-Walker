@@ -3,8 +3,6 @@
 from typing import Any, Optional
 
 from framework.hal.interface import AIInference
-from framework.hal.platforms.frame_spec import frame_spec_from_config
-from framework.inference.facade import DEFAULT_SWITCH_TIMEOUT_MS, AIFacade
 
 from .ai import MaixCam2AI
 from .battery import MaixCam2Battery
@@ -74,7 +72,7 @@ def create_uart(port: str, baudrate: int = 921600) -> MaixCam2Uart:
 def create_ai(
     engine: str = "",
     *,
-    switch_timeout_ms: int = DEFAULT_SWITCH_TIMEOUT_MS,
+    switch_timeout_ms: Optional[int] = None,
     frame: Any = None,
     runtime_options: Optional[dict] = None,
 ) -> AIInference:
@@ -87,15 +85,27 @@ def create_ai(
 
     Both branches satisfy AIInference, so the caller never branches on the
     platform; the choice is a deployment setting, not a code path.
+
+    The kernel imports are local on purpose: a device packaged without
+    ``framework/inference`` still starts, because the own backend needs none
+    of it.
     """
-    if engine:
-        return AIFacade(
-            engine,
-            switch_timeout_ms=switch_timeout_ms,
-            frame_spec=frame_spec_from_config(frame),
-            runtime_options=runtime_options,
-        )
-    return MaixCam2AI()
+    if not engine:
+        return MaixCam2AI()
+
+    from framework.hal.platforms.frame_spec import frame_spec_from_config
+    from framework.inference.facade import DEFAULT_SWITCH_TIMEOUT_MS, AIFacade
+
+    return AIFacade(
+        engine,
+        switch_timeout_ms=(
+            DEFAULT_SWITCH_TIMEOUT_MS
+            if switch_timeout_ms is None
+            else switch_timeout_ms
+        ),
+        frame_spec=frame_spec_from_config(frame),
+        runtime_options=runtime_options,
+    )
 
 
 def create_battery() -> MaixCam2Battery:
