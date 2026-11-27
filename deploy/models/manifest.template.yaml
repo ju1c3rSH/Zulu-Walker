@@ -1,0 +1,166 @@
+# ============================================================================
+# 推理契约模板 —— 复制到 <模型目录>/manifest.yaml 后按需修改
+#
+# 这是一份带注释的参考样例，不要直接部署：里面的工件名、尺寸、标签都是
+# 占位值。校验它没有意义，它本来就指向不存在的文件：
+#
+#   python scripts/check_manifest.py deploy/maixcam/models/<模型>/manifest.yaml \
+#       --engine maix_nn --model /root/models/<模型>/<模型>.mud
+#
+# 一句话理解这个文件：它声明「一个逻辑模型要吃什么、吐什么，以及每个引擎
+# 各自怎么把工件喂进去」。逻辑模型只有一份，artifacts 下按引擎分别列。
+# ============================================================================
+
+schema_version: 3              # 解析器只认 3，改这里等于换 schema
+
+name: steelball_1280x352       # 逻辑模型名，仅用于日志与统计
+family: yolo11                 # 模型族，必须落在 wrapper 接受的族内
+                               # 内置：yolo11 / yolov5（见 wrappers/__init__.py）
+                               # 与工件自述交叉校验，对不上直接报错
+
+# ----------------------------------------------------------------------------
+# input：模型期望的输入形态。这是「模型要什么」，不是「相机给什么」。
+# 相机给什么由 project_config.yaml 的 ai.frame 声明，两者不一致时由规范
+# 前处理转换，不报错。
+# ----------------------------------------------------------------------------
+input:
+  frame:
+    color: rgb                 # rgb / bgr / rgba
+    dtype: uint8               # uint8 / float32
+    layout: hwc                # 目前只支持 hwc
+
+  size: [1280, 352]            # 目标分辨率 [宽, 高]，必须是正偶数
+
+  # 分辨率策略三选一：
+  #   letterbox  等比缩放，整帧可见，不足处填 value（缺省 114 灰）
+  #   crop       等比缩放铺满，超出部分按 anchor 裁掉
+  #   stretch    直接拉伸，不保宽高比（坐标映射最简单，形变最大）
+  resize:
+    mode: letterbox
+    value: 114                 # 仅 letterbox 使用；rgba 可写 'transparent'
+    # anchor: center           # 仅 crop 使用：center/top/bottom/left/right
+
+  # 归一化参数，按 yolo 形式写：x = (pixel / 255 - mean) / std 的等价表达
+  # 实际执行者由各引擎的 preprocess.norm 决定，这里只提供数字
+  norm:
+    scale: 0.00392156862745098 # 1/255
+    mean: [0, 0, 0]
+    std: [1, 1, 1]
+
+# 标签表：一行一个，与引擎无关，三个工件共用。二选一。
+labels_file: labels.txt
+# labels: ["ball"]
+
+# ----------------------------------------------------------------------------
+# artifacts：按引擎 id 分列。引擎 id 必须与 project_config.yaml 的 ai.engine
+# 完全一致，否则 add() 阶段抛 E_CONTRACT_MISSING。
+#
+# 运行期只加载一个引擎，其余条目只是备查；但 io 与 preprocess 的声明会在
+# 解析期全部校验，写错不会因为"没用到"而放过。
+# ----------------------------------------------------------------------------
+artifacts:
+
+  # ==========================================================================
+  # maix.nn —— 板端 NPU，端到端引擎
+  # 特点：resize 与归一化烘焙进 .mud，框架不做任何前处理；detect() 直接返回
+  # 已解码对象，因此 wrapper 必须是 end2end，不能再做 NMS。
+  # ==========================================================================
+  maix_nn:
+    file: steelball_1280x352.mud      # 相对本文件所在目录，解析成绝对路径
+    wrapper: "vision.det.end2end"     # 端到端方言：只做字段映射
+    wrapper_params:
+      conf_th: 0.3                    # 传给固件，由固件内部过滤
+      iou_th: 0.4
+    preprocess:
+      resize: baked                   # 固件自己做缩放
+      norm: baked                     # 固件自己做归一化（此时不许写 formula）
+    io:
+      # maix.nn 不暴露张量名，按位置取；逻辑名与物理名相同即可，
+      # 物理值只是占位，没有任何语义。
+      inputs: { image: "image" }
+      outputs: { objects: "objects" }
+
+  # ==========================================================================
+  # onnxruntime —— 桌面参考实现，张量级引擎
+  # 特点：唯一要求 NCHW 的引擎，适配器每帧做一次转置；输出是原始预测张量，
+  # wrapper 必须是 raw，解码与 NMS 都由框架完成。
+  # ==========================================================================
+  onnxruntime:
+    file: steelball_1280x352.onnx
+    wrapper: "vision.det.raw"
+    wrapper_params:
+      output_layout: auto             # auto / nchw / nhwc，看导出时的排布
+      score_activation: none          # none / sigmoid
+    preprocess:
+      resize: framework               # 框架做 letterbox
+      norm: framework                 # 框架做归一化
+      formula: yolo                   # framework 归一化只认这个公式
+    io:
+      # 物理名必须与 onnx 图里的输入/输出名逐字一致，加载期会核对
+      inputs: { image: "images" }
+      outputs: { pred: "output0" }
+    runtime:
+      # 部署期可被 project_config.yaml 的 ai.runtime 覆盖
+      version: "1.26"                 # 钉住版本，不一致加载期报错
+      providers: ["CPUExecutionProvider"]
+      num_threads: 4
+      # fallback: forbid              # 默认 forbid：请求了 GPU 却落到 CPU 即启动失败
+    build:
+      # 仅记录配方，不参与加载；改动这里不会影响运行
+      tool: onnx-export
+      source: steelball_1280x352.pt
+      opset: 17
+      input_size: [1280, 352]
+      layout: nchw
+      color: rgb
+      output: raw_head
+
+  # ==========================================================================
+  # ncnn —— 桌面 Vulkan/CPU，张量级引擎
+  # 特点：.param + .bin 成对出现，bin 用 aux_paths 挂载；归一化可以在引擎内
+  # 用 substract_mean_normalize 完成，此时框架只做 resize。
+  # ==========================================================================
+  ncnn:
+    file: steelball_1280x352.param
+    bin: steelball_1280x352.bin       # 伴随文件，缺了加载期报 E_MODEL_LOAD_FAILED
+    wrapper: "vision.det.raw"
+    wrapper_params:
+      output_layout: auto
+      score_activation: none
+    preprocess:
+      resize: framework
+      norm: engine                    # 由适配器在 Mat 上做归一化
+      formula: substract_mean_normalize  # engine 归一化只认这个公式
+    io:
+      inputs: { image: "data" }       # 必须是 .param 里的 blob 名
+      outputs: { pred: "output" }
+    runtime:
+      version: "1.0.20261020"         # ncnn 按日期编号，必须整串匹配
+      device: cpu                     # cpu / vulkan
+      # vulkan_device: auto           # auto = 库排序第一的设备，不是 index 0
+      # fp16: auto
+      num_threads: 4
+    build:
+      tool: onnx2ncnn
+      source: steelball_1280x352.onnx
+      target: x86_64
+      fp16: none
+      int8: none
+      input_size: [1280, 352]
+      layout: hwc
+      color: rgb
+      output: raw_head
+
+# ----------------------------------------------------------------------------
+# 三档 norm 的区别（最容易写错的地方）
+#
+#   framework  框架在 CPU 上做归一化，产出 float32 张量交给引擎
+#              → formula 只能是 yolo
+#   engine     适配器在引擎侧做归一化，框架只保证 resize
+#              → formula 只能是 substract_mean_normalize
+#              → 适配器要向 runtime 索取 canonical 参数，取不到即 E_CONTRACT_MISSING
+#   baked      已烘焙进工件，框架完全跳过前处理，原帧直接透传
+#              → 不许写 formula，写了即解析期报错
+#
+# 写错这一项的后果不是报错，是数值差一个量级而检测框看起来"还在"。
+# ----------------------------------------------------------------------------

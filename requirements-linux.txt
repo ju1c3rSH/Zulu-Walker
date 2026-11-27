@@ -7,14 +7,33 @@ opencv-contrib-python>=4.5
 # installed library when it loads the artifact (E_MODEL_LOAD_FAILED on a
 # mismatch).
 #
-# The CPU build of onnxruntime is the baseline; the GPU builds share the
-# module name, so uninstall the others first:
+# --- onnxruntime ---------------------------------------------------------- #
+# Three wheels provide the same `onnxruntime` module and overwrite each other;
+# uninstall the others before installing the one you want:
 #   pip uninstall -y onnxruntime onnxruntime-gpu onnxruntime-directml
-#   pip install onnxruntime-gpu      # CUDA EP, needs CUDA and cuDNN 9
-#   pip install onnxruntime-directml # DirectML EP, Windows
+#
+#   onnxruntime          CPU baseline (the default below)
+#   onnxruntime-gpu      NVIDIA CUDA 12.x + cuDNN 9
+#   onnxruntime-rocm     AMD ROCm
+#
+# The CPU build is the default so a fresh clone starts on any machine.  A GPU
+# build only pays off together with ai.runtime.providers in the project
+# config, and `python scripts/check_accelerators.py` reports which providers
+# the installed build actually carries.
 onnxruntime>=1.26,<1.27
 
-# ncnn: the wheel is the CPU build.  The Vulkan build needs a source
-# compile, see docs/architecture/desktop_inference_backends.md.  ncnn numbers
-# its releases by date, so the pin names the exact build.
+# --- ncnn ---------------------------------------------------------------- #
+# The PyPI wheel is built with Vulkan on the platforms checked so far (Windows
+# 1.0.20261020 reports the adapters).  Do not assume it on this platform: run
+# `python scripts/check_accelerators.py` and read the ncnn section.  When the
+# wheel is a pure CPU build, runtime.device: vulkan fails loudly with
+# E_ENGINE_UNAVAILABLE instead of falling back to the CPU.  ncnn numbers its
+# releases by date, so the pin names the exact build.
+#
+# A Vulkan build can also be compiled from source; see
+# docs/architecture/desktop_inference_backends.md section 4.
+#
+# Warning for scripts that only probe: get_gpu_count() brings the Vulkan
+# instance up and leaves it alive, so a probe must pair it with
+# destroy_gpu_instance() or the process segfaults while the driver tears down.
 ncnn==1.0.20261020

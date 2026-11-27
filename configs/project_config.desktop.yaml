@@ -37,10 +37,35 @@ ai:
   engine: "onnxruntime"         # required: one explicit engine, no candidates, no silent downgrade
   switch_timeout_ms: 2000
   frame: { color: bgr, dtype: uint8, layout: hwc }   # what the camera delivers
+
+  # The accelerator is a property of this machine, not of the artifact, so it
+  # is chosen here and merged over the runtime block of every manifest below.
+  # An absent block means "take the manifest default", which is the CPU.
+  #
+  #   onnxruntime, NVIDIA (Win/Linux):  pip install onnxruntime-gpu     (CUDA 12.x + cuDNN 9)
+  #   onnxruntime, any DX12 GPU (Win):  pip install onnxruntime-directml
+  #   onnxruntime, AMD (Linux):         pip install onnxruntime-rocm
+  #   ncnn, any Vulkan GPU:             device: vulkan, wheel from PyPI is already Vulkan-enabled
+  #
+  # Run `python scripts/check_accelerators.py` to list what this host really has.
+  #
+  # runtime:
+  #   providers: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+  #   provider_options:
+  #     CUDAExecutionProvider: { device_id: 0 }
+  #   fallback: forbid            # forbid = a request that lands on the CPU fails at startup
+  #
+  # ncnn equivalent:                device picks the backend, vulkan_device the GPU
+  # runtime:
+  #   device: vulkan
+  #   vulkan_device: auto         # auto = the device ncnn ranks first, not index 0
+  #   fp16: auto
+
   models:
     - nick_name: "yolo11n"
       model: "deploy/models/yolo11n/yolo11n.onnx"     # the exact artifact file, not a directory
       manifest: "deploy/models/yolo11n/manifest.yaml" # the contract of the logical model
+      # runtime: {...}                                # per-model override of the block above
   active: "yolo11n"
 
 battery:
