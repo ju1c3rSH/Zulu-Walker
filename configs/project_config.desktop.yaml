@@ -10,7 +10,7 @@
 
 platform: linux                  # desktop hosts use the linux platform package (cv2 + pyserial)
 
-debug_console_enabled: false     # no Rich TUI on the desktop; the OpenCV window is the view
+debug_console_enabled: true     # no Rich TUI on the desktop; the OpenCV window is the view
 display_enabled: true            # keep the display path alive
 
 display:
@@ -26,7 +26,7 @@ cameras:
     source: 0                    # Windows: 0 is the first camera; Linux: resolved to a V4L2 node
     width: 640
     height: 480
-    fps: 30
+    fps: 60
     camera_stream_queue_size: 2
 
 uart_defaults:
@@ -44,4 +44,4 @@ ai:
   active: "yolo11n"
 
 battery:
-  enabled: false                 # a PC has no fuel gauge
+  enabled: true                 # a PC has no fuel gauge
