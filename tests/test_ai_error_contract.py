@@ -206,15 +206,28 @@ def test_a_successful_frame_clears_the_error_state(monkeypatch):
 
 def test_stub_backends_expose_the_error_state():
     from framework.hal.interface import AIInference
-    from framework.hal.platforms.linux.ai import LinuxAI
     from framework.hal.platforms.mock.ai import MockAI
 
-    for cls in (MockAI, LinuxAI):
-        ai = cls()
-        assert ai.last_error_code == ""
-        assert ai.error_count == 0
-        assert ai.degraded is False
-        assert isinstance(ai, AIInference)
+    ai = MockAI()
+    assert ai.last_error_code == ""
+    assert ai.error_count == 0
+    assert ai.degraded is False
+    assert isinstance(ai, AIInference)
+
+
+def test_the_desktop_backend_exposes_the_same_error_state():
+    """The desktop backend is kernel driven now, not a stub."""
+    from framework.hal.interface import AIInference
+    from framework.hal.platforms.linux.ai import LinuxAI
+
+    try:
+        ai = LinuxAI()
+    except Exception:
+        pytest.skip("no inference engine is available on this machine")
+    assert ai.last_error_code == ""
+    assert ai.error_count == 0
+    assert ai.degraded is False
+    assert isinstance(ai, AIInference)
 
 
 # ---------- processor mapping ---------- #
