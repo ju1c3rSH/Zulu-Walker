@@ -1,4 +1,5 @@
 ﻿import logging
+from typing import Optional
 
 try:
     from utils.log_util import log_print
@@ -49,6 +50,25 @@ def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> Linu
 
 def create_display() -> LinuxDisplay:
     return LinuxDisplay()
+
+
+def create_panel(width: int = 640, height: int = 480, scale: int = 2,
+                 title: str = "Zulu-Walker", headless: bool = False,
+                 interval_ms: Optional[float] = None):
+    """The desktop panel: a cv2 window carrying the device HUD.
+
+    Capability hook: a platform without a desktop window simply does not
+    offer it, and the application falls back to the plain display sink.
+    The panel is returned only when a window really opened, so a headless
+    host gets None instead of a black rectangle nobody can see.
+    """
+    from .panel import DesktopPanel
+
+    panel = DesktopPanel(
+        width=width, height=height, scale=scale, title=title,
+        headless=headless, interval_ms=interval_ms,
+    )
+    return panel if panel.has_gui else None
 
 
 def create_uart(port: str = "", baudrate: int = 921600) -> LinuxUart:
@@ -105,6 +125,7 @@ __all__ = [
     "create_battery",
     "create_camera",
     "create_display",
+    "create_panel",
     "create_uart",
     "resolve_camera_source",
     "create_sys_info",

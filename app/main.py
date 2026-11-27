@@ -97,7 +97,158 @@ def _vision_manager_of(manager):
     return getter() if callable(getter) else None
 
 
-def _build_tick(manager, machine, cfg: dict = None):
+def _attr(obj, name, default=""):
+    """Read an attribute that may be a property or a method."""
+    if obj is None:
+        return default
+    value = getattr(obj, name, default)
+    if callable(value):
+        value = value()
+    return value
+
+
+def _panel_of(machine, cfg: dict):
+    """The desktop panel, when the platform offers one.
+
+    The device has no panel window - it shows the same HUD on its LCD - so
+    the capability hook is absent there and the LCD path stays untouched.
+    """
+    import importlib
+
+    from utils.log_util import log_print
+
+    platform = getattr(machine, "platform", "maixcam2")
+    try:
+        platform_mod = importlib.import_module(
+            f"framework.hal.platforms.{platform}")
+    except Exception:
+        return None
+    factory = getattr(platform_mod, "create_panel", None)
+    if not callable(factory):
+        return None
+    disp = cfg.get("display") or {}
+    if not isinstance(disp, dict):
+        disp = {}
+    try:
+        panel = factory(
+            width=int(disp.get("width", 640)),
+            height=int(disp.get("height", 480)),
+            scale=int(disp.get("scale", 2)),
+            title=str(disp.get("title", "Zulu-Walker")),
+            headless=bool(disp.get("headless", False)),
+            interval_ms=disp.get("interval_ms"),
+        )
+    except Exception as exc:
+        log_print(f"[Panel] desktop panel creation failed: {exc}")
+        return None
+    if panel is not None:
+        size = panel.size
+        log_print(f"[Panel] desktop panel {size[0]}x{size[1]} ready")
+    else:
+        log_print("[Panel] no desktop window available (headless host)")
+    return panel
+
+
+def _camera_frame(machine, vm, pipeline_id: str):
+    """The newest camera frame, without touching the inference queue.
+
+    The camera is asked for through its pipeline: a pipeline id is not a
+    camera id (the vision module names them independently, "cam_main" versus
+    "main"), so the hub lookup would miss and the panel would show black.
+
+    The device camera keeps a native image buffer; the desktop camera keeps
+    the frame it just captured.  Either way the display reads it and the
+    pipeline keeps its own copy, so a panel never starves the detector.
+    """
+    getter = getattr(vm, "get_pipeline", None) if vm is not None else None
+    pipeline = getter(pipeline_id) if callable(getter) else None
+    camera = getattr(pipeline, "camera", None)
+    if camera is None:
+        hub = getattr(machine, "camera_hub", None)
+        camera = hub.get(pipeline_id) if hub is not None else None
+    if camera is None:
+        return None
+    return getattr(camera, "last_frame", None)
+
+
+def _hits_of(detections, labels):
+    """The detection boxes as HUD hits, in frame pixels."""
+    from framework.ui import hud
+
+    hits = []
+    for det in detections or []:
+        class_id = int(getattr(det, "class_id", 0))
+        label = str(getattr(det, "label", "") or "")
+        if not label:
+            label = labels[class_id] if 0 <= class_id < len(labels) else str(class_id)
+        score = float(getattr(det, "score", 0.0))
+        hits.append(
+            hud.Hit(
+                x=int(det.x), y=int(det.y),
+                w=int(det.w), h=int(det.h),
+                text=f"{label}:{score:.2f}",
+            )
+        )
+    return hits
+
+
+def _panel_content(machine, vm, cfg: dict):
+    """The camera frame, the frame-space boxes and the HUD content."""
+    from framework.ui import hud
+
+    cfg = cfg or {}
+    results = vm.get_all_results() if vm is not None else {}
+    pipeline_id = next(iter(results), None)
+    if pipeline_id is None:
+        cameras = cfg.get("cameras") or []
+        pipeline_id = str(cameras[0].get("camera_id", "main")) if cameras else "main"
+
+    ai_result = (results.get(pipeline_id) or {}).get("ai_inference")
+    detections = []
+    error_code = ""
+    if ai_result is not None:
+        if getattr(ai_result, "success", False):
+            detections = (ai_result.result_data or {}).get("detections", []) or []
+        else:
+            error_code = getattr(ai_result, "error_code", "") or ""
+
+    ai = getattr(machine, "ai", None)
+    labels = _attr(ai, "labels", []) or []
+    engine = str(_attr(ai, "_engine_id", "") or "ai")
+    model = str(_attr(ai, "active_model", "") or "")
+    fps = vm.get_pipeline_fps(pipeline_id) if vm is not None else 0.0
+    loaded = bool(_attr(ai, "loaded", False))
+
+    state = hud.HudState(
+        mode="DESKTOP",
+        link_ok=loaded,
+        found=bool(detections),
+        fps=fps,
+        line2=f"{engine} {model} | det {len(detections)}".strip(),
+        hits=_hits_of(detections, labels),
+        alert=error_code,
+    )
+    return _camera_frame(machine, vm, pipeline_id), state.hits, state
+
+
+def _exit_check(machine, panel):
+    """Stop the main loop when the platform or the panel says so."""
+    platform_check = getattr(machine, "exit_check", None)
+
+    def check() -> bool:
+        if panel is not None and panel.exit_requested:
+            return True
+        if callable(platform_check):
+            try:
+                return bool(platform_check())
+            except Exception:
+                return False
+        return False
+
+    return check
+
+
+def _build_tick(manager, machine, cfg: dict = None, panel=None):
     """Build a per-tick callback that pushes the newest frame and flushes sinks.
 
     Args:
@@ -105,6 +256,8 @@ def _build_tick(manager, machine, cfg: dict = None):
         machine: Assembled Machine; ``display`` may be None when headless.
         cfg: Parsed config; ``display_show_interval_ms`` is the LCD present
             interval, with absent or 0 meaning no throttle.
+        panel: The desktop panel, when the platform offers one.  It presents
+            the composed HUD itself, so the LCD sink stays out of the way.
 
     The present cadence and overlay rebuild window share that key, so a slow
     panel draws as often as it shows. With ``display_enabled: false`` the vision
@@ -116,7 +269,7 @@ def _build_tick(manager, machine, cfg: dict = None):
     cfg = cfg or {}
     interval_ms = cfg.get("display_show_interval_ms")
     sinks = SinkGroup()
-    if getattr(machine, "display", None) is not None:
+    if panel is None and getattr(machine, "display", None) is not None:
         sinks.add(MaixLcdSink(machine.display, interval_ms=interval_ms))
     # TODO(project): add more sinks / input sources here (CvWindowSink,
     # JpegStreamSink, touchscreen -> CmdQueue).
@@ -128,6 +281,12 @@ def _build_tick(manager, machine, cfg: dict = None):
 
     def tick() -> None:
         live_vm = vm or _vision_manager_of(manager)
+        if panel is not None:
+            frame, hits, state = _panel_content(machine, live_vm, cfg)
+            panel.compose(frame, hits, state)
+            panel.present()
+            panel.pump()
+            return
         frame = live_vm.get_display_frame() if live_vm else None
         if frame is not None:
             sinks.push(frame)
@@ -165,6 +324,10 @@ def main() -> None:
     machine = Machine.create(config_path)
     wdt_feed()  # AI model load can take seconds
 
+    # The desktop panel is a platform capability: the device has none and
+    # keeps its LCD path, the desktop opens a window with the same HUD.
+    panel = _panel_of(machine, cfg)
+
     # TODO(project): platform bring-up that needs `machine` goes here
     # (cameras for calibration, WiFi AP, beacon, ...), feeding wdt_feed()
     # after each step.
@@ -183,7 +346,7 @@ def main() -> None:
         machine,
         event_bus=bus,
         wdt_feed=wdt_feed,
-        exit_check=getattr(machine, "exit_check", None),
+        exit_check=_exit_check(machine, panel),
         config=cfg,
     )
     # TODO(project): add modules per need ("zw_uart_module", "zw_wifi_stream").
@@ -192,9 +355,11 @@ def main() -> None:
     try:
         manager.run_main_loop(
             coordinator=coordinator,
-            display_callback=_build_tick(manager, machine, cfg),
+            display_callback=_build_tick(manager, machine, cfg, panel),
         )
     finally:
+        if panel is not None:
+            panel.close()
         stop_log_writer()
 
 

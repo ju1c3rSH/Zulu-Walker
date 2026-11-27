@@ -43,8 +43,9 @@ docs/competition/封箱清单.md
 *.log
 logs/
 
-# Throwaway scripts at the repository root
+# Throwaway scripts and snapshots at the repository root
 .tmp_*.py
+.tmp_*.png
 /_*.py
 
 # Model artifacts: produced by the offline toolchain, deployed next to their
