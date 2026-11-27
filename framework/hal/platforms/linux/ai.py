@@ -3,13 +3,12 @@
 import logging
 from typing import Any, Callable, Optional
 
+from framework.hal.platforms.frame_spec import frame_spec_from_config
 from framework.inference.facade import DEFAULT_SWITCH_TIMEOUT_MS, AIFacade
-from framework.inference.runtime import FrameSpec
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENGINE_ID = "onnxruntime"
-DEFAULT_FRAME_SPEC = FrameSpec(color="bgr", dtype="uint8", layout="hwc")
 
 __all__ = ["DEFAULT_ENGINE_ID", "LinuxAI"]
 
@@ -34,23 +33,12 @@ class LinuxAI(AIFacade):
         switch_timeout_ms: int = DEFAULT_SWITCH_TIMEOUT_MS,
         frame: Optional[Any] = None,
         engine_factory: Optional[Callable[[], Any]] = None,
+        runtime_options: Optional[dict] = None,
     ) -> None:
         super().__init__(
             engine_id,
             switch_timeout_ms=switch_timeout_ms,
-            frame_spec=_frame_spec(frame),
+            frame_spec=frame_spec_from_config(frame),
             engine_factory=engine_factory,
+            runtime_options=runtime_options,
         )
-
-
-def _frame_spec(frame: Any) -> FrameSpec:
-    """Build the platform frame contract from the configuration."""
-    if isinstance(frame, FrameSpec):
-        return frame
-    if isinstance(frame, dict):
-        return FrameSpec(
-            color=str(frame.get("color", DEFAULT_FRAME_SPEC.color)),
-            dtype=str(frame.get("dtype", DEFAULT_FRAME_SPEC.dtype)),
-            layout=str(frame.get("layout", DEFAULT_FRAME_SPEC.layout)),
-        )
-    return DEFAULT_FRAME_SPEC

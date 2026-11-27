@@ -1,4 +1,12 @@
-﻿from .ai import MaixCam2AI
+﻿from __future__ import annotations
+
+from typing import Any, Optional
+
+from framework.hal.interface import AIInference
+from framework.hal.platforms.frame_spec import frame_spec_from_config
+from framework.inference.facade import DEFAULT_SWITCH_TIMEOUT_MS, AIFacade
+
+from .ai import MaixCam2AI
 from .battery import MaixCam2Battery
 from .camera import MaixCam2Camera
 from .display import MaixCam2Display
@@ -63,7 +71,30 @@ def create_uart(port: str, baudrate: int = 921600) -> MaixCam2Uart:
     return MaixCam2Uart(port=port, baudrate=baudrate)
 
 
-def create_ai() -> MaixCam2AI:
+def create_ai(
+    engine: str = "",
+    *,
+    switch_timeout_ms: int = DEFAULT_SWITCH_TIMEOUT_MS,
+    frame: Any = None,
+    runtime_options: Optional[dict] = None,
+) -> AIInference:
+    """Return the AI backend of this board.
+
+    An empty ``engine`` keeps the board's own backend: the firmware's maix.nn
+    classes driven straight from the MUD file, which is what the board has
+    always done.  A non-empty engine selects the kernel, and the artifact,
+    the labels and the frame contract then come from a manifest.
+
+    Both branches satisfy AIInference, so the caller never branches on the
+    platform; the choice is a deployment setting, not a code path.
+    """
+    if engine:
+        return AIFacade(
+            engine,
+            switch_timeout_ms=switch_timeout_ms,
+            frame_spec=frame_spec_from_config(frame),
+            runtime_options=runtime_options,
+        )
     return MaixCam2AI()
 
 

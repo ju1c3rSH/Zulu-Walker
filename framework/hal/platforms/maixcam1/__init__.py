@@ -1,3 +1,11 @@
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from framework.hal.interface import AIInference
+from framework.hal.platforms.frame_spec import frame_spec_from_config
+from framework.inference.facade import DEFAULT_SWITCH_TIMEOUT_MS, AIFacade
+
 from .ai import MaixCam1AI
 from .battery import MaixCam1Battery
 from .camera import MaixCam1Camera
@@ -53,7 +61,27 @@ def create_uart(port: str, baudrate: int = 115200) -> MaixCam1Uart:
     return MaixCam1Uart(port=port, baudrate=baudrate)
 
 
-def create_ai() -> MaixCam1AI:
+def create_ai(
+    engine: str = "",
+    *,
+    switch_timeout_ms: int = DEFAULT_SWITCH_TIMEOUT_MS,
+    frame: Any = None,
+    runtime_options: Optional[dict] = None,
+) -> AIInference:
+    """Return the AI backend of this board.
+
+    An empty ``engine`` keeps the board's own backend, which loads CVITEK
+    .cvimodel files through the firmware.  A non-empty engine selects the
+    kernel; both branches satisfy AIInference, so the caller does not branch
+    on the platform.
+    """
+    if engine:
+        return AIFacade(
+            engine,
+            switch_timeout_ms=switch_timeout_ms,
+            frame_spec=frame_spec_from_config(frame),
+            runtime_options=runtime_options,
+        )
     return MaixCam1AI()
 
 

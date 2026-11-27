@@ -3,7 +3,7 @@
 import importlib
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -19,6 +19,21 @@ except ImportError:
     BootTimer = None
 
 logger = logging.getLogger(__name__)
+
+
+def _runtime_options(raw: Any) -> dict:
+    """The accelerator block of the config, or an empty dict when absent.
+
+    The block is read from ``ai.runtime`` and from ``ai.models[].runtime``.
+    It is passed to the engine verbatim: the engine layer owns the
+    vocabulary (providers, device, fallback), so the configuration loader
+    stays a loader and does not grow a second copy of the schema.
+    """
+    if isinstance(raw, dict):
+        return dict(raw)
+    if raw is not None:
+        logger.warning("ai.runtime must be a mapping, ignoring %r", raw)
+    return {}
 
 
 class Machine:
@@ -159,6 +174,10 @@ class Machine:
         ai: Optional[AIInference] = None
         if ai_config is not None:
             engine_id = str(ai_config.get("engine") or "").strip()
+            # The accelerator is a deployment property, not an artifact
+            # property: the same .onnx runs on a CPU laptop, a DirectML
+            # desktop and a CUDA host, and only this block differs.
+            runtime_options = _runtime_options(ai_config.get("runtime"))
             try:
                 if engine_id:
                     ai = platform_mod.create_ai(
@@ -167,18 +186,21 @@ class Machine:
                             ai_config.get("switch_timeout_ms", 2000)
                         ),
                         frame=ai_config.get("frame"),
+                        runtime_options=runtime_options,
                     )
                 else:
                     ai = platform_mod.create_ai()
                 models_cfg = ai_config.get("models", [])
                 for m in models_cfg:
                     manifest_path = m.get("manifest")
+                    model_runtime = _runtime_options(m.get("runtime"))
                     if manifest_path:
                         ai.add(
                             nick_name=m["nick_name"],
                             model_path=m["model"],
                             model_type=m.get("model_type", "auto"),
                             manifest_path=manifest_path,
+                            runtime_options=model_runtime,
                         )
                     else:
                         ai.add(
