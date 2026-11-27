@@ -1,0 +1,39 @@
+# Desktop profile: a generic Linux or Windows host.
+#
+# Launch it with:
+#   python run.py main --config configs/project_config.desktop.yaml
+# or:
+#   ZWULU_CONFIG=configs/project_config.desktop.yaml python run.py main
+#
+# The engine is explicit: the runtime has exactly one engine and never
+# falls back to another one silently.
+
+platform: linux                  # desktop hosts use the linux platform package (cv2 + pyserial)
+
+debug_console_enabled: false     # no Rich TUI on the desktop; the OpenCV window is the view
+display_enabled: true            # cv2.imshow window
+
+cameras:
+  - camera_id: "main"
+    source: 0                    # Windows: 0 is the first camera; Linux: resolved to a V4L2 node
+    width: 640
+    height: 480
+    fps: 30
+    camera_stream_queue_size: 2
+
+uart_defaults:
+  port: "auto"                  # the host's own serial port; no port means no UART, and the app still runs
+  baudrate: 921600
+
+ai:
+  engine: "onnxruntime"         # required: one explicit engine, no candidates, no silent downgrade
+  switch_timeout_ms: 2000
+  frame: { color: bgr, dtype: uint8, layout: hwc }   # what the camera delivers
+  models:
+    - nick_name: "yolo11n"
+      model: "deploy/models/yolo11n/yolo11n.onnx"     # the exact artifact file, not a directory
+      manifest: "deploy/models/yolo11n/manifest.yaml" # the contract of the logical model
+  active: "yolo11n"
+
+battery:
+  enabled: false                 # a PC has no fuel gauge
