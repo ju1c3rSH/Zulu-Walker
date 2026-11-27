@@ -97,15 +97,20 @@ def test_the_module_imports_no_drawing_backend():
 def test_the_header_is_a_bar_an_fps_field_and_a_clock():
     primitives = _manager()._header_primitives("cam_main", 30.0, 640)
 
-    assert isinstance(primitives[0], Rect)
-    assert primitives[0].fill and primitives[0].w == 640
+    bar, fps_field, clock = primitives
+    assert isinstance(bar, Rect)
+    assert (bar.y, bar.h, bar.w) == (0, 32, 640)
+    assert bar.fill
 
-    assert isinstance(primitives[1], Text)
-    assert primitives[1].text.startswith("cam_main")
-    assert "FPS:30.0" in primitives[1].text
+    assert isinstance(fps_field, Text)
+    assert fps_field.text.startswith("cam_main")
+    assert "FPS:30.0" in fps_field.text
+    assert fps_field.x == 6
 
-    assert isinstance(primitives[2], Text)
-    assert primitives[2].align == "center"
+    # Right-aligned so the two fields cannot collide whatever the glyph widths.
+    assert isinstance(clock, Text)
+    assert clock.align == "right"
+    assert clock.x == 632
 
 
 def test_a_detection_becomes_a_box_and_an_index_inside_it():

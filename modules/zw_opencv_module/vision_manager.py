@@ -526,7 +526,12 @@ class VisionManager:
             logger.warning("AEC adjust_exposure failed", exc_info=True)
 
     def _header_primitives(self, pipeline_id: str, fps: float, width: int) -> List[Any]:
-        """The top bar: pipeline id + fps on the left, clock centred.
+        """The top bar: pipeline id + fps on the left, clock on the right.
+
+        The clock is right-aligned rather than centred: the device font is a
+        narrow bitmap and the desktop font is Hershey, which is wide enough
+        that a centred clock runs into the fps field on a 640 px screen.  Two
+        anchored fields cannot collide, whatever the glyph widths are.
 
         The clock string is refreshed once per second, not once per frame:
         reading the clock is the cost, drawing three strings is not.
@@ -539,8 +544,8 @@ class VisionManager:
         return [
             Rect(0, 0, width, 32, _COLOR_BLACK, fill=True),
             Text(6, 2, f"{self._hdr_prefix}{fps:.1f}", 18, _COLOR_WHITE),
-            Text(width // 2, 2, self._time_str_cached, 18, _COLOR_WHITE,
-                 align="center"),
+            Text(width - 8, 2, self._time_str_cached, 18, _COLOR_WHITE,
+                 align="right"),
         ]
 
     def _detection_list_primitives(self, detections) -> List[Any]:
@@ -552,7 +557,7 @@ class VisionManager:
         if not detections:
             return []
         labels = self._ai.labels if self._ai is not None else []
-        line_spacing = self._LIST_TEXT_PX + 4
+        line_spacing = self._LIST_TEXT_PX + 10
         items: List[Any] = []
         for index, det in enumerate(detections, start=1):
             if index > self._LIST_MAX_LINES:
@@ -584,11 +589,14 @@ class VisionManager:
             ))
             # Clamp the index back into the box: a one-digit label in a 20 px
             # box would otherwise be drawn outside it, which is what the old
-            # implementation guarded against with max(x1, ...).
+            # implementation guarded against with max(x1, ...).  The glyph box
+            # is taller than the requested line height, so the offset uses a
+            # factor rather than the size itself.
             label = str(index)
             label_w = len(label) * int(self._CORNER_NUM_PX * 0.55)
+            label_h = int(self._CORNER_NUM_PX * 1.45)
             nx = max(det.x, det.x + det.w - label_w - 2)
-            ny = max(det.y, det.y + det.h - self._CORNER_NUM_PX - 2)
+            ny = max(det.y, det.y + det.h - label_h)
             items.append(Text(nx, ny, label, self._CORNER_NUM_PX, _COLOR_BLUE))
             if det.mask_stats is not None:
                 items.extend(self._mask_primitives(det))
