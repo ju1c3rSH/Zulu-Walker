@@ -121,6 +121,19 @@ io: { inputs: { image: "data" }, outputs: { pred: "output" } }
 
 产物不进 git（`.gitignore` 已排除 `.onnx/.param/.bin/.mud/.pt`），manifest 与 labels 保留在仓库里。
 
+**本机可用的转换器与它们各自的结果**（2026-11 实测）：
+
+| 转换器 | 输入 | 结果 |
+|---|---|---|
+| `onnx2ncnn` | onnx | **不可用**：ncnn 只发布运行库，转换器要源码编译（本机没有 cmake / MSVC / g++） |
+| `pnnx`（PyPI 包，PATH 上有 `pnnx.exe`） | onnx | **翻译不了**：ONNX 导入器对 YOLO11 头部的 `Expand` 报 `todo Expand` 后崩溃（Windows 异常码 `0xc0000409`） |
+| `pnnx` | TorchScript（ultralytics 导出） | **能转但不等价**：图能加载能跑，输出却是 21×8400，而模型是 84×8400（头部 4 个分支的 Concat 被翻译错） |
+| `pnnx` | pnnx 自己的 ONNX 中间产物 | **不可用**：pnnx 的 ONNX 导入器拒绝自己的产物（`Missing opset in the model`） |
+
+`scripts/convert_ncnn.py` 现在会把这几种失败**分别**报出来（不支持的算子、崩溃的异常码、非零退出码），不会再"看起来成功"。
+
+**结论**：真实 YOLO11n 的 ncnn 工件要用 `onnx2ncnn`（或能正确翻译该头部的更新版 pnnx）产出。在此之前 ncnn 侧只有微型模型对这一级别的证据。
+
 ## 6. 等价性验证
 
 `scripts/check_engine_equivalence.py` 做**双档**比对：
@@ -168,7 +181,7 @@ python scripts/check_engine_equivalence.py --synthetic   # 微型模型对, 不�
 | 桌面主程序端到端启动 | 通过 | `python run.py main --config configs/project_config.desktop.yaml`：开摄像头、持续出检测框 |
 | 无串口启动 | 通过 | 同上；串口缺席只打印 `UART creation failed (non-fatal)`，应用照常运行 |
 | ncnn 适配器（微型模型对） | 通过 | 与 ORT 的最大绝对误差 1.5e-05 |
-| ncnn 适配器（真实 YOLO11n） | **未验证** | 本机没有 `onnx2ncnn`/`pnnx`，也没有 C++ 工具链（cmake / MSVC / g++），产不出真实的 `.param` + `.bin`；ncnn 的 io 绑定目前只有微型模型对这一级别的证据 |
+| ncnn 适配器（真实 YOLO11n） | **未验证** | 本机没有 `onnx2ncnn`（需源码编译），`pnnx` 的 ONNX 导入器遇 `Expand` 崩溃、TorchScript 路线产出**形状错误**的图（21×8400 ≠ 84×8400）；ncnn 的 io 绑定目前只有微型模型对这一级别的证据 |
 | ORT ↔ ncnn 真实模型等价性 | **未验证** | 同上；跨引擎等价性目前只有微型模型对级别的证据，真模型的等价性要等转换工具链就位后补 |
 
 **未验证项的处理方式**：转换工具链缺失是**离线工具链**问题，不进运行时框架，也不靠放宽工件要求来绕过——真 `.param`/`.bin` 产出后，`scripts/convert_ncnn.py` 会回显 blob 名，回填 manifest 的 `io` 即可接入现役路径，代码零改动。

@@ -8,6 +8,12 @@ neither the names nor the shapes of the tensors, so the manifest is the only
 declaration of the io mapping and it must be written from what the tool
 produced.
 
+The script also reads the converter's own complaints.  pnnx prints "todo
+<Op>" for every operation it cannot translate and then dies on the graph, so
+a conversion that "succeeded" quietly is not possible: the report says which
+operations were refused.  A converter that crashes is reported as a crash
+rather than as a silent failure.
+
 Usage:
     python scripts/convert_ncnn.py --onnx deploy/models/yolo11n/yolo11n.onnx
     python scripts/convert_ncnn.py --onnx <f.onnx> --converter C:/tools/onnx2ncnn.exe
@@ -35,6 +41,9 @@ if str(REPO_ROOT) not in sys.path:
 
 CONVERTER_NAMES = ("onnx2ncnn", "onnx2ncnn.exe", "pnnx", "pnnx.exe")
 
+# The marker pnnx prints for an operation it refuses to translate.
+UNSUPPORTED_MARKER = "todo "
+
 
 def _find_converter(explicit: str) -> Optional[Path]:
     """Locate the ncnn conversion tool."""
@@ -53,20 +62,60 @@ def _find_converter(explicit: str) -> Optional[Path]:
     return None
 
 
-def _run_converter(converter: Path, onnx_path: Path, out_dir: Path) -> bool:
-    """Run the converter and report whether it produced the artifacts."""
+def _artifacts_of(converter: Path, onnx_path: Path, out_dir: Path) -> tuple[Path, Path]:
+    """The .param and the .bin the converter writes for this tool."""
     name = converter.name.lower()
     if name.startswith("onnx2ncnn"):
-        param = out_dir / (onnx_path.stem + ".param")
-        binary = out_dir / (onnx_path.stem + ".bin")
-        command = [str(converter), str(onnx_path), str(param), str(binary)]
-    else:
-        param = out_dir / (onnx_path.stem + ".ncnn.param")
-        binary = out_dir / (onnx_path.stem + ".ncnn.bin")
-        command = [str(converter), str(onnx_path)]
+        return (
+            out_dir / (onnx_path.stem + ".param"),
+            out_dir / (onnx_path.stem + ".bin"),
+        )
+    return (
+        out_dir / (onnx_path.stem + ".ncnn.param"),
+        out_dir / (onnx_path.stem + ".ncnn.bin"),
+    )
+
+
+def _run_converter(converter: Path, onnx_path: Path, out_dir: Path) -> bool:
+    """Run the converter and report whether it produced the artifacts."""
+    param, binary = _artifacts_of(converter, onnx_path, out_dir)
+    # The converter runs inside the output directory, so the input has to be
+    # named by an absolute path.
+    source = str(onnx_path.resolve())
+    command = [str(converter), source]
+    if converter.name.lower().startswith("onnx2ncnn"):
+        command = [str(converter), source, str(param.resolve()), str(binary.resolve())]
     print("running:", " ".join(command))
-    result = subprocess.run(command, cwd=str(out_dir))
+    result = subprocess.run(
+        command, cwd=str(out_dir), capture_output=True, text=True, errors="replace"
+    )
+    output = (result.stdout or "") + (result.stderr or "")
+    if output.strip():
+        print(output.strip())
+    refused = sorted(
+        {
+            line.split(UNSUPPORTED_MARKER, 1)[1].strip()
+            for line in output.splitlines()
+            if UNSUPPORTED_MARKER in line
+        }
+    )
+    if refused:
+        print(
+            "the converter refused these operations and cannot translate this "
+            f"graph: {', '.join(refused)}"
+        )
+    if result.returncode < 0:
+        print(f"the converter crashed with signal {-result.returncode}")
+        return False
+    if 0xC0000000 <= result.returncode <= 0xC000FFFF:
+        print(
+            "the converter crashed with the Windows exception code "
+            f"{hex(result.returncode)}; it most likely met an operation it "
+            "cannot translate"
+        )
+        return False
     if result.returncode != 0:
+        print(f"the converter failed with exit code {result.returncode}")
         return False
     if not param.is_file() or not binary.is_file():
         print(f"the converter did not produce {param.name} and {binary.name}")
@@ -115,7 +164,13 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     if not _run_converter(converter, onnx_path, out_dir):
         return 1
-    _print_blob_names(out_dir / (onnx_path.stem + ".param"))
+    param, _ = _artifacts_of(converter, onnx_path, out_dir)
+    _print_blob_names(param)
+    print(
+        "  then check the numbers against the reference engine:\n"
+        f"    python scripts/check_engine_equivalence.py --manifest <manifest> "
+        f"--frames assets/golden"
+    )
     return 0
 
 
