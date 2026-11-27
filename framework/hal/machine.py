@@ -47,6 +47,7 @@ class Machine:
         sys_info: Optional[object] = None,
         platform: Optional[str] = None,
         battery: Optional[Battery] = None,
+        canvas_factory: Optional[object] = None,
     ) -> None:
         self.camera_hub = camera_hub
         self.display = display
@@ -56,6 +57,9 @@ class Machine:
         # Platform capability hooks (probed via getattr, never hard imports):
         self.exit_check = exit_check
         self.sys_info = sys_info
+        # Turns a frame into a UI Canvas; None on a platform without one, in
+        # which case the vision module simply renders no HUD.
+        self.canvas_factory = canvas_factory
         # Optional fuel gauge: an instance on platforms with a PMU/sysfs gauge,
         # None elsewhere. Constructed in create(), so the main loop is untouched.
         self.battery = battery
@@ -108,6 +112,9 @@ class Machine:
         exit_factory = getattr(platform_mod, "create_exit_check", None)
         exit_check = exit_factory() if callable(exit_factory) else None
         source_resolver = getattr(platform_mod, "resolve_camera_source", None)
+        canvas_factory = getattr(platform_mod, "create_canvas", None)
+        if not callable(canvas_factory):
+            canvas_factory = None
         sysinfo_factory = getattr(platform_mod, "create_sys_info", None)
         try:
             sys_info = sysinfo_factory() if callable(sysinfo_factory) else None
@@ -239,6 +246,7 @@ class Machine:
             sys_info=sys_info,
             platform=platform,
             battery=battery,
+            canvas_factory=canvas_factory,
         )
 
     def close(self) -> None:

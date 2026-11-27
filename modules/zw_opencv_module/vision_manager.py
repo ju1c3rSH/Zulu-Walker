@@ -17,6 +17,7 @@ import yaml
 from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference
 from framework.slot import Slot
+from framework.ui.overlay import Circle, Line, Overlay, Rect, Text
 from utils.log_util import log_print
 
 from .pipeline_camera import PipelineCamera
@@ -26,16 +27,25 @@ profiler._enabled = False
 
 _module_dir = os.path.dirname(__file__)
 
+# Overlay colours.  These mirror the firmware constants the drawing code used
+# before the HUD became primitives, so the device screen looks unchanged.
+_COLOR_BLACK = (0, 0, 0)
+_COLOR_WHITE = (255, 255, 255)
+_COLOR_RED = (255, 0, 0)
+_COLOR_GREEN = (0, 255, 0)
+_COLOR_BLUE = (0, 0, 255)
+_COLOR_YELLOW = (255, 255, 0)
+
 
 class VisionManager:
-    _LIST_TEXT_SCALE = 1.6
-    _LIST_TEXT_THICKNESS = 2
+    _LIST_TEXT_PX = 24
     _LIST_MAX_LINES = 8
     _BOX_THICKNESS = 1
-    _CORNER_NUM_SCALE = 1.2
-    _CORNER_NUM_THICKNESS = 1
+    _CORNER_NUM_PX = 18
 
-    def __init__(self, camera_hub: CameraHub, config_path: str = None, ai: Optional[AIInference] = None) -> None:
+    def __init__(self, camera_hub: CameraHub, config_path: str = None,
+                 ai: Optional[AIInference] = None,
+                 canvas_factory: Optional[Callable[[Any], Any]] = None) -> None:
         self._hub = camera_hub
         self._config_path = config_path or os.path.join(
             _module_dir, "config", "vision_config.yaml"
@@ -77,57 +87,20 @@ class VisionManager:
         # loop jitter. 0.05s -> 20fps.
         self._CAPTURE_INTERVAL_S: float = 0.05
 
-        self._exit_icon = None
-        self._exit_icon_size: int = 0
-        self._exit_icon_margin: int = 0
-
-        self._calib_button_icon = None
-        self._calib_button_size: int = 48
-        self._calib_button_margin: int = 12
-        self._calib_button_visible: bool = False
-        self._calib_flash_until: float = 0.0
-        self._calib_flash_rect = None  # (x, y, w, h)
-
-        self._fill_light_on: bool = False
-        self._fill_light_icon_on = None
-        self._fill_light_icon_off = None
-        self._fill_light_size: int = 48
-        self._fill_light_controller = None  # callable(bool) -> bool
-
-        self._rail_draw_enabled: bool = False
-        self._rail_provider = None  # callable() -> RailCalibration or None
-        self._rail_ppc: float = 50.0
-        self._rail_cm_interval: float = 1.0
+        # The HUD is described as primitives and rendered by the platform's
+        # Canvas, so this class never touches a pixel API and the same list of
+        # primitives can be asserted in a test without a camera.
+        self._canvas_factory = canvas_factory
+        self._overlay = Overlay()
+        self._hud_error_logged = False
 
         # Detection-list overlay (top-left text list).  Off for competition
-        # (display.detection_list: false) to avoid per-frame draw_string cost.
+        # (display.detection_list: false) to avoid per-frame text cost.
         self._detection_list_enabled: bool = True
 
-        self._test_id: int = 0
         self._hdr_prefix: str = ""
-        self._test_str_cached: str = ""
         self._time_str_cached: str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
         self._time_counter: int = 0
-
-        # Persistent header buffer + one cache slot per fragment.
-        # The 32px bar (black background, FPS, time, test id) is composed by
-        # blitting opaque RGB888 text sprites onto ONE persistent RGB888 buffer,
-        # allocated once (or on width change) and reused across rebuilds. Each
-        # fragment is re-rasterised only when its string changes.
-        self._header_bmp = None
-        self._header_dirty = True
-        self._hdr_fps_last: Optional[float] = None
-        self._hdr_width: int = 0
-        self._hdr_fps_sprite = None
-        self._hdr_fps_text: str = ""
-        self._hdr_time_sprite = None
-        self._hdr_time_text: str = ""
-        self._hdr_test_sprite = None
-        self._hdr_test_text: str = ""
-
-        # cm-ruler label sprites: each numeric label pre-rendered once into a
-        # transparent RGBA8888 sprite and blitted each frame.
-        self._cm_label_sprites: Dict[str, Any] = {}
 
         self._aec_enabled: bool = False
         self._aec_cam_id: str = ""
@@ -153,94 +126,14 @@ class VisionManager:
         """
         self._detection_list_enabled = bool(enabled)
 
-    def set_rail_draw(self, enabled: bool, provider=None,
-                      pixels_per_cm: float = 50.0,
-                      cm_interval: float = 1.0) -> None:
-        """Enable/disable test-time rail overlay drawing.
+    def set_canvas_factory(self, factory: Optional[Callable[[Any], Any]]) -> None:
+        """Set (or clear) the factory that turns a frame into a Canvas.
 
-        *provider* is a callable returning a ``RailCalibration`` (or None),
-        evaluated lazily each frame so Phase-2 origin updates are reflected.
-        ``pixels_per_cm`` / ``cm_interval`` drive the simulated cm ruler ticks
-        drawn along the rail axis from the origin (for verifying the physical
-        pixel-per-cm figure against the real ruler).
+        The platform supplies it, so this module never imports a drawing
+        backend.  ``None`` disables HUD rendering without touching the result
+        path.
         """
-        self._rail_draw_enabled = bool(enabled)
-        self._rail_provider = provider
-        self._rail_ppc = float(pixels_per_cm) if pixels_per_cm > 0 else 50.0
-        self._rail_cm_interval = float(cm_interval) if cm_interval > 0 else 1.0
-
-    def set_exit_icon(self, icon, icon_size: int = 48, margin: int = 12) -> None:
-        self._exit_icon = icon
-        self._exit_icon_size = icon_size
-        self._exit_icon_margin = margin
-
-    def set_calib_button(self, icon, size: int = 48, margin: int = 12) -> None:
-        self._calib_button_icon = icon
-        self._calib_button_size = size
-        self._calib_button_margin = margin
-
-    def set_calib_button_visible(self, v: bool) -> None:
-        self._calib_button_visible = v
-
-    def set_fill_light_button(self, icon_on, icon_off, size: int = 48) -> None:
-        self._fill_light_icon_on = icon_on
-        self._fill_light_icon_off = icon_off
-        self._fill_light_size = size
-
-    def set_fill_light_controller(self, controller) -> None:
-        self._fill_light_controller = controller
-
-    def set_fill_light_state(self, on: bool) -> None:
-        self._fill_light_on = bool(on)
-
-    def get_fill_light_state(self) -> bool:
-        return self._fill_light_on
-
-    def get_fill_light_button_rect(self) -> Optional[tuple]:
-        if self._display_frame is None:
-            return None
-        if self._fill_light_icon_on is None or self._fill_light_icon_off is None:
-            return None
-        frame = self._display_frame
-        w = frame.width()
-        h = frame.height()
-        size = self._fill_light_size
-        bx = (w - size) // 2
-        by = h - size - 8
-        return (bx, by, size, size)
-
-    def toggle_fill_light(self) -> Optional[bool]:
-        """Toggle the fill light. Returns the new state on success, None on failure."""
-        target = not self._fill_light_on
-        if self._fill_light_controller is None:
-            return None
-        try:
-            ok = self._fill_light_controller(target)
-        except Exception:
-            return None
-        if not ok:
-            return None
-        self._fill_light_on = target
-        return self._fill_light_on
-
-    def get_calib_button_rect(self) -> Optional[tuple]:
-        if self._display_frame is None or not self._calib_button_visible:
-            return None
-        frame = self._display_frame
-        w = frame.width()
-        h = frame.height()
-        size = self._calib_button_size
-        margin = self._calib_button_margin
-        bx = w - size - margin
-        by = h - size - 8
-        return (bx, by, size, size)
-
-    def trigger_calib_flash(self, bbox: tuple) -> None:
-        self._calib_flash_until = time.monotonic() + 1.0
-        self._calib_flash_rect = bbox
-
-    def set_test_id(self, test_id: int) -> None:
-        self._test_id = test_id
+        self._canvas_factory = factory
 
     def start(self) -> None:
         if self._running:
@@ -471,24 +364,52 @@ class VisionManager:
             self._last_display_serial = serial if serial is not None else -1
             self._last_display_rebuild = time.monotonic()
             disp = raw_img.copy()
-            if self._rail_draw_enabled:
-                self._draw_rail(disp, detections)
-            if ai_ok:
-                self._draw_overlays(disp, pid, fps, detections)
-            if ai_error_code:
-                self._draw_ai_error_banner(disp, ai_error_code)
-            elif not ai_ok:
-                self._draw_ai_fault_banner(disp)
-            if getattr(pipe.camera, "is_reconnecting", False):
-                self._draw_camera_fault_banner(disp)
-            if self._calib_button_visible:
-                self._draw_calib_button(disp)
-            self._draw_calib_flash(disp)
-            self._draw_fill_light_button(disp)
-            self._draw_exit_icon(disp)
+            if self._canvas_factory is not None:
+                width = self._frame_width(disp)
+                self._overlay.clear()
+                if ai_ok:
+                    self._overlay.add(*self._header_primitives(pid, fps, width))
+                    self._overlay.add(*self._detection_primitives(detections))
+                    if self._detection_list_enabled:
+                        self._overlay.add(
+                            *self._detection_list_primitives(detections)
+                        )
+                if ai_error_code:
+                    self._overlay.add(
+                        *self._fault_primitives("ai_error", width, ai_error_code)
+                    )
+                elif not ai_ok:
+                    self._overlay.add(*self._fault_primitives("ai_fault", width))
+                if getattr(pipe.camera, "is_reconnecting", False):
+                    self._overlay.add(*self._fault_primitives("camera", width))
+                try:
+                    self._overlay.render(self._canvas_factory(disp))
+                except Exception:
+                    # A broken HUD must not take the vision thread with it: the
+                    # loop guard would drop result delivery to 1 Hz.  Log once,
+                    # then keep the frames flowing without the overlay.
+                    if not self._hud_error_logged:
+                        logger.warning("HUD render failed; continuing without it",
+                                       exc_info=True)
+                        self._hud_error_logged = True
             self._display_frame = disp
             self._maybe_push_capture(disp)
             return
+
+    @staticmethod
+    def _frame_width(frame) -> int:
+        """The pixel width of a frame, maix Image or ndarray.
+
+        The overlay only needs the width for the header bar, so it is read
+        here instead of passing a size object through every primitive helper.
+        """
+        getter = getattr(frame, "width", None)
+        if callable(getter):
+            return int(getter())
+        shape = getattr(frame, "shape", None)
+        if shape is not None and len(shape) >= 2:
+            return int(shape[1])
+        return 0
 
     def _maybe_push_capture(self, frame) -> None:
         """Push *frame* to the capture sink on the fixed cadence.
@@ -505,201 +426,29 @@ class VisionManager:
                 self._capture_last = now
             self._capture_sink(frame)
 
-    def _draw_rail(self, img, detections) -> None:
-        """Test overlay: draw the calibrated rail axis, origin, ball projection,
-        and simulated cm ruler ticks (for verifying pixels_per_cm)."""
-        if not self._rail_draw_enabled:
-            return
-        provider = self._rail_provider
-        if provider is None:
-            return
-        try:
-            import maix.image
-        except ImportError:
-            return
-        try:
-            calib = provider()
-            if calib is None or not getattr(calib, "calibrated", False):
-                return
-            w = img.width()
-            h = img.height()
-            ox = float(calib.origin_x)
-            oy = float(calib.origin_y)
-            dx = float(calib.dir_cos)
-            dy = float(calib.dir_sin)
-            L = int((w * w + h * h) ** 0.5)
-            x0 = int(ox - dx * L)
-            y0 = int(oy - dy * L)
-            x1 = int(ox + dx * L)
-            y1 = int(oy + dy * L)
-            img.draw_line(x0, y0, x1, y1,
-                          color=maix.image.COLOR_GREEN, thickness=2)
-            img.draw_circle(int(ox), int(oy), 5,
-                            color=maix.image.COLOR_RED, thickness=2)
+    def _fault_primitives(self, kind: str, width: int, code: str = "") -> List[Any]:
+        """The banner for one fault, in frame coordinates.
 
-            # Simulated cm ruler: from the origin, along +/- rail direction,
-            # draw a perpendicular tick every pixels_per_cm * cm_interval.
-            self._draw_cm_ruler(img, ox, oy, dx, dy, w, h)
-
-            if detections:
-                ball = max((d for d in detections if d.class_id == 0),
-                           key=lambda d: d.score, default=None)
-                if ball is not None:
-                    cx = ball.x + ball.w / 2
-                    cy = ball.y + ball.h / 2
-                    dist = calib.project(cx, cy)
-                    px = int(ox + dist * dx)
-                    py = int(oy + dist * dy)
-                    if 0 <= px < w and 0 <= py < h:
-                        img.draw_circle(px, py, 4,
-                                        color=maix.image.COLOR_YELLOW, thickness=-1)
-        except Exception:
-            pass
-
-    def _draw_cm_ruler(self, img, ox, oy, dx, dy, w, h) -> None:
-        """Draw axis-perpendicular cm ticks with numeric labels.
-
-        Ticks extend about 20 px on either side of the rail axis. Off-frame
-        coordinates are skipped. Labels are cached once as transparent
-        RGBA8888 sprites and blitted each frame.
+        A fault has to be visible on the display: an empty detection list
+        looks exactly like an empty scene, and a silent AI failure is
+        indistinguishable from "nothing there".
         """
-        import maix.image
-        step = self._rail_ppc * self._rail_cm_interval
-        if step <= 0:
-            return
-        tick_half = 20  # ~half the ruler tick length in px
-        px0 = -dy * tick_half  # perpendicular (up) component
-        py0 = dx * tick_half
-        n_max = int((w + h) / max(step, 1.0)) + 1
-        n_max = min(n_max, 60)  # hard cap against degenerate configs
-        for k in range(1, n_max + 1):
-            for sign in (1, -1):
-                t = sign * k * step
-                cx = int(ox + t * dx)
-                cy = int(oy + t * dy)
-                if not (0 <= cx < w and 0 <= cy < h):
-                    continue
-                img.draw_line(cx - int(px0), cy - int(py0),
-                              cx + int(px0), cy + int(py0),
-                              color=maix.image.COLOR_WHITE, thickness=2)
-                label = str(int(round(sign * k * self._rail_cm_interval)))
-                sprite = self._get_cm_label_sprite(label, maix.image)
-                if sprite is not None:
-                    try:
-                        # Text sits at sprite-local (1,1); blit so the glyph
-                        # lands at the same spot as the old draw_string.
-                        img.draw_image(cx + 1, cy - 5, sprite)
-                    except Exception:
-                        pass
-
-    def _make_rgb_text_sprite(self, text: str, maix_image,
-                              scale=1, thickness=1) -> Optional[Any]:
-        """Rasterise *text* onto an opaque black-background RGB888 sprite.
-
-        Used for the header fragments: the header bar is itself black, so an
-        opaque black sprite with white glyphs blits seamlessly onto it.  This
-        avoids the RGBA8888 alpha path (draw_string on an RGBA canvas is
-        unreliable on this platform) while keeping the same single-slot cache
-        behaviour.
-        """
-        try:
-            size = maix_image.string_size(text, scale=scale, thickness=thickness)
-            lw = size[0] + 4
-            lh = size[1] + 2
-            sprite = maix_image.Image(lw, lh, maix_image.Format.FMT_RGB888,
-                                      bg=maix_image.COLOR_BLACK)
-            sprite.draw_string(1, 1, text,
-                               color=maix_image.COLOR_WHITE, scale=scale, thickness=thickness)
-            return sprite
-        except Exception:
-            return None
-
-    def _make_rgba_text_sprite(self, text: str, maix_image,
-                               scale=1, thickness=1) -> Optional[Any]:
-        """Rasterise *text* onto a transparent RGBA8888 sprite, or None.
-
-        Transparent background (alpha=0) with opaque white glyphs (alpha=0xFF),
-        per the MaixPy draw-transparent-image pattern.  Used by the cm ruler
-        labels; callers cache the result.
-        """
-        try:
-            size = maix_image.string_size(text, scale=scale, thickness=thickness)
-            lw = size[0] + 4
-            lh = size[1] + 2
-            sprite = maix_image.Image(lw, lh, maix_image.Format.FMT_RGBA8888)
-            sprite.draw_string(1, 1, text,
-                               color=maix_image.COLOR_WHITE, scale=scale, thickness=thickness)
-            for y in range(lh):
-                for x in range(lw):
-                    pix = sprite.get_pixel(x, y)
-                    val = pix[0] & 0x00ffffff
-                    if val != 0:
-                        val = val | 0xff000000
-                    sprite.set_pixel(x, y, [val])
-            return sprite
-        except Exception:
-            return None
-
-    def _get_cm_label_sprite(self, label: str, maix_image) -> Optional[Any]:
-        """Return a cached transparent RGBA8888 sprite for a cm label, or None.
-
-        On first use the label is rasterised onto a transparent background
-        (per the MaixPy draw-transparent-image pattern), then cached; later
-        frames only blit.  Any failure returns None so the caller can degrade
-        gracefully (label simply not drawn).
-        """
-        cached = self._cm_label_sprites.get(label)
-        if cached is not None:
-            return cached
-        sprite = self._make_rgba_text_sprite(label, maix_image, scale=1, thickness=1)
-        if sprite is not None:
-            self._cm_label_sprites[label] = sprite
-        return sprite
-
-    def _draw_camera_fault_banner(self, img) -> None:
-        try:
-            import maix.image
-        except ImportError:
-            return
-        w = img.width()
-        bar_h = 32
-        y = 40
-        try:
-            img.draw_rect(0, y, w, bar_h, color=maix.image.COLOR_YELLOW, thickness=-1)
-            img.draw_string(6, y + 2, "CAMERA FAULT - RECONNECTING",
-                            color=maix.image.COLOR_BLACK, scale=1.0, thickness=1)
-        except Exception:
-            pass
-
-    def _draw_ai_fault_banner(self, img) -> None:
-        try:
-            import maix.image
-        except ImportError:
-            return
-        w = img.width()
-        bar_h = 32
-        try:
-            img.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_RED, thickness=-1)
-            img.draw_string(6, 2, "AI FAULT - MODEL NOT LOADED",
-                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
-        except Exception:
-            pass
-
-    def _draw_ai_error_banner(self, img, code: str = "") -> None:
-        """Show an AI failure with its error code on the display."""
-        try:
-            import maix.image
-        except ImportError:
-            return
-        w = img.width()
-        bar_h = 32
-        text = f"AI FAULT - {code}" if code else "AI FAULT"
-        try:
-            img.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_RED, thickness=-1)
-            img.draw_string(6, 2, text,
-                            color=maix.image.COLOR_WHITE, scale=1.2, thickness=1)
-        except Exception:
-            pass
+        if kind == "camera":
+            text = "CAMERA FAULT - RECONNECTING"
+            top, background, ink = 40, _COLOR_YELLOW, _COLOR_BLACK
+            size = 15
+        elif kind == "ai_error":
+            text = f"AI FAULT - {code}" if code else "AI FAULT"
+            top, background, ink = 0, _COLOR_RED, _COLOR_WHITE
+            size = 18
+        else:
+            text = "AI FAULT - MODEL NOT LOADED"
+            top, background, ink = 0, _COLOR_RED, _COLOR_WHITE
+            size = 18
+        return [
+            Rect(0, top, width, 32, background, fill=True),
+            Text(6, top + 2, text, size, ink),
+        ]
 
     def _adjust_exposure(self) -> None:
         if not self._aec_enabled:
@@ -776,280 +525,86 @@ class VisionManager:
         except Exception:
             logger.warning("AEC adjust_exposure failed", exc_info=True)
 
-    def _draw_overlays(self, img, pipeline_id: str, fps: float, detections) -> None:
-        try:
-            import maix.image
-        except ImportError:
-            return
+    def _header_primitives(self, pipeline_id: str, fps: float, width: int) -> List[Any]:
+        """The top bar: pipeline id + fps on the left, clock centred.
 
-        self._draw_header(img, pipeline_id, fps)
-        self._draw_detections(img, detections, maix.image)
-        if self._detection_list_enabled:
-            self._draw_detection_list(img, detections, maix.image)
-
-    def _draw_header(self, img, pipeline_id: str, fps: float) -> None:
-        try:
-            import maix.image
-        except ImportError:
-            return
-        w = img.width()
-        bar_h = 32
+        The clock string is refreshed once per second, not once per frame:
+        reading the clock is the cost, drawing three strings is not.
+        """
         if not self._hdr_prefix:
             self._hdr_prefix = f"{pipeline_id}  FPS:"
-
-        # Update cached strings on a 1 Hz cadence (same as before). The time
-        # change must also mark the header dirty, otherwise the clock could go
-        # stale/frozen if fps happens to be stable.
         self._time_counter += 1
-        if self._time_counter % 60 == 0:
+        if self._time_counter == 1 or self._time_counter % 60 == 0:
             self._time_str_cached = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-            self._header_dirty = True
+        return [
+            Rect(0, 0, width, 32, _COLOR_BLACK, fill=True),
+            Text(6, 2, f"{self._hdr_prefix}{fps:.1f}", 18, _COLOR_WHITE),
+            Text(width // 2, 2, self._time_str_cached, 18, _COLOR_WHITE,
+                 align="center"),
+        ]
 
-        # Rebuild the header bitmap only when its content changed.
-        if self._header_bmp is None or w != self._hdr_width:
-            self._header_dirty = True
-        if fps != self._hdr_fps_last:
-            self._hdr_fps_last = fps
-            self._header_dirty = True
-        if self._test_id > 0:
-            test_str = f"Record Round: {self._test_id}"
-            if test_str != self._test_str_cached:
-                self._test_str_cached = test_str
-                self._header_dirty = True
+    def _detection_list_primitives(self, detections) -> List[Any]:
+        """The optional top-left list of detections.
 
-        if self._header_dirty:
-            try:
-                # Allocate the persistent buffer once (or on width change);
-                # reuse it across rebuilds to avoid per-second allocation.
-                if self._header_bmp is None or w != self._hdr_width:
-                    self._header_bmp = maix.image.Image(
-                        w, bar_h, maix.image.Format.FMT_RGB888,
-                        bg=maix.image.COLOR_BLACK)
-                    self._hdr_width = w
-                bmp = self._header_bmp
-                try:
-                    bmp.draw_rect(0, 0, w, bar_h, color=maix.image.COLOR_BLACK, thickness=-1)
-                except Exception:
-                    pass
-
-                # FPS fragment (single-slot cache).
-                fps_text = f"{self._hdr_prefix}{fps:.1f}"
-                if fps_text != self._hdr_fps_text:
-                    self._hdr_fps_text = fps_text
-                    self._hdr_fps_sprite = self._make_rgb_text_sprite(
-                        fps_text, maix.image, scale=1.2, thickness=1)
-                if self._hdr_fps_sprite is not None:
-                    try:
-                        # Sprite text sits at local (1,1); blit at (5,1) so the
-                        # glyph lands at the old draw_string(6,2) position.
-                        bmp.draw_image(5, 1, self._hdr_fps_sprite)
-                    except Exception:
-                        pass
-
-                # Time fragment (single-slot cache).
-                if self._time_str_cached != self._hdr_time_text:
-                    self._hdr_time_text = self._time_str_cached
-                    self._hdr_time_sprite = self._make_rgb_text_sprite(
-                        self._time_str_cached, maix.image, scale=1.2, thickness=1)
-                if self._hdr_time_sprite is not None:
-                    try:
-                        tw = self._hdr_time_sprite.width() - 4  # text width
-                        bmp.draw_image((w - tw) // 2, 1, self._hdr_time_sprite)
-                    except Exception:
-                        pass
-
-                # Test-id fragment (single-slot cache).
-                if self._test_id > 0:
-                    test_str = f"Record Round: {self._test_id}"
-                    if test_str != self._hdr_test_text:
-                        self._hdr_test_text = test_str
-                        self._hdr_test_sprite = self._make_rgb_text_sprite(
-                            test_str, maix.image, scale=1.2, thickness=1)
-                    if self._hdr_test_sprite is not None:
-                        try:
-                            tw = self._hdr_test_sprite.width() - 4  # text width
-                            bmp.draw_image(w - tw - 8, 1, self._hdr_test_sprite)
-                        except Exception:
-                            pass
-
-                self._header_dirty = False
-            except Exception:
-                self._header_bmp = None
-                self._header_dirty = True
-                return
-
-        if self._header_bmp is not None:
-            try:
-                img.draw_image(0, 0, self._header_bmp)
-            except Exception:
-                pass
-
-    def _draw_detection_list(self, img, detections, maix_image) -> None:
+        The line height is fixed because the font size is fixed; measuring
+        each line would only buy an alignment nobody can see.
+        """
         if not detections:
-            return
-        labels = self._ai.labels if hasattr(self._ai, "labels") and self._ai.labels else []
-
-        lines = []
-        line_h = 0
-        for i, det in enumerate(detections, start=1):
-            label_text = (
+            return []
+        labels = self._ai.labels if self._ai is not None else []
+        line_spacing = self._LIST_TEXT_PX + 4
+        items: List[Any] = []
+        for index, det in enumerate(detections, start=1):
+            if index > self._LIST_MAX_LINES:
+                items.append(Text(
+                    6, 34 + self._LIST_MAX_LINES * line_spacing,
+                    f"+{len(detections) - self._LIST_MAX_LINES} more",
+                    self._LIST_TEXT_PX, _COLOR_BLUE,
+                ))
+                break
+            label = (
                 labels[det.class_id]
                 if 0 <= det.class_id < len(labels)
                 else str(det.class_id)
             )
-            if i > self._LIST_MAX_LINES:
-                text = f"+{len(detections) - self._LIST_MAX_LINES} more"
-                lines.append(text)
-                break
-            else:
-                text = f"{i}: {label_text} {det.score:.2f}"
-                lines.append(text)
-            try:
-                size = maix_image.string_size(
-                    text, scale=self._LIST_TEXT_SCALE, thickness=self._LIST_TEXT_THICKNESS)
-                line_h = max(line_h, size[1])
-            except Exception:
-                line_h = max(line_h, 20)
+            items.append(Text(
+                6, 34 + (index - 1) * line_spacing,
+                f"{index}: {label} {det.score:.2f}",
+                self._LIST_TEXT_PX, _COLOR_BLUE,
+            ))
+        return items
 
-        line_spacing = line_h + 4
-        list_x = 6
-        list_y = 34
-        for idx, text in enumerate(lines):
-            try:
-                img.draw_string(list_x, list_y + idx * line_spacing, text,
-                                color=maix_image.COLOR_BLUE,
-                                scale=self._LIST_TEXT_SCALE,
-                                thickness=self._LIST_TEXT_THICKNESS)
-            except Exception:
-                pass
-
-    def _draw_detections(self, img, detections, maix_image) -> None:
-        for i, det in enumerate(detections, start=1):
-            x1, y1 = det.x, det.y
-            x2 = x1 + det.w
-            y2 = y1 + det.h
-
-            try:
-                img.draw_rect(x1, y1, det.w, det.h,
-                              color=maix_image.COLOR_GREEN, thickness=self._BOX_THICKNESS)
-            except Exception:
-                pass
-
-            num_text = str(i)
-            try:
-                num_size = maix_image.string_size(
-                    num_text, scale=self._CORNER_NUM_SCALE, thickness=self._CORNER_NUM_THICKNESS)
-                num_w, num_h = num_size[0], num_size[1]
-            except Exception:
-                num_w, num_h = 10, 10
-            pad = 2
-            nx = x2 - num_w - pad
-            ny = y2 - num_h - pad
-            nx = max(x1, nx)
-            ny = max(y1, ny)
-            try:
-                img.draw_string(nx, ny, num_text, color=maix_image.COLOR_BLUE,
-                                scale=self._CORNER_NUM_SCALE, thickness=self._CORNER_NUM_THICKNESS)
-            except Exception:
-                pass
-
+    def _detection_primitives(self, detections) -> List[Any]:
+        """One box plus its corner index, and the mask marker when present."""
+        items: List[Any] = []
+        for index, det in enumerate(detections, start=1):
+            items.append(Rect(
+                det.x, det.y, det.w, det.h, _COLOR_GREEN,
+                width=self._BOX_THICKNESS,
+            ))
+            # Clamp the index back into the box: a one-digit label in a 20 px
+            # box would otherwise be drawn outside it, which is what the old
+            # implementation guarded against with max(x1, ...).
+            label = str(index)
+            label_w = len(label) * int(self._CORNER_NUM_PX * 0.55)
+            nx = max(det.x, det.x + det.w - label_w - 2)
+            ny = max(det.y, det.y + det.h - self._CORNER_NUM_PX - 2)
+            items.append(Text(nx, ny, label, self._CORNER_NUM_PX, _COLOR_BLUE))
             if det.mask_stats is not None:
-                self._draw_mask_center(img, det)
-                self._draw_area_text(img, det, y2, maix_image)
+                items.extend(self._mask_primitives(det))
+        return items
 
-    @staticmethod
-    def _draw_area_text(img, det, y_below, maix_image) -> None:
+    def _mask_primitives(self, det) -> List[Any]:
+        """Mask centre dot and area label, for models that emit a mask."""
         stats = det.mask_stats
         if stats is None or stats.area_px == 0:
-            return
-        text = f"area:{stats.area_px}px"
-        try:
-            img.draw_string(det.x, y_below + 4, text, color=maix_image.COLOR_YELLOW, scale=1.5, thickness=2)
-        except Exception:
-            pass
-
-    @staticmethod
-    def _draw_mask_center(img, det) -> None:
-        try:
-            import maix.image
-        except ImportError:
-            return
-        stats = det.mask_stats
-        if stats is None or stats.area_px == 0:
-            return
-        cx = int(stats.center_x)
-        cy = int(stats.center_y)
-        try:
-            img.draw_circle(cx, cy, 3, color=maix.image.COLOR_RED, thickness=-1)
-        except Exception:
-            try:
-                img.draw_rect(cx - 2, cy - 2, 5, 5, color=maix.image.COLOR_RED, thickness=-1)
-            except Exception:
-                pass
-
-    def _draw_exit_icon(self, img) -> None:
-        if self._exit_icon is None:
-            return
-        try:
-            import maix.image as _mi
-            h = img.height()
-            by = h - self._exit_icon_size - 8
-            bx = self._exit_icon_margin
-            img.draw_rect(bx - 2, by - 2, self._exit_icon_size + 4,
-                          self._exit_icon_size + 4, color=_mi.COLOR_BLACK, thickness=-1)
-            img.draw_image(bx, by, self._exit_icon)
-        except Exception:
-            pass
-
-    def _draw_calib_button(self, img) -> None:
-        if self._calib_button_icon is None:
-            return
-        try:
-            import maix.image as _mi
-            h = img.height()
-            w = img.width()
-            size = self._calib_button_size
-            margin = self._calib_button_margin
-            bx = w - size - margin
-            by = h - size - 8
-            img.draw_rect(bx - 2, by - 2, size + 4,
-                          size + 4, color=_mi.COLOR_BLACK, thickness=-1)
-            img.draw_image(bx, by, self._calib_button_icon)
-        except Exception:
-            from utils.log_util import log_print
-            log_print("[CALIB] Button draw exception")
-
-    def _draw_fill_light_button(self, img) -> None:
-        if self._fill_light_icon_on is None or self._fill_light_icon_off is None:
-            return
-        try:
-            import maix.image as _mi
-            h = img.height()
-            w = img.width()
-            size = self._fill_light_size
-            bx = (w - size) // 2
-            by = h - size - 8
-            img.draw_rect(bx - 2, by - 2, size + 4,
-                          size + 4, color=_mi.COLOR_BLACK, thickness=-1)
-            icon = self._fill_light_icon_on if self._fill_light_on else self._fill_light_icon_off
-            img.draw_image(bx, by, icon)
-        except Exception:
-            from utils.log_util import log_print
-            log_print("[FILL_LIGHT] Button draw exception")
-
-    def _draw_calib_flash(self, img) -> None:
-        if time.monotonic() >= self._calib_flash_until:
-            return
-        if self._calib_flash_rect is None:
-            return
-        try:
-            import maix.image as _mi
-            rect = self._calib_flash_rect
-            img.draw_rect(int(rect[0]), int(rect[1]),
-                          int(rect[2]), int(rect[3]),
-                          color=_mi.COLOR_GREEN, thickness=3)
-        except Exception:
-            pass
+            return []
+        return [
+            Circle(int(stats.center_x), int(stats.center_y), 3, _COLOR_RED,
+                   fill=True),
+            Text(det.x, det.y + det.h + 4, f"area:{stats.area_px}px",
+                 22, _COLOR_YELLOW),
+        ]
 
     def drain_results(self):
         """Newest-wins result delivery: one Slot instead of a bounded deque.

@@ -88,6 +88,13 @@ def create_ai(engine: str = "", **kwargs) -> LinuxAI:
     return LinuxAI(engine or DEFAULT_ENGINE_ID, **kwargs)
 
 
+def create_canvas(frame):
+    """Wrap a BGR buffer so the vision module can draw the HUD onto it."""
+    from .canvas import CvCanvas
+
+    return CvCanvas(frame)
+
+
 def create_battery() -> "NullBattery":
     """Capability hook: return the -1 default on PCs, which have no fuel gauge."""
     from framework.hal.interface import NullBattery

@@ -94,6 +94,13 @@ def create_ai(
     )
 
 
+def create_canvas(frame):
+    """Wrap a maix Image so the vision module can draw the HUD onto it."""
+    from framework.hal.platforms.maix_canvas import MaixCanvas
+
+    return MaixCanvas(frame)
+
+
 def create_battery() -> MaixCam1Battery:
     return MaixCam1Battery()
 
