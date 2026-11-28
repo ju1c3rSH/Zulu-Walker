@@ -324,7 +324,7 @@ class VisionManager:
             return
         ai_ok = self._ai is not None and self._ai.loaded
         for pid, pipe in list(self._pipelines.items()):
-            raw_img = getattr(pipe.camera, "last_raw", None)
+            raw_img = self._frame_of(pipe.camera)
             if raw_img is None:
                 continue
             fps = self.get_pipeline_fps(pid)
@@ -395,6 +395,21 @@ class VisionManager:
             self._display_frame = disp
             self._maybe_push_capture(disp)
             return
+
+    @staticmethod
+    def _frame_of(camera) -> Any:
+        """The newest frame to compose the display from, whatever the platform holds.
+
+        ``last_raw`` is the platform's native buffer and is None wherever maix
+        does not exist (that is what the Camera protocol promises, and the
+        inference path relies on the distinction to pick its zero-copy route).
+        Display composition only needs "a frame that can be copied", so it
+        falls back to ``last_frame``, the BGR ndarray the capture thread kept.
+        """
+        frame = getattr(camera, "last_raw", None)
+        if frame is not None:
+            return frame
+        return getattr(camera, "last_frame", None)
 
     @staticmethod
     def _frame_width(frame) -> int:

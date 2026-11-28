@@ -62,8 +62,11 @@ class RecordingCanvas:
 
 
 class FakeCamera:
-    def __init__(self, raw=None, serial=None, reconnecting=False) -> None:
+    """A camera that can expose a native frame, an ndarray, or neither."""
+
+    def __init__(self, raw=None, frame=None, serial=None, reconnecting=False) -> None:
         self.last_raw = raw
+        self.last_frame = frame
         self.frame_serial = serial
         self.is_reconnecting = reconnecting
 
@@ -200,16 +203,50 @@ def test_the_display_frame_is_kept_even_without_a_renderer():
     assert manager._display_frame is not None
 
 
-def test_no_native_frame_means_no_render_and_no_copy():
+def test_no_frame_at_all_means_no_render_and_no_copy():
     manager = _manager()
     rendered = []
     manager._canvas_factory = lambda frame: rendered.append(frame) or RecordingCanvas()
-    manager._pipelines["p"] = FakePipe(FakeCamera(raw=None, serial=1))
+    manager._pipelines["p"] = FakePipe(FakeCamera(raw=None, frame=None, serial=1))
 
     manager._update_display_frame()
 
     assert rendered == []
     assert manager._display_frame is None
+
+
+def test_a_platform_without_native_frames_still_composes():
+    """Desktop cameras return None from last_raw; the display must still work.
+
+    The protocol says last_raw is None where maix does not exist, so a display
+    step that only reads last_raw never runs off the device.
+    """
+    manager = _manager()
+    canvas = RecordingCanvas()
+    manager._canvas_factory = lambda frame: canvas
+    manager._pipelines["p"] = FakePipe(
+        FakeCamera(raw=None, frame=FakeFrame(), serial=1)
+    )
+
+    manager._update_display_frame()
+
+    assert canvas.calls == ["rect", "text"]
+    assert manager._display_frame is not None
+
+
+def test_the_native_frame_wins_when_both_exist():
+    manager = _manager()
+    seen = []
+    manager._canvas_factory = lambda frame: seen.append(frame) or RecordingCanvas()
+    native = FakeFrame(width=100)
+    manager._pipelines["p"] = FakePipe(
+        FakeCamera(raw=native, frame=FakeFrame(width=200), serial=1)
+    )
+
+    manager._update_display_frame()
+
+    # The composed frame is the native one copied, so its width is 100.
+    assert seen and seen[0].width() == 100
 
 
 def test_a_fresh_frame_is_rendered_and_stored():

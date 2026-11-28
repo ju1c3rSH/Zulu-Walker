@@ -71,8 +71,20 @@ class _AI:
     labels = LABELS
 
 
+def _live_frame(source=0):
+    """Grab one frame from a local camera, or None when there is no camera."""
+    cap = cv2.VideoCapture(source)
+    try:
+        if not cap.isOpened():
+            return None
+        ok, frame = cap.read()
+        return frame if ok else None
+    finally:
+        cap.release()
+
+
 def render(detections, *, ai_ok=True, error="", reconnecting=False,
-           show_list=True) -> np.ndarray:
+           show_list=True, frame=None) -> np.ndarray:
     """Drive the real display step and return the composed BGR frame."""
     if error:
         result = SimpleNamespace(success=False, result_data={}, error_code=error)
@@ -87,7 +99,7 @@ def render(detections, *, ai_ok=True, error="", reconnecting=False,
     manager._ai = _AI() if ai_ok else None
     manager._detection_list_enabled = show_list
     manager._pipelines["cam_main"] = _Pipe(
-        _Camera(_frame(), reconnecting=reconnecting),
+        _Camera(_frame() if frame is None else frame, reconnecting=reconnecting),
         {"ai_inference": result} if result is not None else {},
     )
     manager._update_display_frame()
@@ -103,13 +115,28 @@ def _caption(image, text):
 
 
 def main() -> int:
-    out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "logs"
+    live = "--live" in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    out_dir = Path(args[0]) if args else ROOT / "logs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     detections = [
         _det(189, 274, 52, 52, 0, 0.91, area=2124),
         _det(413, 188, 34, 34, 1, 0.64),
     ]
+
+    if live:
+        frame = _live_frame()
+        if frame is None:
+            print("no camera available; falling back to the synthetic frame")
+        else:
+            composed = render(detections, frame=frame)
+            target = out_dir / "hud_live.png"
+            cv2.imwrite(str(target), _caption(
+                composed, "live camera frame, synthetic boxes"
+            ))
+            print(f"wrote {target}  ({composed.shape[1]}x{composed.shape[0]})")
+            return 0
 
     panels = [
         _caption(render(detections), "normal: header + boxes + list"),
