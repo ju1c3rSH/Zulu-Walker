@@ -15,7 +15,7 @@ import numpy as np
 import yaml
 
 from framework.hal.camera_hub import CameraHub
-from framework.hal.interface import AIInference
+from framework.hal.interface import AIInference, frame_for_display, frame_size
 from framework.slot import Slot
 from framework.ui.overlay import Circle, Line, Overlay, Rect, Text
 from utils.log_util import log_print
@@ -324,7 +324,7 @@ class VisionManager:
             return
         ai_ok = self._ai is not None and self._ai.loaded
         for pid, pipe in list(self._pipelines.items()):
-            raw_img = self._frame_of(pipe.camera)
+            raw_img = frame_for_display(pipe.camera)
             if raw_img is None:
                 continue
             fps = self.get_pipeline_fps(pid)
@@ -365,7 +365,7 @@ class VisionManager:
             self._last_display_rebuild = time.monotonic()
             disp = raw_img.copy()
             if self._canvas_factory is not None:
-                width = self._frame_width(disp)
+                width = frame_size(disp)[0]
                 self._overlay.clear()
                 if ai_ok:
                     self._overlay.add(*self._header_primitives(pid, fps, width))
@@ -395,36 +395,6 @@ class VisionManager:
             self._display_frame = disp
             self._maybe_push_capture(disp)
             return
-
-    @staticmethod
-    def _frame_of(camera) -> Any:
-        """The newest frame to compose the display from, whatever the platform holds.
-
-        ``last_raw`` is the platform's native buffer and is None wherever maix
-        does not exist (that is what the Camera protocol promises, and the
-        inference path relies on the distinction to pick its zero-copy route).
-        Display composition only needs "a frame that can be copied", so it
-        falls back to ``last_frame``, the BGR ndarray the capture thread kept.
-        """
-        frame = getattr(camera, "last_raw", None)
-        if frame is not None:
-            return frame
-        return getattr(camera, "last_frame", None)
-
-    @staticmethod
-    def _frame_width(frame) -> int:
-        """The pixel width of a frame, maix Image or ndarray.
-
-        The overlay only needs the width for the header bar, so it is read
-        here instead of passing a size object through every primitive helper.
-        """
-        getter = getattr(frame, "width", None)
-        if callable(getter):
-            return int(getter())
-        shape = getattr(frame, "shape", None)
-        if shape is not None and len(shape) >= 2:
-            return int(shape[1])
-        return 0
 
     def _maybe_push_capture(self, frame) -> None:
         """Push *frame* to the capture sink on the fixed cadence.

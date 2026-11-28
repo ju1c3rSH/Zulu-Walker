@@ -6,7 +6,7 @@ from typing import Optional
 
 import numpy as np
 
-from framework.hal.interface import AIInference, Detection
+from framework.hal.interface import AIInference, Detection, frame_size
 from framework.hal.interface.ai import (
     AIError,
     E_INFER_FAILED,
@@ -75,12 +75,21 @@ class AIInferenceProcessor(Processor):
         try:
             camera = (context or {}).get("camera")
             raw = getattr(camera, "last_raw", None)
+            source = raw if raw is not None else frame
+            w, h = frame_size(source)
+            if w <= 0 or h <= 0:
+                # An unmeasurable frame would make every box look like it sits
+                # on the edge, so filtering would drop all of them and still
+                # report success.  Refuse the frame instead.
+                return VisionResult(
+                    self.name, success=False,
+                    error_code=E_INVALID_INPUT,
+                    error_message="frame has no measurable size",
+                )
             if raw is not None:
                 detections = self._ai.detect(raw, _raw=True)
-                h, w = raw.height(), raw.width()
             else:
                 detections = self._ai.detect(frame)
-                h, w = frame.shape[:2]
         except AIError as e:
             logger.error("AIInferenceProcessor detect failed [%s]: %s", e.code, e)
             return VisionResult(

@@ -65,6 +65,7 @@ files:
   - framework\hal\interface\battery.py
   - framework\hal\interface\camera.py
   - framework\hal\interface\display.py
+  - framework\hal\interface\frame.py
   - framework\hal\interface\sink.py
   - framework\hal\interface\uart.py
   - framework\hal\interface\watchdog.py

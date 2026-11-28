@@ -33,6 +33,7 @@ from framework.hal.interface.ai import (
     ModelConfigError,
     ModelLoadError,
 )
+from framework.hal.interface.frame import frame_size
 from framework.inference import ops
 from framework.inference.contract import (
     ArtifactRef,
@@ -279,7 +280,7 @@ class ModelRuntime:
 
     def _bypass(self, frame: Any) -> PreprocessResult:
         """Pass the frame through untouched for a fully baked artifact."""
-        width, height = _frame_size(frame)
+        width, height = frame_size(frame)
         transform = GeometryTransform(
             mode="stretch",
             scale_x=1.0,
@@ -536,13 +537,3 @@ class ModelRuntime:
                 f"'{self._family}'",
                 E_MODEL_TYPE_UNSUPPORTED,
             )
-
-
-def _frame_size(frame: Any) -> tuple[int, int]:
-    """The pixel size of a frame, or (0, 0) for a frame without one."""
-    if isinstance(frame, np.ndarray):
-        return int(frame.shape[1]), int(frame.shape[0])
-    try:
-        return int(getattr(frame, "width", 0)), int(getattr(frame, "height", 0))
-    except (TypeError, ValueError):
-        return 0, 0

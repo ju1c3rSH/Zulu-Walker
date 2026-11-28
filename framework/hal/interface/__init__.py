@@ -29,6 +29,7 @@
 from .battery import Battery, BatteryReading, NullBattery
 from .camera import Camera
 from .display import Display
+from .frame import frame_for_display, frame_size
 from .sink import FrameSink, InputSource, SinkGroup
 from .uart import Uart
 from .watchdog import Watchdog
@@ -70,4 +71,6 @@ __all__ = [
     "Uart",
     "Watchdog",
     "filter_detections",
+    "frame_for_display",
+    "frame_size",
 ]

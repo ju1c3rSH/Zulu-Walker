@@ -187,12 +187,6 @@ def test_an_empty_detection_list_draws_nothing():
     assert manager._detection_list_primitives([]) == []
 
 
-def test_a_frame_width_comes_from_either_frame_kind():
-    assert VisionManager._frame_width(SimpleNamespace(width=lambda: 320)) == 320
-    assert VisionManager._frame_width(SimpleNamespace(shape=(480, 640, 3))) == 640
-    assert VisionManager._frame_width(object()) == 0
-
-
 def test_the_display_frame_is_kept_even_without_a_renderer():
     """No Canvas factory means no HUD, not no frame."""
     manager = _manager()
