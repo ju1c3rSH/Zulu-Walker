@@ -54,10 +54,9 @@ class MinimalLayout:
         m = Metrics.of((constraints.max_width, constraints.max_height))
         items: list[Primitive] = []
 
-        # A two-line header band: status on the left, fps on the right.
+        # A two-line header band: status on the left, fps on the right.  No
+        # plate behind the text - the layout draws over the image directly.
         band = m.bar_h * 2
-        items.append(Rect(0, 0, constraints.max_width, band, CARD, fill=True))
-
         status = f"{state.pipeline_id or 'CAM'}  {'OK' if state.ai_ok else 'FAULT'}"
         items.append(Text(m.pad, m.pad, status, m.text_big, OK if state.ai_ok else FAULT))
 
@@ -71,8 +70,9 @@ class MinimalLayout:
 
         # A footer bar this layout declares clickable.  The scene's hit box is
         # what makes that true: Pointer tests the boxes, not a button list.
+        # Outline only, for the same reason as the header: no fill.
         footer = Rect(m.pad, constraints.max_height - m.bar_h * 2,
-                      constraints.max_width - 2 * m.pad, m.bar_h, CARD, fill=True)
+                      constraints.max_width - 2 * m.pad, m.bar_h, CARD, fill=False)
         items.append(footer)
         items.append(Rect(footer.x, footer.y, footer.w, footer.h, ACCENT,
                           width=m.stroke))
