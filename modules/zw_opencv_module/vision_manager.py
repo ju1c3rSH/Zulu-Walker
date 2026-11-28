@@ -17,7 +17,8 @@ import yaml
 from framework.hal.camera_hub import CameraHub
 from framework.hal.interface import AIInference, frame_for_display, frame_size
 from framework.slot import Slot
-from framework.ui.overlay import Circle, Line, Overlay, Rect, Text
+from framework.ui.composer import HudComposer
+from framework.ui.view_state import ViewState
 from utils.log_util import log_print
 
 from .pipeline_camera import PipelineCamera
@@ -27,25 +28,12 @@ profiler._enabled = False
 
 _module_dir = os.path.dirname(__file__)
 
-# Overlay colours.  These mirror the firmware constants the drawing code used
-# before the HUD became primitives, so the device screen looks unchanged.
-_COLOR_BLACK = (0, 0, 0)
-_COLOR_WHITE = (255, 255, 255)
-_COLOR_RED = (255, 0, 0)
-_COLOR_GREEN = (0, 255, 0)
-_COLOR_BLUE = (0, 0, 255)
-_COLOR_YELLOW = (255, 255, 0)
-
 
 class VisionManager:
-    _LIST_TEXT_PX = 24
-    _LIST_MAX_LINES = 8
-    _BOX_THICKNESS = 1
-    _CORNER_NUM_PX = 18
-
     def __init__(self, camera_hub: CameraHub, config_path: str = None,
                  ai: Optional[AIInference] = None,
-                 canvas_factory: Optional[Callable[[Any], Any]] = None) -> None:
+                 canvas_factory: Optional[Callable[[Any], Any]] = None,
+                 layout_name: str = "device") -> None:
         self._hub = camera_hub
         self._config_path = config_path or os.path.join(
             _module_dir, "config", "vision_config.yaml"
@@ -62,21 +50,9 @@ class VisionManager:
         self._any_fresh = False
         self._results_slot: Slot = Slot()
         self._results_seen_gen: int = 0
-        self._display_frame = None
-        # Rebuild the display only when the sensor delivers a new frame
-        # (frame_serial changed), skipping the 1.29MB copy and full redraw on
-        # stale iterations.
-        self._last_display_serial: int = -1
-        # Even on a fresh frame, throttle the rebuild to
-        # _DISPLAY_REBUILD_INTERVAL_S. Result delivery via _results_slot does
-        # not depend on the display frame, so intermediate frames skip the
-        # 10-16ms copy. Consumers of a reused frame only read it.
-        self._DISPLAY_REBUILD_INTERVAL_S: float = 0.033  # ~30fps rebuild
-        self._DISPLAY_REBUILD_MIN_S: float = 0.033  # floor: never rebuild per frame
-        self._last_display_rebuild: float = 0.0
-        # With no LCD, nothing reads the composed frame, so rebuilding it is
-        # wasted work on the vision thread.
-        self._render_enabled: bool = True
+        # When to copy, when to redraw, which buffer to reuse - that is
+        # HudComposer's job.  This class only decides what the frame says.
+        self._composer: Optional[HudComposer] = None
 
         self._wdt_feed = lambda: None
         self._wdt_count = 0
@@ -87,20 +63,23 @@ class VisionManager:
         # loop jitter. 0.05s -> 20fps.
         self._CAPTURE_INTERVAL_S: float = 0.05
 
-        # The HUD is described as primitives and rendered by the platform's
-        # Canvas, so this class never touches a pixel API and the same list of
-        # primitives can be asserted in a test without a camera.
+        # The HUD is data: a layout turns ViewState into a Scene, the platform
+        # Canvas renders it.  Without a canvas factory there is no HUD at all,
+        # and nothing here knows what a pixel is.
         self._canvas_factory = canvas_factory
-        self._overlay = Overlay()
-        self._hud_error_logged = False
+        if canvas_factory is not None:
+            from framework.ui.layout import load as _load_layout
+
+            self._composer = HudComposer(canvas_factory, _load_layout(layout_name))
 
         # Detection-list overlay (top-left text list).  Off for competition
-        # (display.detection_list: false) to avoid per-frame text cost.
+        # (display.detection_list: false) to avoid the per-frame text cost.
         self._detection_list_enabled: bool = True
 
-        self._hdr_prefix: str = ""
-        self._time_str_cached: str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-        self._time_counter: int = 0
+        # Refreshed about once a second: reading the clock is the cost,
+        # drawing three strings is not.
+        self._clock_text: str = ""
+        self._clock_at: float = 0.0
 
         self._aec_enabled: bool = False
         self._aec_cam_id: str = ""
@@ -134,6 +113,8 @@ class VisionManager:
         path.
         """
         self._canvas_factory = factory
+        if self._composer is not None:
+            self._composer.set_canvas_factory(factory)
 
     def start(self) -> None:
         if self._running:
@@ -272,7 +253,16 @@ class VisionManager:
         return None, all_results, any_fresh
 
     def get_display_frame(self):
-        return self._display_frame
+        """The most recently composed frame, or None without a composer."""
+        return self._composer.frame if self._composer is not None else None
+
+    def get_composed(self):
+        """The latest composition (frame + scene + generation), or None.
+
+        Sinks take this instead of ``get_display_frame()``: the generation is
+        what tells them whether the content actually changed.
+        """
+        return self._composer.current() if self._composer is not None else None
 
     def set_render_enabled(self, enabled: Optional[bool]) -> None:
         """Turn display-frame composition on/off (``display_enabled``).
@@ -288,113 +278,74 @@ class VisionManager:
             publishes the composed frame - a headless project that still
             needs frames should read ``camera.last_raw`` directly instead.
         """
-        if enabled is None:
+        if enabled is None or self._composer is None:
             return
-        self._render_enabled = bool(enabled)
+        self._composer.set_enabled(bool(enabled))
 
     def set_display_cadence_ms(self, interval_ms: Optional[float]) -> None:
-        """Align the overlay rebuild window with the LCD present interval.
+        """Match the HUD rebuild window to the LCD present interval.
 
-        Args:
-            interval_ms: Present interval from ``display_show_interval_ms``.
-                ``None``/``0`` keep the built-in ~30fps window (unchanged
-                behaviour); a positive value sets the rebuild window to the
-                same period, floored at ~30fps.
-
-        Context:
-            Drawing at 30fps while the panel only presents 10 times a second
-            means two thirds of the copies are never shown. Matching both
-            cadences gives "draw one, show one". The floor keeps a very
-            small interval (say 16ms) from turning the vision loop into a
-            per-frame copy loop.
+        Drawing at 30fps while the panel presents 10 times a second means two
+        thirds of the copies are never shown; matching both cadences gives
+        "draw one, show one".  ``None`` keeps the built-in 30fps window.
         """
-        if interval_ms is None:
+        if interval_ms is None or self._composer is None:
             return
         try:
-            interval_s = float(interval_ms) / 1000.0
+            seconds = float(interval_ms) / 1000.0
         except (TypeError, ValueError):
             return
-        if interval_s <= 0.0:
-            self._DISPLAY_REBUILD_INTERVAL_S = self._DISPLAY_REBUILD_MIN_S
-            return
-        self._DISPLAY_REBUILD_INTERVAL_S = max(interval_s, self._DISPLAY_REBUILD_MIN_S)
+        self._composer.set_interval_ms(0 if seconds <= 0.0 else interval_ms)
 
     def _update_display_frame(self) -> None:
-        if not self._render_enabled:
+        """Compose one frame per pipeline; the composer decides whether to."""
+        if self._composer is None:
             return
         ai_ok = self._ai is not None and self._ai.loaded
         for pid, pipe in list(self._pipelines.items()):
-            raw_img = frame_for_display(pipe.camera)
-            if raw_img is None:
+            source = frame_for_display(pipe.camera)
+            if source is None:
                 continue
-            fps = self.get_pipeline_fps(pid)
-            ai_result = pipe.last_results.get("ai_inference")
-            detections = []
-            ai_error_code = ""
-            if ai_result is not None:
-                if ai_result.success:
-                    detections = ai_result.result_data.get("detections", [])
-                else:
-                    # A failed inference must be visible on the display: an
-                    # empty detection list is indistinguishable from an
-                    # empty scene.
-                    ai_error_code = getattr(ai_result, "error_code", "") or ""
+            composed = self._composer.compose(
+                source,
+                self._view_state(pid, pipe, ai_ok),
+                getattr(pipe.camera, "frame_serial", None),
+            )
+            if composed is not None:
+                self._maybe_push_capture(composed.frame)
 
-            serial = getattr(pipe.camera, "frame_serial", None)
-            if serial is not None and self._display_frame is not None \
-                    and serial == self._last_display_serial:
-                # No new sensor frame this iteration: skip the 1.29MB copy and
-                # the full redraw.  The display thread already skips the
-                # unchanged object by identity.  Still honour the capture
-                # cadence using the previous display frame.
-                self._maybe_push_capture(self._display_frame)
-                return
+    def _view_state(self, pid: str, pipe: PipelineCamera, ai_ok: bool) -> ViewState:
+        """Everything a layout needs from this pipeline, and nothing else."""
+        result = pipe.last_results.get("ai_inference")
+        detections: Tuple[Any, ...] = ()
+        error_code = ""
+        if result is not None:
+            if result.success:
+                detections = tuple(result.result_data.get("detections", ()))
+            else:
+                # A failed inference must look different from an empty scene,
+                # or a broken model is indistinguishable from a picture of
+                # nothing.
+                error_code = getattr(result, "error_code", "") or ""
+        return ViewState(
+            pipeline_id=pid,
+            fps=self.get_pipeline_fps(pid),
+            detections=detections,
+            labels=tuple(getattr(self._ai, "labels", ()) or ()),
+            ai_ok=ai_ok,
+            error_code=error_code,
+            reconnecting=bool(getattr(pipe.camera, "is_reconnecting", False)),
+            list_enabled=self._detection_list_enabled,
+            clock=self._clock_now(),
+        )
 
-            if self._display_frame is not None:
-                now = time.monotonic()
-                if now - self._last_display_rebuild < self._DISPLAY_REBUILD_INTERVAL_S:
-                    # Fresh frame inside the rebuild window: reuse the previous
-                    # display frame. Result delivery does not depend on it, so
-                    # the 10-16ms copy stays off the hot path. The reused frame
-                    # is only read by the display and capture sink, never mutated.
-                    self._last_display_serial = serial if serial is not None else -1
-                    self._maybe_push_capture(self._display_frame)
-                    return
-
-            self._last_display_serial = serial if serial is not None else -1
-            self._last_display_rebuild = time.monotonic()
-            disp = raw_img.copy()
-            if self._canvas_factory is not None:
-                width = frame_size(disp)[0]
-                self._overlay.clear()
-                if ai_ok:
-                    self._overlay.add(*self._header_primitives(pid, fps, width))
-                    self._overlay.add(*self._detection_primitives(detections))
-                    if self._detection_list_enabled:
-                        self._overlay.add(
-                            *self._detection_list_primitives(detections)
-                        )
-                if ai_error_code:
-                    self._overlay.add(
-                        *self._fault_primitives("ai_error", width, ai_error_code)
-                    )
-                elif not ai_ok:
-                    self._overlay.add(*self._fault_primitives("ai_fault", width))
-                if getattr(pipe.camera, "is_reconnecting", False):
-                    self._overlay.add(*self._fault_primitives("camera", width))
-                try:
-                    self._overlay.render(self._canvas_factory(disp))
-                except Exception:
-                    # A broken HUD must not take the vision thread with it: the
-                    # loop guard would drop result delivery to 1 Hz.  Log once,
-                    # then keep the frames flowing without the overlay.
-                    if not self._hud_error_logged:
-                        logger.warning("HUD render failed; continuing without it",
-                                       exc_info=True)
-                        self._hud_error_logged = True
-            self._display_frame = disp
-            self._maybe_push_capture(disp)
-            return
+    def _clock_now(self) -> str:
+        """The wall clock, refreshed about once a second."""
+        now = time.monotonic()
+        if not self._clock_text or now - self._clock_at >= 1.0:
+            self._clock_at = now
+            self._clock_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        return self._clock_text
 
     def _maybe_push_capture(self, frame) -> None:
         """Push *frame* to the capture sink on the fixed cadence.
@@ -410,194 +361,6 @@ class VisionManager:
             if self._capture_last < now - 2.0 * self._CAPTURE_INTERVAL_S:
                 self._capture_last = now
             self._capture_sink(frame)
-
-    def _fault_primitives(self, kind: str, width: int, code: str = "") -> List[Any]:
-        """The banner for one fault, in frame coordinates.
-
-        A fault has to be visible on the display: an empty detection list
-        looks exactly like an empty scene, and a silent AI failure is
-        indistinguishable from "nothing there".
-        """
-        if kind == "camera":
-            text = "CAMERA FAULT - RECONNECTING"
-            top, background, ink = 40, _COLOR_YELLOW, _COLOR_BLACK
-            size = 15
-        elif kind == "ai_error":
-            text = f"AI FAULT - {code}" if code else "AI FAULT"
-            top, background, ink = 0, _COLOR_RED, _COLOR_WHITE
-            size = 18
-        else:
-            text = "AI FAULT - MODEL NOT LOADED"
-            top, background, ink = 0, _COLOR_RED, _COLOR_WHITE
-            size = 18
-        return [
-            Rect(0, top, width, 32, background, fill=True),
-            Text(6, top + 2, text, size, ink),
-        ]
-
-    def _adjust_exposure(self) -> None:
-        if not self._aec_enabled:
-            return
-        cam = self._hub.get(self._aec_cam_id)
-        if cam is None:
-            log_print(f"AEC skipped: camera '{self._aec_cam_id}' not found")
-            return
-        # last_frame is a cached BGR ndarray from read_raw(); 3-channel required
-        frame = getattr(cam, "last_frame", None)
-        if frame is None:
-            log_print(f"AEC skipped: no frame from camera '{self._aec_cam_id}'")
-            return
-        try:
-            h, w = frame.shape[:2]
-            # ROI: [y0_frac, y1_frac, x0_frac, x1_frac] as fractions of height/width
-            # e.g. [0.4, 0.7, 0.0, 1.0] = middle 30% height, full width
-            roi = self._aec_cfg.get("roi", [0.4, 0.7, 0.0, 1.0])
-            if len(roi) != 4:
-                logger.warning("AEC: roi must have 4 elements, got %d", len(roi))
-                return
-            ry0 = max(0, min(h - 1, int(h * roi[0])))
-            ry1 = max(0, min(h, int(h * roi[1])))
-            rx0 = max(0, min(w - 1, int(w * roi[2])))
-            rx1 = max(0, min(w, int(w * roi[3])))
-            if ry1 <= ry0 or rx1 <= rx0:
-                log_print(f"AEC skipped: empty ROI slice [{ry0}:{ry1}, {rx0}:{rx1}]")
-                return
-            patch = frame[ry0:ry1, rx0:rx1]
-            # frame is BGR (see read_raw); COLOR_BGR2GRAY is correct
-            gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-            mean_val = float(np.mean(gray))
-
-            alpha = self._aec_cfg.get("ema_alpha", 0.1)
-            if self._aec_ema is None:
-                self._aec_ema = mean_val
-            else:
-                self._aec_ema = (1.0 - alpha) * self._aec_ema + alpha * mean_val
-
-            target = self._aec_cfg.get("target_mean", 80)
-            deadband = self._aec_cfg.get("deadband", 8)
-            err = target - self._aec_ema
-            if abs(err) <= deadband:
-                return
-
-            kp = self._aec_cfg.get("kp", 0.5)
-            ki = self._aec_cfg.get("ki", 0.05)
-
-            # clamp candidate gain first to decide if integrator should run
-            last_gain = getattr(cam, "last_gain", None)
-            if last_gain is None:
-                log_print(f"AEC skipped: last_gain unknown on '{self._aec_cam_id}'")
-                return
-            gain_min = self._aec_cfg.get("gain_min", 50)
-            gain_max = self._aec_cfg.get("gain_max", 600)
-            delta = kp * err
-            new_gain = int(last_gain + delta)
-            new_gain = max(gain_min, min(gain_max, new_gain))
-
-            # conditional integration: only accumulate when actuator is not saturated
-            if gain_min < new_gain < gain_max:
-                max_i = self._aec_cfg.get("max_i", 100)
-                self._aec_err_i += err
-                self._aec_err_i = max(-max_i, min(max_i, self._aec_err_i))
-                delta = kp * err + ki * self._aec_err_i
-                new_gain = int(last_gain + delta)
-                new_gain = max(gain_min, min(gain_max, new_gain))
-
-            if new_gain != last_gain:
-                setter = getattr(cam, "set_gain", None)
-                if setter is not None:
-                    ok = setter(new_gain)
-                    log_print(f"AEC: gain {last_gain}->{new_gain}  mean={mean_val:.1f}  ema={self._aec_ema:.1f}  err={err:.1f}  delta={delta:.1f}  ok={ok}")
-        except Exception:
-            logger.warning("AEC adjust_exposure failed", exc_info=True)
-
-    def _header_primitives(self, pipeline_id: str, fps: float, width: int) -> List[Any]:
-        """The top bar: pipeline id + fps on the left, clock on the right.
-
-        The clock is right-aligned rather than centred: the device font is a
-        narrow bitmap and the desktop font is Hershey, which is wide enough
-        that a centred clock runs into the fps field on a 640 px screen.  Two
-        anchored fields cannot collide, whatever the glyph widths are.
-
-        The clock string is refreshed once per second, not once per frame:
-        reading the clock is the cost, drawing three strings is not.
-        """
-        if not self._hdr_prefix:
-            self._hdr_prefix = f"{pipeline_id}  FPS:"
-        self._time_counter += 1
-        if self._time_counter == 1 or self._time_counter % 60 == 0:
-            self._time_str_cached = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        return [
-            Rect(0, 0, width, 32, _COLOR_BLACK, fill=True),
-            Text(6, 2, f"{self._hdr_prefix}{fps:.1f}", 18, _COLOR_WHITE),
-            Text(width - 8, 2, self._time_str_cached, 18, _COLOR_WHITE,
-                 align="right"),
-        ]
-
-    def _detection_list_primitives(self, detections) -> List[Any]:
-        """The optional top-left list of detections.
-
-        The line height is fixed because the font size is fixed; measuring
-        each line would only buy an alignment nobody can see.
-        """
-        if not detections:
-            return []
-        labels = self._ai.labels if self._ai is not None else []
-        line_spacing = self._LIST_TEXT_PX + 10
-        items: List[Any] = []
-        for index, det in enumerate(detections, start=1):
-            if index > self._LIST_MAX_LINES:
-                items.append(Text(
-                    6, 34 + self._LIST_MAX_LINES * line_spacing,
-                    f"+{len(detections) - self._LIST_MAX_LINES} more",
-                    self._LIST_TEXT_PX, _COLOR_BLUE,
-                ))
-                break
-            label = (
-                labels[det.class_id]
-                if 0 <= det.class_id < len(labels)
-                else str(det.class_id)
-            )
-            items.append(Text(
-                6, 34 + (index - 1) * line_spacing,
-                f"{index}: {label} {det.score:.2f}",
-                self._LIST_TEXT_PX, _COLOR_BLUE,
-            ))
-        return items
-
-    def _detection_primitives(self, detections) -> List[Any]:
-        """One box plus its corner index, and the mask marker when present."""
-        items: List[Any] = []
-        for index, det in enumerate(detections, start=1):
-            items.append(Rect(
-                det.x, det.y, det.w, det.h, _COLOR_GREEN,
-                width=self._BOX_THICKNESS,
-            ))
-            # Clamp the index back into the box: a one-digit label in a 20 px
-            # box would otherwise be drawn outside it, which is what the old
-            # implementation guarded against with max(x1, ...).  The glyph box
-            # is taller than the requested line height, so the offset uses a
-            # factor rather than the size itself.
-            label = str(index)
-            label_w = len(label) * int(self._CORNER_NUM_PX * 0.55)
-            label_h = int(self._CORNER_NUM_PX * 1.45)
-            nx = max(det.x, det.x + det.w - label_w - 2)
-            ny = max(det.y, det.y + det.h - label_h)
-            items.append(Text(nx, ny, label, self._CORNER_NUM_PX, _COLOR_BLUE))
-            if det.mask_stats is not None:
-                items.extend(self._mask_primitives(det))
-        return items
-
-    def _mask_primitives(self, det) -> List[Any]:
-        """Mask centre dot and area label, for models that emit a mask."""
-        stats = det.mask_stats
-        if stats is None or stats.area_px == 0:
-            return []
-        return [
-            Circle(int(stats.center_x), int(stats.center_y), 3, _COLOR_RED,
-                   fill=True),
-            Text(det.x, det.y + det.h + 4, f"area:{stats.area_px}px",
-                 22, _COLOR_YELLOW),
-        ]
 
     def drain_results(self):
         """Newest-wins result delivery: one Slot instead of a bounded deque.

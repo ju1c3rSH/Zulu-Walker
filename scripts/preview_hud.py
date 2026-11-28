@@ -103,7 +103,7 @@ def render(detections, *, ai_ok=True, error="", reconnecting=False,
         {"ai_inference": result} if result is not None else {},
     )
     manager._update_display_frame()
-    return manager._display_frame
+    return manager.get_display_frame()
 
 
 def _caption(image, text):

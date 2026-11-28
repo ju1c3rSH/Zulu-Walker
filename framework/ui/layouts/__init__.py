@@ -4,6 +4,6 @@ Importing a module here runs its ``register`` call, which is how
 ``framework.ui.layout`` finds them without a hard-coded table.
 """
 
-from framework.ui.layouts import desktop
+from framework.ui.layouts import desktop, device
 
-__all__ = ["desktop"]
+__all__ = ["desktop", "device"]

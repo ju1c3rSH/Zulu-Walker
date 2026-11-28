@@ -51,16 +51,19 @@ files:
   - framework\state_machine\bridge.py
   - framework\ui\__init__.py
   - framework\ui\canvas.py
+  - framework\ui\composer.py
   - framework\ui\hud.py
   - framework\ui\layout.py
   - framework\ui\layouts\__init__.py
   - framework\ui\layouts\desktop.py
+  - framework\ui\layouts\device.py
   - framework\ui\measurer.py
   - framework\ui\metrics.py
   - framework\ui\overlay.py
   - framework\ui\panel.py
   - framework\ui\scene.py
   - framework\ui\space.py
+  - framework\ui\view_state.py
   - framework\ui\widgets.py
   - framework\hal\__init__.py
   - framework\hal\battery_sampler.py

@@ -288,9 +288,9 @@ def _build_tick(manager, machine, cfg: dict = None, panel=None):
             panel.present()
             panel.pump()
             return
-        frame = live_vm.get_display_frame() if live_vm else None
-        if frame is not None:
-            sinks.push(frame)
+        composed = live_vm.get_composed() if live_vm else None
+        if composed is not None:
+            sinks.push(composed)
         sinks.flush()
 
     return tick
