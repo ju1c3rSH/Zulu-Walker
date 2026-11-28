@@ -52,8 +52,15 @@ files:
   - framework\ui\__init__.py
   - framework\ui\canvas.py
   - framework\ui\hud.py
+  - framework\ui\layout.py
+  - framework\ui\layouts\__init__.py
+  - framework\ui\layouts\desktop.py
+  - framework\ui\measurer.py
+  - framework\ui\metrics.py
   - framework\ui\overlay.py
   - framework\ui\panel.py
+  - framework\ui\scene.py
+  - framework\ui\space.py
   - framework\ui\widgets.py
   - framework\hal\__init__.py
   - framework\hal\battery_sampler.py

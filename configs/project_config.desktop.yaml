@@ -20,6 +20,7 @@ display:
   scale: 2                       # the window is panel x scale, fixed size
   title: "Zulu-Walker"
   # interval_ms: 33              # present throttle; absent = present every tick
+  # layout: "desktop"            # HUD layout; "module.path:ClassName" for your own
 
 cameras:
   - camera_id: "main"

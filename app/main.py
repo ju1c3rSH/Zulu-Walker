@@ -137,6 +137,7 @@ def _panel_of(machine, cfg: dict):
             title=str(disp.get("title", "Zulu-Walker")),
             headless=bool(disp.get("headless", False)),
             interval_ms=disp.get("interval_ms"),
+            layout_name=str(disp.get("layout", "desktop")),
         )
     except Exception as exc:
         log_print(f"[Panel] desktop panel creation failed: {exc}")

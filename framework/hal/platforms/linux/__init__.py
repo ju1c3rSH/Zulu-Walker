@@ -54,19 +54,28 @@ def create_display() -> LinuxDisplay:
 
 def create_panel(width: int = 640, height: int = 480, scale: int = 2,
                  title: str = "Zulu-Walker", headless: bool = False,
-                 interval_ms: Optional[float] = None):
+                 interval_ms: Optional[float] = None,
+                 layout_name: str = "desktop"):
     """The desktop panel: a cv2 window carrying the device HUD.
 
     Capability hook: a platform without a desktop window simply does not
     offer it, and the application falls back to the plain display sink.
     The panel is returned only when a window really opened, so a headless
     host gets None instead of a black rectangle nobody can see.
+
+    ``layout_name`` selects the HUD layout (``display.layout`` in the config);
+    a name the registry does not know raises rather than silently falling back.
     """
+    from framework.ui.layout import get as get_layout
+
+    get_layout(layout_name)  # an unknown name fails here, not on the first frame
+
     from .panel import DesktopPanel
 
     panel = DesktopPanel(
         width=width, height=height, scale=scale, title=title,
         headless=headless, interval_ms=interval_ms,
+        layout_name=layout_name,
     )
     return panel if panel.has_gui else None
 

@@ -64,6 +64,7 @@ class DesktopPanel:
         headless: bool = False,
         interval_ms: Optional[float] = None,
         buttons: Optional[Sequence[Button]] = None,
+        layout_name: str = "desktop",
     ) -> None:
         self._panel = Panel(int(width), int(height))
         self._window = CvWindow(
@@ -81,6 +82,7 @@ class DesktopPanel:
         )
         self._pressed = ""
         self._exit_requested = False
+        self._layout_name = layout_name
 
     # ------------------------------------------------------------------ #
     # state
@@ -133,6 +135,7 @@ class DesktopPanel:
             self._state_in_panel_space(state, hits, rect, frame),
             self._buttons,
             self._pressed,
+            layout_name=self._layout_name,
         )
         return self._buffer
 
