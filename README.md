@@ -1,23 +1,24 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Platforms](https://img.shields.io/badge/platform-maixcam2%20%7C%20linux%20%7C%20mock-orange.svg)](docs/architecture/hal.md)
-[![Architecture](https://img.shields.io/badge/architecture-HAL%20%2B%20state%20machine%20%2B%20event%20bus-lightgrey.svg)](docs/architecture/overview.md)
+[![Platforms](https://img.shields.io/badge/platform-MaixCAM%20%7C%20Linux%20%7C%20Windows-orange.svg)](#supported-platforms)
+[![Engines](https://img.shields.io/badge/engines-maix__nn%20%7C%20onnxruntime%20%7C%20ncnn-blueviolet.svg)](#inference-engines)
 [![Stars](https://img.shields.io/github/stars/ju1c3rSH/Zulu-Walker.svg?style=social)](https://github.com/ju1c3rSH/Zulu-Walker)
 [![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-lightgrey.svg)](LICENSE)
 
 # Zulu-Walker
 
-> A modular Python framework for vision-driven robotics on single-board computers and Sipeed MaixCAM2 boards - hardware abstraction, a generic state-machine engine, and a pluggable camera pipeline, with only the mission logic left to you.
+> A modular Python framework for vision-driven robotics - hardware abstraction, a generic state-machine engine, a pluggable inference kernel and a data-only HUD, with only the mission logic left to you.
 
 ## Table of Contents
 
 - [Status](#status)
 - [Features](#features)
+- [Supported Platforms](#supported-platforms)
+- [Inference Engines](#inference-engines)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
-- [Architecture](#architecture)
 - [Adding a Vision Solution](#adding-a-vision-solution)
-- [Deploying to MaixCAM2](#deploying-to-maixcam2)
+- [Deploying to MaixCAM](#deploying-to-maixcam)
 - [Development](#development)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
@@ -34,20 +35,47 @@ The core API is stable enough to build on, but expect churn while the contest ru
 ## Features
 
 - **Three-layer architecture** - `app/` holds your mission logic, `modules/` holds optional capabilities, `framework/` holds the reusable engine. The framework never imports application code.
-- **Hardware abstraction layer** - `Camera`, `Display`, `Uart`, `AIInference`, `Sink`, `Watchdog` and `SysInfo` are structural `Protocol`s, implemented by three backends: `maixcam2` (Axera AX630C NPU, MIPI CSI sensor, LCD, hardware watchdog), `linux` (V4L2 camera, pyserial, OpenCV window) and `mock` (no hardware, for CI).
+- **Hardware abstraction layer** - `Camera`, `Display`, `Uart`, `AIInference`, `FrameSink`, `Watchdog` and `SysInfo` are structural `Protocol`s with four backends: MaixCAM, Linux, Windows and `mock` (no hardware, for CI).
+- **Pluggable inference engines** - one `ai.engine` key selects `maix_nn` (board NPU), `onnxruntime` or `ncnn`. Engines are deployment configuration, not code branches: no candidate chain, no silent downgrade.
 - **Generic state machine engine** - `State` and `BaseStateMachine` support event-driven and return-value-driven transitions, a `run_to_completion()` cascade guard, per-state and global enter/exit callbacks, and `RLock`-protected state.
 - **Event bus** - typed publish/subscribe with thread-safe dispatch and a bounded history buffer.
 - **Module manager** - `init -> start -> loop -> stop` lifecycle, per-platform gating, a configurable tick rate, and discovery by package name.
-- **Vision pipeline** - capture to `image2cv` to serial task execution to a thread-safe result deque consumed by the main thread, with one NPU inference per frame.
-- **Opt-in vision solutions** - cargo, circle target, ring, QR, line following and pendulum rail calibration ship in the repository but stay dormant until you import them.
+- **Vision pipeline** - capture to `image2cv` to serial task execution, with results delivered through a latest-value slot consumed by the main thread.
+- **Data-only HUD** - a layout turns `ViewState` into a `Scene` of primitives plus hit boxes; the same layout renders through OpenCV or straight onto a `maix.Image`. Layouts are registered by name and can be replaced from configuration.
+- **Opt-in vision solutions** - cargo, circle target, ring, line-following and EOD-colour detectors ship in the repository but stay dormant until you import them.
 - **Framed UART protocol** - SOF, length, type, payload and CRC16-CCITT, parsed by a byte-level state machine that re-anchors on noise, plus command and data-stream frames for master/slave links.
 - **Debug console** - a Rich TUI with live status, performance gates and a key listener, running on any desktop terminal.
-- **Architecture guardrails** - platform-isolation and boot-scope checks run standalone and in pre-commit.
-- **No hard dependencies** - `numpy` and `pyyaml` only; `opencv`, `pyserial`, `rich` and `pyzbar` are optional platform extras.
+- **Architecture guardrails** - platform-isolation, boot-scope and device-package checks run standalone and in pre-commit.
+- **No hard dependencies** - `numpy` and `pyyaml` only; `opencv`, `pyserial`, `rich`, `onnxruntime` and `ncnn` are optional platform extras.
+
+## Supported Platforms
+
+| Platform | `platform` value | Camera | Display | Notes |
+|---|---|---|---|---|
+| MaixCAM2 | `maixcam2` | MIPI CSI (`maix.camera`) | 640×480 LCD (`maix.display`) | AX630C NPU, hardware watchdog, I2C gauge |
+| MaixCAM / Pro | `maixcam1` | MIPI CSI | 552×368 touchscreen | Same HAL contracts, smaller panel |
+| Linux | `linux` | V4L2 (`cv2.VideoCapture`) | OpenCV window | Panel UI with mouse input |
+| Windows | `linux` | DirectShow (`cv2.VideoCapture`) | OpenCV window | Reuses the linux backend; no serial required |
+| None | `mock` | synthetic frames | none | For CI and headless tests |
+
+Optional capabilities - watchdog, memory stats, exit check, panel - are probed by name on each platform, so a backend can add one without the framework knowing about it.
+
+## Inference Engines
+
+| Engine | `ai.engine` | Runs on | Artifact |
+|---|---|---|---|
+| MaixPy NPU | `maix_nn` | MaixCAM / MaixCAM2 | `.mud` + `manifest.yaml` |
+| ONNX Runtime | `onnxruntime` | Linux / Windows | `.onnx` + `manifest.yaml` |
+| ncnn | `ncnn` | Linux / Windows | `.param` / `.bin` + `manifest.yaml` |
+| Platform backend | *(omit the key)* | MaixCAM | `.mud` only, no manifest |
+
+`maix_nn`, `onnxruntime` and `ncnn` all run through the same kernel (`framework/inference/`): the manifest pins the artifact, the labels and the frame contract, so swapping an engine does not change calling code. Leaving `ai.engine` empty falls back to the platform's own backend, which reads `.mud` directly and ignores manifests.
+
+An engine named in configuration but unavailable fails at startup - there is no fallback chain. `python scripts/check_accelerators.py` reports which execution providers are actually live.
 
 ## Installation
 
-Python 3.10 or newer. MaixCAM2 runs MaixPy, which ships its own interpreter and the `maix` module.
+Python 3.10 or newer. MaixCAM runs MaixPy, which ships its own interpreter and the `maix` module.
 
 ```bash
 git clone https://github.com/ju1c3rSH/Zulu-Walker.git
@@ -55,7 +83,7 @@ cd Zulu-Walker
 python -m pip install -r requirements.txt
 ```
 
-Linux desktop or SBC extras (V4L2 camera, serial port, OpenCV window):
+Desktop extras (OpenCV window, serial port, inference engines):
 
 ```bash
 python -m pip install -r requirements-linux.txt
@@ -67,6 +95,7 @@ The checked-in `project_config.yaml` targets the MaixCAM2. On a desktop, set `pl
 
 ```bash
 python run.py main                          # run the application
+python run.py main --config configs/project_config.desktop.yaml
 python run.py debug line                    # interactive detector debuggers
 python run.py debug cargo -c 0 -W 640 -H 480
 ```
@@ -94,12 +123,11 @@ manager.run_main_loop(coordinator=MyCoordinator(bus))
 All hardware settings live in `project_config.yaml`:
 
 ```yaml
-platform: maixcam2            # maixcam2 | linux | mock
-display_enabled: true
+platform: maixcam2            # maixcam2 | maixcam1 | linux | mock
 
 cameras:
   - camera_id: "main"
-    source: null              # on-board sensor on MaixCAM2
+    source: null              # on-board sensor on MaixCAM
     width: 1280
     height: 352
     fps: 60
@@ -116,49 +144,23 @@ uart_defaults:
   baudrate: 921600
 
 ai:
+  engine: "maix_nn"           # maix_nn | onnxruntime | ncnn | omit for the platform backend
   models:
     - nick_name: "yolo11n"
-      model: "/root/models/steelball_1280x352.mud"
-      model_type: "auto"      # auto -> maix.nn.YOLO11
+      model: "/root/models/steelball_1280x352/steelball_1280x352.mud"
+      manifest: "/root/models/steelball_1280x352/manifest.yaml"
   active: "yolo11n"
+
+display:
+  backend: "panel"            # desktop only: an OpenCV window carrying the HUD
+  layout: "desktop"           # device | desktop | "module.path:ClassName"
 ```
 
-`platform` selects the backend. Optional capabilities - watchdog, memory stats, exit check - are probed by name on each platform, so a backend can add one without the framework knowing about it. `display_enabled: false` is a hard switch: the display is never created and the vision side stops composing frames.
+`platform` selects the backend. `display_enabled: false` is a hard switch: the display is never created and the vision side stops composing frames.
+
+The HUD layout is resolved by name at panel creation; an unknown name fails there rather than on the first frame. `examples/custom_layout.py` is a runnable example of providing your own - the layout class itself is about forty lines.
 
 Pipelines live in `modules/zw_opencv_module/config/vision_config.yaml`: each pipeline binds one camera to an ordered list of tasks, and every task can be toggled at runtime.
-
-## Architecture
-
-```
-.
-├── app/                    # application layer - your mission logic
-│   ├── main.py             # boot skeleton: watchdog -> Machine -> ModuleManager -> coordinator
-│   └── coordinator.py      # the per-project "dirty code" slot
-├── framework/              # reusable core, platform agnostic
-│   ├── hal/                # Protocol interfaces + platform backends
-│   ├── state_machine/      # State, BaseStateMachine, StateActionBridge
-│   ├── event_bus.py        # typed publish/subscribe
-│   ├── module_manager.py   # module lifecycle and main loop
-│   ├── cmd_queue.py        # thread-safe command queue
-│   ├── slot.py             # latest-value slot
-│   └── ui_state.py         # UI geometry model
-├── modules/                # optional, reusable capabilities
-│   ├── zw_opencv_module/   # camera pipeline, processors, detectors
-│   ├── zw_uart_module/     # framed UART transport
-│   └── zw_wifi_stream/     # JPEG streaming (MaixCAM2 only)
-├── utils/                  # logging, TUI debug console, CPU affinity, geometry
-├── deploy/maixcam/         # MaixPy package manifest and firmware entry point
-├── scripts/                # architecture fitness checks
-├── tests/                  # stdlib unittest suite
-└── project_config.yaml     # platform, camera, UART and AI configuration
-```
-
-How it fits together:
-
-- `framework/` never imports `maix`, `cv2` or `serial` outside `framework/hal/platforms/` - `scripts/check_platform_isolation.py` enforces this.
-- The main loop runs in the main thread on a 2 ms tick; capture and detection run in the vision thread; UART reception runs on a platform callback thread.
-- State machines are advanced only from the main thread. Other threads publish on the `EventBus` or push into a `Slot` / `CmdQueue`, and the coordinator drains them.
-- `app/coordinator.py` is the single project-specific file. Replacing it is the whole integration cost of a new mission.
 
 ## Adding a Vision Solution
 
@@ -172,11 +174,16 @@ enable_optional(["TrackCargoProcessor"])   # before pipelines start
 
 Then enable the matching task in `vision_config.yaml`. An unknown name raises `KeyError` at startup instead of silently doing nothing later.
 
-## Deploying to MaixCAM2
+## Deploying to MaixCAM
 
 1. Copy `deploy/maixcam/app.yaml` and `deploy/maixcam/main.py` into the repository root.
-2. Adjust the `files` list in `app.yaml`. The default ships the framework core; add `modules/zw_opencv_module/detectors/` and the matching processor only when your project uses them.
-3. Build the package with `maixpack` in the repository root, then copy the artifact to the board.
+2. Adjust the `files` list in `app.yaml`. It is an exact allow-list: a module that is imported but not listed is not shipped, and the failure appears only after flashing.
+3. Verify the list is a closed dependency set, then build with `maixpack`:
+
+```bash
+python scripts/check_package.py
+maixpack
+```
 
 Three rules keep the boot path safe on the device:
 
@@ -189,16 +196,16 @@ Three rules keep the boot path safe on the device:
 ```bash
 python -m pip install -r requirements-dev.txt    # pytest + pre-commit
 
-python -m unittest discover -s tests              # stdlib suite
-python -m pytest tests                            # pytest-style contracts
+python -m pytest tests -q                        # framework contracts
 python scripts/check_platform_isolation.py
 python scripts/check_boot_scope.py
+python scripts/check_package.py
 python -m compileall -q app framework modules utils
 ```
 
 All of them are wired into `.pre-commit-config.yaml`; `pre-commit install` runs them on every commit.
 
-The tracked suite covers the framework core: `Slot`, `CmdQueue`, `ui_state` and the LCD present cadence. The cadence contract test imports the `maixcam2` HAL, so it is skipped wherever the MaixPy runtime is missing; tests for competition features live on the branch that implements them.
+The tracked suite covers the framework core: `Slot`, `CmdQueue`, `ui_state`, the LCD present cadence, the frame accessors, the layout arithmetic, the composer and the pointer. Tests for competition features live on the branch that implements them.
 
 ## Documentation
 
@@ -209,6 +216,8 @@ The tracked suite covers the framework core: `Slot`, `CmdQueue`, `ui_state` and 
 - [State machines](docs/architecture/state_machine.md)
 - [Building applications](docs/architecture/building_apps.md)
 - [Framework guide](docs/architecture/framework-guide.md) - platform matrix, boot rules, opt-in solutions
+- [Inference kernel](docs/architecture/inference/) - engine / artifact / platform separation
+- [Desktop inference backends](docs/architecture/desktop_inference_backends.md)
 - [Competition notes and protocol specs](docs/competition/)
 
 Most documents are written in Chinese; code, comments and configuration keys are in English.
@@ -218,6 +227,8 @@ Most documents are written in Chinese; code, comments and configuration keys are
 Issues and pull requests are welcome at <https://github.com/ju1c3rSH/Zulu-Walker>.
 
 When touching `framework/`, keep it free of platform imports - `scripts/check_platform_isolation.py` fails the build otherwise. Prefer a capability hook that is probed by name over branching on the platform string, and keep new behaviour in `modules/` or `app/` when it is not generic.
+
+After adding an import anywhere in the boot path, run `scripts/check_package.py`: the device package is an allow-list, and a missing entry is invisible until the board fails to start.
 
 ## License
 
