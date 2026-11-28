@@ -1,7 +1,7 @@
-"""
-Pendulum rail calibrator.
-Detects the pendulum rail axis from a camera frame using OpenCV,
-providing a calibrated reference line for steel ball position projection.
+"""Calibrate the pendulum rail axis from a camera frame.
+
+Provide a RailCalibration reference line for projecting steel-ball positions
+onto the rail.
 """
 import cv2
 import numpy as np
@@ -123,9 +123,8 @@ class PendulumCalibrator:
         self._diag['gray_mean'] = float(np.mean(gray))
         self._diag['gray_std'] = float(np.std(gray))
 
-        # Primary: per-column centreline fit. Robust when the rail spans (or
-        # exceeds) the full frame width and when the background is washed out
-        # into a frame-filling blob that breaks minAreaRect (contour fallback).
+        # Primary stage: fit a per-column centreline. Handles rails spanning
+        # the frame width and washed-out backgrounds that break minAreaRect.
         rail_info = self._detect_rail_column_centroid(gray)
         if rail_info is not None:
             self._diag['method'] = 'column_centroid'
@@ -146,8 +145,8 @@ class PendulumCalibrator:
             self._diag['method'] = self._diag.get('method', 'none')
             return RailCalibration(calibrated=False)
 
-        # A failed primary stage leaves a stale fail_reason; clear it so the
-        # diagnostics reflect the stage that actually succeeded.
+        # Clear a stale failure reason so diagnostics reflect the stage that
+        # actually succeeded.
         self._diag.pop('fail_reason', None)
 
         center_x, center_y, angle_rad = rail_info
@@ -173,27 +172,20 @@ class PendulumCalibrator:
         )
 
     def _detect_rail_column_centroid(self, gray: np.ndarray):
-        """Per-column centreline fit (primary method).
+        """Fit a rail axis from per-column bottom-edge samples (primary method).
 
-        Binarise with a threshold that keeps only the bright PPR pipe
-        (excluding a washed-out background), then for each column take the
-        midpoint between the topmost/bottommost white pixel as a rail
-        centreline sample.  The threshold is tried in descending order
-        (``column_threshold`` first, then lower steps) so a dimmer pipe still
-        separates from the washed-out background.  The vertical white extent
-        is filtered adaptively against the per-frame median span rather than a
-        fixed window, so a curved pipe whose bright arc is only a thin band
-        (and ball occlusion / specular columns) is handled without tuning.
-        A least-squares line fit over the surviving samples yields the rail
-        axis, which stays correct even when the rail spans or exceeds the
-        frame width (a case where minAreaRect degrades to the frame rect).
+        Binarise to keep the bright pipe, then sample the bottom white pixel
+        of each column. Thresholds are tried in descending order so a dim
+        pipe still separates from a washed-out background, and the white
+        span is filtered against the per-frame median. A robust line fit over
+        the surviving samples yields the axis even when the rail spans the
+        full frame width, where minAreaRect degrades to the frame rectangle.
         """
         fw = gray.shape[1]
         fh = gray.shape[0]
         base_threshold = self._column_threshold
-        # Descending threshold ladder: keep the configured value as the first
-        # (brightest-isolation) attempt, then relax so a dim PPR pipe still
-        # yields a usable bright band above the washed-out background (~140).
+        # Try the configured threshold first for the brightest isolation,
+        # then relax so a dim pipe still separates from the background (~140).
         ladder = [base_threshold]
         for t in (150, 120):
             if t < base_threshold and t not in ladder:
@@ -223,32 +215,31 @@ class PendulumCalibrator:
 
         if xs is None or len(xs) < fw * 0.5:
             self._diag['column_points'] = len(xs) if xs is not None else 0
-            # Preserve the specific guardrail reason set by the sampler (e.g.
-            # column_median_height / column_off_band) under its own key so it
-            # survives the caller's generic overwrite and is visible on-device.
+            # Keep the sampler's specific guardrail reason under its own key
+            # so the caller's generic overwrite cannot hide it on-device.
             self._diag['column_fail_reason'] = self._diag.get('column_fail_reason', 'column_insufficient')
             self._diag['fail_reason'] = 'column_insufficient'
             return None
 
-        # Success: a higher threshold in the ladder may have set a guardrail
-        # reason before this (lower) threshold succeeded; clear it.
+        # A higher threshold may have set a guardrail reason before this
+        # lower threshold succeeded; clear it.
         self._diag.pop('column_fail_reason', None)
 
         n_pts = len(xs)
         self._diag['column_points'] = n_pts
 
-        # Bottom-edge samples, exposed for debug overlay drawing.
+        # Bottom-edge samples, exposed for the debug overlay.
         self._debug_column_points = list(zip(xs, ys))
 
         pts = np.array([(x, y) for x, y in zip(xs, ys)], dtype=np.float32)
         try:
-            # DIST_HUBER resists a few outlier columns (specular, ruler-notch
-            # shadow) pulling the least-squares line.
+            # DIST_HUBER limits the pull of a few outlier columns, such as
+            # specular highlights or ruler-notch shadows.
             vx, vy, cx, cy = cv2.fitLine(pts, cv2.DIST_HUBER, 0, 0.01, 0.01)
         except Exception:
             self._diag['column_fail_reason'] = 'column_fit_error'
             self._diag['fail_reason'] = 'column_insufficient'
-            # Fit failed: don't let the debug overlay draw dots over a
+            # Fit failed: suppress debug dots so they do not overlay a
             # contour-fallback result.
             self._debug_column_points = None
             return None
@@ -258,18 +249,16 @@ class PendulumCalibrator:
         cx = float(cx[0])
         cy = float(cy[0])
 
-        # cv2.fitLine returns an unoriented direction; normalise so the
-        # horizontal rail reads as angle_rad ~ 0 (dir_cos=1, dir_sin=0).
+        # cv2.fitLine returns an unoriented direction; flip it so a horizontal
+        # rail reads near angle 0 (dir_cos=1, dir_sin=0).
         if vx < 0:
             vx = -vx
             vy = -vy
         angle_rad = math.atan2(vy, vx)
 
-        # The fitted line lies on the rail BOTTOM edge; the rail axis (and the
-        # origin that sits on it) is med/2 above the bottom edge, along the
-        # perpendicular (vy, -vx) which points "up" toward the pipe centre in
-        # image coordinates (smaller y). For a near-horizontal rail (vy~0,
-        # vx~1) this yields (cx, cy - med/2).
+        # The fit lies on the rail's bottom edge. Move up by med/2 along the
+        # perpendicular (vy, -vx) to reach the axis; for a horizontal rail
+        # (vy~0, vx~1) this gives (cx, cy - med/2).
         off_x = vy * (med / 2.0)
         off_y = -vx * (med / 2.0)
         origin_x = cx + off_x
@@ -282,19 +271,15 @@ class PendulumCalibrator:
         return (origin_x, origin_y, angle_rad)
 
     def _sample_column_centroids(self, binary: np.ndarray, fw: int, fh: int):
-        """Per-column BOTTOM-edge samples with an adaptive median span window.
+        """Collect per-column bottom-edge samples within an adaptive span window.
 
-        Collects the topmost/bottommost white pixel per column, then accepts
-        columns whose white span sits within ``[0.6, 1.6] x median`` of the
-        per-frame median span.  Guardrails: the median span must be at least
-        5% of the frame height (rejects a frame-filling background blob), and
-        the fitted centroid must lie in the central band.
+        Accept columns whose white span lies within [0.6, 1.6] times the
+        per-frame median; reject a frame-filling blob via median height and
+        a mean y outside the central band. The bottom edge is used for the
+        fit because ruler ticks corrupt the top edge, which is still used
+        to compute the span.
 
-        Returns ``(xs, ys, med)`` where ``ys`` are the *bottom* white pixel
-        per column.  The bottom edge is used for the axis fit because the top
-        edge carries the 0.1 cm ruler ticks on the groove lip, whose dark
-        notches corrupt ``top``; the bottom edge is a clean, straight line.
-        ``top`` is still used to compute the span for median filtering.
+        Return (xs, ys, med), where ys holds the bottom white pixel per column.
         """
         spans = []
         tops = []
@@ -318,8 +303,8 @@ class PendulumCalibrator:
         med = float(statistics.median(spans))
         self._diag['column_median_h'] = round(med, 1)
 
-        # Reject a frame-filling background blob: a real rail occupies a
-        # minority of the frame height (curved pipe bright arc << fh).
+        # Reject a frame-filling blob: a real rail's bright arc is far shorter
+        # than the frame height.
         if med < fh * 0.05 or med > fh * 0.9:
             self._diag['column_fail_reason'] = 'column_median_height'
             return None, None, None
@@ -338,9 +323,8 @@ class PendulumCalibrator:
             return None, None, None
 
         mean_y = float(np.mean(ys))
-        # The bottom edge of the rail is expected in the lower-central band of
-        # the frame; a fit pulled far off-band indicates the bright region is
-        # not the rail.
+        # The rail bottom edge should sit in the lower-central band; a far
+        # off-band fit means the bright region is not the rail.
         if not (fh * 0.2 <= mean_y <= fh * 0.9):
             self._diag['column_fail_reason'] = 'column_off_band'
             return None, None, None
@@ -395,9 +379,9 @@ class PendulumCalibrator:
             self._diag['fail_reason'] = 'min_area'
             return None
 
-        # Reject a frame-filling blob (the original angle==0 bug): a washed-out
-        # background merging with the rail yields one contour covering ~60% of
-        # the frame; a real rail is at most ~1/3 of the frame height.
+        # Reject a frame-filling blob: a washed-out background merged with the
+        # rail forms one contour covering most of the frame, which previously
+        # produced an angle of zero.
         if area > max_allowed_area:
             self._diag['contour_area'] = int(area)
             self._diag['max_area_limit'] = int(max_allowed_area)
@@ -425,9 +409,9 @@ class PendulumCalibrator:
         self._diag['min_aspect_limit'] = self._min_aspect_ratio
         self._diag['contour_aspect_ok'] = ratio >= self._min_aspect_ratio
 
-        # min_aspect_ratio=1.0 is a deliberate neutral floor:
-        # at 1280x352 the rail may appear near-square due to perspective;
-        # min_contour_area_ratio + center-bounds are sufficient filters here.
+        # min_aspect_ratio=1.0 is a neutral floor: perspective can make the
+        # rail look near-square at 1280x352, where area and centre bounds
+        # already filter effectively.
         if ratio < self._min_aspect_ratio:
             self._diag['fail_reason'] = 'aspect_ratio'
             return None

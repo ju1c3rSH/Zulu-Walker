@@ -202,7 +202,7 @@ class CircleTargetDetector:
         return params
 
     def set_method_params(self, method: DetectMethod, params: dict):
-        pass  # handled by update_params
+        pass  # Parameters are applied through update_params.
 
     def update_params(self, params: dict):
         for key in (

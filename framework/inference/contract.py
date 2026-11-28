@@ -38,7 +38,15 @@ class TensorSpec:
 
 @dataclass(frozen=True)
 class Capabilities:
-    """What an engine can do, cross-checked against platform and model at load time."""
+    """What an engine can do, cross-checked against platform and model at load time.
+
+    device names the accelerator class ("cpu", "cuda", "vulkan", ...);
+    device_detail carries the concrete device the runtime actually bound,
+    such as the Vulkan device name and index, or the list of active
+    execution providers.  It is empty when the runtime reports nothing
+    beyond the class, and it exists because "vulkan" alone does not tell an
+    operator whether the integrated or the discrete GPU is in use.
+    """
 
     device: str
     quant: str
@@ -50,6 +58,7 @@ class Capabilities:
     load_holds_gil: bool
     memory_hint: str | None = None
     load_cost_hint: str | None = None
+    device_detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -118,6 +127,13 @@ class InferenceEngine(Protocol):
     engine_id: str
 
     def load(self, artifact: ArtifactRef, **opts: Any) -> None:
+        """Load the artifact the runtime bound to this engine.
+
+        ``opts`` is an open set rather than a schema: the runtime always
+        passes ``canonical`` and ``runtime``, and an engine consumes the
+        keys it understands and ignores the rest.  Rejecting an unknown key
+        would make every engine break the moment the framework adds one.
+        """
         ...
 
     def input_specs(self) -> list[TensorSpec]:

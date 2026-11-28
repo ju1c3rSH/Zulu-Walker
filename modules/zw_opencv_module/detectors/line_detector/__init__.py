@@ -1,7 +1,7 @@
-"""
-Line detector for black line following.
-Detects a black line on a light background using thresholding.
-Output: percent_error_x in [-5000, 5000], target_found bool
+"""Detect a dark line on a light background using thresholding.
+
+Set target_found when a line is present and report its horizontal offset as
+percent_error_x, clamped to [-5000, 5000].
 """
 import cv2
 import numpy as np

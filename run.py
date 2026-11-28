@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""
-Zulu-Walker 启动器
+"""Launch the Zulu-Walker application and detector debug tools.
 
-使用方法:
-    python run.py main                          # 运行主程序
-    python run.py debug [detector]              # 运行调试器
-    python run.py debug cargo                   # 物料块检测调试器
-    python run.py debug circle                  # 圆靶检测调试器
-    python run.py debug ring                    # 环检测调试器
-    python run.py debug line                    # 黑线循迹调试器
-    python run.py debug pendulum_calib          # 摆杆标定调试器
-    python run.py debug cargo -c 1              # 指定摄像头
-    python run.py debug cargo -W 1280 -H 720    # 指定分辨率
+Usage::
+
+    python run.py main                          # run the main program
+    python run.py debug [detector]              # run a detector debugger
+    python run.py debug cargo                   # cargo-block detector debugger
+    python run.py debug circle                  # circle-target detector debugger
+    python run.py debug ring                    # ring detector debugger
+    python run.py debug line                    # black-line tracker debugger
+    python run.py debug pendulum_calib          # pendulum calibration debugger
+    python run.py debug cargo -c 1              # select camera 1
+    python run.py debug cargo -W 1280 -H 720    # set frame resolution
 """
 import argparse
 import importlib
@@ -30,7 +30,7 @@ _RUNNER_MAP = {
     "circle": ("modules.zw_opencv_module.detectors.circle_target_detector.debug.runner", "CircleTargetDebugRunner"),
     "ring":   ("modules.zw_opencv_module.detectors.ring_detector.debug.runner", "RingDebugRunner"),
     "line":   ("modules.zw_opencv_module.detectors.line_detector.debug.runner", "LineDebugRunner"),
-    "pendulum_calib": ("modules.zw_opencv_module.detectors.pendulum_calibrator.debug.runner", "PendulumCalibDebugRunner"),
+    "pendulum_calib": ("tools.pendulum_calib.debug.runner", "PendulumCalibDebugRunner"),
 }
 
 
@@ -89,7 +89,13 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="mode", required=True, help="运行模式")
 
-    subparsers.add_parser("main", help="运行主程序")
+    main_parser = subparsers.add_parser("main", help="运行主程序")
+    main_parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="配置文件路径；缺省取环境变量 ZWULU_CONFIG, 再缺省为 project_config.yaml",
+    )
 
     debug_parser = subparsers.add_parser("debug", help="运行检测调试器")
     debug_parser.add_argument(
@@ -101,9 +107,14 @@ def main():
     debug_parser.add_argument("-W", "--width", type=int, default=640, help="画面宽度 (默认: 640)")
     debug_parser.add_argument("-H", "--height", type=int, default=480, help="画面高度 (默认: 480)")
 
-    _init_debug_console()
-
     args = parser.parse_args()
+
+    # The config selection must land before the console reads it, so the
+    # --config switch and the ZWULU_CONFIG variable mean the same thing.
+    if getattr(args, "config", None):
+        os.environ["ZWULU_CONFIG"] = args.config
+
+    _init_debug_console()
 
     try:
         if args.mode == "main":

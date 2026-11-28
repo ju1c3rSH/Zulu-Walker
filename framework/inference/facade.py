@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -85,6 +85,7 @@ class ModelEntry:
     manifest: ModelManifest
     artifact: ArtifactRef
     runtime: Optional[ModelRuntime] = None
+    runtime_options: dict[str, Any] = field(default_factory=dict)
 
 
 class AIFacade:
@@ -101,10 +102,12 @@ class AIFacade:
         switch_timeout_ms: int = DEFAULT_SWITCH_TIMEOUT_MS,
         frame_spec: Optional[FrameSpec] = None,
         engine_factory: Optional[Callable[[], InferenceEngine]] = None,
+        runtime_options: Optional[dict[str, Any]] = None,
     ) -> None:
         self._engine_id = engine_id
         self._switch_timeout_ms = int(switch_timeout_ms)
         self._frame_spec = frame_spec or DEFAULT_FRAME_SPEC
+        self._runtime_options = dict(runtime_options or {})
         self._engine_factory = engine_factory or (
             lambda: resolve_engine(engine_id)
         )
@@ -191,6 +194,23 @@ class AIFacade:
         """True while the facade runs but does not produce valid output."""
         return self._degraded
 
+    @property
+    def infer_fps(self) -> float:
+        """The inference rate of the active runtime, 0.0 while none ran.
+
+        The board backends report this from their own counters, so the
+        kernel exposes the same pair; a consumer that reads the attribute
+        must not have to know which backend it holds.
+        """
+        runtime = self._active
+        return runtime.stats.infer_fps if runtime is not None else 0.0
+
+    @property
+    def infer_avg_ms(self) -> float:
+        """The average inference time of the active runtime, 0.0 while none ran."""
+        runtime = self._active
+        return runtime.stats.infer_avg_ms if runtime is not None else 0.0
+
     def add(
         self,
         nick_name: str,
@@ -198,6 +218,7 @@ class AIFacade:
         model_type: str = "auto",
         *,
         manifest_path: Optional[str] = None,
+        runtime_options: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> bool:
         """Register a model without loading it.
@@ -205,6 +226,10 @@ class AIFacade:
         The manifest carries the frame contract of the model and declares
         the artifact of the configured engine.  A model file that disagrees
         with the manifest is a contract error, not a warning.
+
+        runtime_options is the accelerator choice of the deployment.  It is
+        merged over the block the artifact declares, and a model entry
+        without one inherits the facade wide choice.
         """
         if not manifest_path:
             raise ManifestError(
@@ -219,6 +244,7 @@ class AIFacade:
             model_type=model_type,
             manifest=manifest,
             artifact=artifact,
+            runtime_options=dict(runtime_options or {}),
         )
         with self._lock:
             self._entries[nick_name] = entry
@@ -278,11 +304,18 @@ class AIFacade:
         *,
         manifest_path: Optional[str] = None,
         nick_name: Optional[str] = None,
+        runtime_options: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> bool:
         """Register a model under a nick name and make it the active one."""
         nick = nick_name or "default"
-        self.add(nick, model_path, model_type, manifest_path=manifest_path)
+        self.add(
+            nick,
+            model_path,
+            model_type,
+            manifest_path=manifest_path,
+            runtime_options=runtime_options,
+        )
         return self.switch(nick)
 
     def unload(self) -> None:
@@ -456,11 +489,13 @@ class AIFacade:
     def _build_runtime(self, entry: ModelEntry) -> ModelRuntime:
         """Load the engine of a model and let its dialect build the capability."""
         engine = self._new_engine()
+        options = {**self._runtime_options, **entry.runtime_options}
         return ModelRuntime(
             engine,
             entry.artifact,
             manifest=entry.manifest,
             frame_spec=self._frame_spec,
+            runtime_options=options,
         )
 
     def _release(self, runtime: ModelRuntime) -> None:

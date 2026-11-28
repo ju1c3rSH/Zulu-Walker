@@ -1,85 +1,151 @@
 # -*- coding: utf-8 -*-
-"""
-相机焦距与距离计算工具
+"""Compute focal length, object distance and camera-frame coordinates.
 
-核心公式：
-- 像素焦距: fx = focal_length_mm * image_width / sensor_width_mm
-- 距离计算: distance = (real_size * focal_length_px) / pixel_size
-- 相机坐标: X = (x - cx) * Z / fx, Y = (y - cy) * Z / fy
+Core formulas:
+
+* focal length in pixels: ``fx = focal_length_mm * image_width / sensor_width_mm``
+* distance: ``distance = (real_size * focal_length_px) / pixel_size``
+* camera coordinates: ``X = (x - cx) * Z / fx``, ``Y = (y - cy) * Z / fy``
+
+This is the only implementation.  ``modules/zw_opencv_module/utils`` re-exports
+these names instead of keeping a second copy that drifts.
 """
 
+import math
 from dataclasses import dataclass
 from typing import Tuple
 
-# 目标实际尺寸 (mm)
+# Reference physical sizes in mm, as (width, height, average).
 reference_size_dict = {
-    "quad": (264.0, 177.0, 220.5),  # mm (宽, 高, 平均)
+    "quad": (264.0, 177.0, 220.5),  # mm (width, height, average)
 }
+
 
 @dataclass
 class CameraIntrinsics:
-    """相机内参"""
+    """Camera intrinsic parameters; the derived values follow the inputs.
+
+    They are properties rather than cached fields: a dataclass whose derived
+    fields can disagree with its inputs is a trap, and recomputing three
+    multiplications costs nothing next to the frame it is used with.
+    """
+
     focal_length_mm: float
     sensor_width_mm: float
     sensor_height_mm: float
     image_width: int
     image_height: int
 
-    # 计算得到的像素焦距
-    fx: float = 0.0  # x方向焦距(像素)
-    fy: float = 0.0  # y方向焦距(像素)
-    cx: float = 0.0  # 主点x坐标
-    cy: float = 0.0  # 主点y坐标
+    @property
+    def fx(self) -> float:
+        """Focal length along the x axis, in pixels."""
+        return self.focal_length_mm * self.image_width / self.sensor_width_mm
 
-    def __post_init__(self):
-        self.fx = self.focal_length_mm * self.image_width / self.sensor_width_mm
-        self.fy = self.focal_length_mm * self.image_height / self.sensor_height_mm
-        self.cx = self.image_width / 2.0
-        self.cy = self.image_height / 2.0
+    @property
+    def fy(self) -> float:
+        """Focal length along the y axis, in pixels."""
+        return self.focal_length_mm * self.image_height / self.sensor_height_mm
+
+    @property
+    def cx(self) -> float:
+        """X coordinate of the principal point, in pixels."""
+        return self.image_width / 2.0
+
+    @property
+    def cy(self) -> float:
+        """Y coordinate of the principal point, in pixels."""
+        return self.image_height / 2.0
 
 
 class FocalDistanceCalculator:
-    """焦距距离计算器"""
+    """Compute distances and coordinate conversions with a pinhole camera.
+
+    Distance uses similar triangles:
+    distance = focal_pixel * real_size / pixel_size
+    """
 
     def __init__(self, intrinsics: CameraIntrinsics):
         self.intrinsics = intrinsics
 
-    def calculate_distance(self, real_size_mm: float, pixel_size: float) -> float:
-        """
-        根据目标实际尺寸和像素尺寸计算距离
+    def calculate_distance(
+        self,
+        real_size_mm: float,
+        pixel_size: float,
+        use_average_focal: bool = False,
+    ) -> float:
+        """Return the distance to a target from its real and pixel sizes.
 
         Args:
-            real_size_mm: 目标实际尺寸 (mm)
-            pixel_size: 目标在图像中的像素尺寸
+            real_size_mm: Real size of the target in millimeters.
+            pixel_size: Apparent size of the target in pixels.
+            use_average_focal: Average fx and fy instead of using fx alone.
+                The default is fx only, which is what existing callers and
+                the distance figures they were tuned against assume.
 
         Returns:
-            目标到相机的距离 (mm)
+            Distance in millimeters, or 0 when pixel_size is not positive.
         """
         if pixel_size <= 0:
             return 0.0
-        return (real_size_mm * self.intrinsics.fx) / pixel_size
 
-    def pixel_to_camera_coords(self, pixel_x: float, pixel_y: float,
-                                distance_mm: float) -> Tuple[float, float, float]:
-        """
-        将像素坐标转换为相机坐标系下的坐标
+        if use_average_focal:
+            focal_pixel = (self.intrinsics.fx + self.intrinsics.fy) / 2.0
+        else:
+            focal_pixel = self.intrinsics.fx
 
-        Args:
-            pixel_x: 像素x坐标
-            pixel_y: 像素y坐标
-            distance_mm: 目标距离 (mm)
+        return (focal_pixel * real_size_mm) / pixel_size
+
+    def pixel_to_camera_coords(
+        self,
+        pixel_x: float,
+        pixel_y: float,
+        distance_mm: float,
+    ) -> Tuple[float, float, float]:
+        """Convert a pixel location to a 3D camera-frame coordinate.
+
+        The camera frame has its origin at the optical center, with X pointing
+        right, Y pointing down and Z pointing forward along the optical axis.
 
         Returns:
-            (X, Y, Z) 相机坐标系下的坐标 (mm)
-            X: 相机右侧为正
-            Y: 相机下方为正
-            Z: 相机前方为正（深度）
+            ``(X, Y, Z)`` in millimeters.
         """
-        fx, fy = self.intrinsics.fx, self.intrinsics.fy
-        cx, cy = self.intrinsics.cx, self.intrinsics.cy
+        dx = pixel_x - self.intrinsics.cx
+        dy = pixel_y - self.intrinsics.cy
+        z = distance_mm
+        return (dx * z / self.intrinsics.fx, dy * z / self.intrinsics.fy, z)
 
-        X = (pixel_x - cx) * distance_mm / fx
-        Y = (pixel_y - cy) * distance_mm / fy
-        Z = distance_mm
+    def camera_coords_to_pixel(
+        self,
+        x: float,
+        y: float,
+        z: float,
+    ) -> Tuple[float, float]:
+        """Convert a 3D camera-frame coordinate to a pixel location.
 
-        return (X, Y, Z)
+        Returns:
+            ``(pixel_x, pixel_y)``, or the principal point when z is not
+            positive (the projection is undefined there).
+        """
+        if z <= 0:
+            return (self.intrinsics.cx, self.intrinsics.cy)
+        return (
+            x * self.intrinsics.fx / z + self.intrinsics.cx,
+            y * self.intrinsics.fy / z + self.intrinsics.cy,
+        )
+
+    def calculate_angular_offset(
+        self,
+        pixel_x: float,
+        pixel_y: float,
+    ) -> Tuple[float, float]:
+        """Return the angular offset of a pixel from the optical axis.
+
+        Returns:
+            ``(angle_x, angle_y)`` in radians.
+        """
+        dx = pixel_x - self.intrinsics.cx
+        dy = pixel_y - self.intrinsics.cy
+        return (
+            math.atan(dx / self.intrinsics.fx),
+            math.atan(dy / self.intrinsics.fy),
+        )

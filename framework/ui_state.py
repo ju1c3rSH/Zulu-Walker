@@ -1,8 +1,8 @@
-"""On-screen UI state: button geometry and interaction gates.
+"""Hold on-screen UI state: button geometry and interaction gates.
 
-Pure logic - no pixel APIs - so it is unit-testable off device and reusable
-by any backend that can produce frame coordinates.  Project specific
-orchestration lives in app/.
+Pure logic, with no pixel APIs, so it is unit-testable off device and reusable
+by any backend that produces frame coordinates. Project orchestration lives in
+``app``.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class HitRegion:
 
 
 def bottom_left_region(frame_h: int, size: int, margin: int) -> HitRegion:
-    """Standard icon slot pinned to the bottom-left edge of the frame."""
+    """Return a standard icon slot pinned to the bottom-left frame edge."""
     return HitRegion(x=margin, y=frame_h - size - 8, w=size, h=size)
 
 

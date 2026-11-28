@@ -6,7 +6,7 @@ from typing import Optional
 
 import numpy as np
 
-from framework.hal.interface import AIInference, Detection
+from framework.hal.interface import AIInference, Detection, frame_size
 from framework.hal.interface.ai import (
     AIError,
     E_INFER_FAILED,
@@ -25,18 +25,17 @@ logger = logging.getLogger(__name__)
 
 @register_processor("AIInferenceProcessor")
 class AIInferenceProcessor(Processor):
-    """Runs the platform AI backend and turns its detections into a result.
+    """Run the AI backend and expose its detections as a VisionResult.
 
-    A failure is reported as `success=False` plus a stable `error_code`,
-    so the caller can tell a broken backend apart from a scene that simply
-    contains no target.
+    Failures carry success=False and a stable error_code, so a broken backend
+    is distinguishable from a scene that simply has no target.
     """
 
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self._ai: Optional[AIInference] = None
         self._handler = None
-        # Wall-clock time of the last filter aggregate log.
+        # Monotonic timestamp of the last aggregate discard log.
         self._last_discard_log_ts: float = 0.0
 
     def set_ai(self, ai: AIInference) -> None:
@@ -76,12 +75,21 @@ class AIInferenceProcessor(Processor):
         try:
             camera = (context or {}).get("camera")
             raw = getattr(camera, "last_raw", None)
+            source = raw if raw is not None else frame
+            w, h = frame_size(source)
+            if w <= 0 or h <= 0:
+                # An unmeasurable frame would make every box look like it sits
+                # on the edge, so filtering would drop all of them and still
+                # report success.  Refuse the frame instead.
+                return VisionResult(
+                    self.name, success=False,
+                    error_code=E_INVALID_INPUT,
+                    error_message="frame has no measurable size",
+                )
             if raw is not None:
                 detections = self._ai.detect(raw, _raw=True)
-                h, w = raw.height(), raw.width()
             else:
                 detections = self._ai.detect(frame)
-                h, w = frame.shape[:2]
         except AIError as e:
             logger.error("AIInferenceProcessor detect failed [%s]: %s", e.code, e)
             return VisionResult(
@@ -97,7 +105,7 @@ class AIInferenceProcessor(Processor):
                 error_message=str(e),
             )
 
-        # Filter detections before any downstream consumption
+        # Filter detections before building the result.
         pre_count = len(detections)
         discard_log: list[tuple[Detection, str]] = []
         detections = filter_detections(
@@ -106,14 +114,14 @@ class AIInferenceProcessor(Processor):
             image_height=h,
             on_discard=lambda obj, reason: discard_log.append((obj, reason)),
         )
-        # Count the reasons so a mis-tuned threshold shows up as a named
-        # cause instead of only a shrinking detection count.
+        # Count reasons so a mis-tuned threshold shows up as a named cause
+        # instead of only a falling detection count.
         reason_counts: dict[str, int] = {}
         for _obj, reason in discard_log:
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
         # Log one aggregate per second instead of one line per discarded
-        # object every frame.
+        # object on every frame.
         if discard_log:
             now = time.monotonic()
             if now - self._last_discard_log_ts >= 1.0:

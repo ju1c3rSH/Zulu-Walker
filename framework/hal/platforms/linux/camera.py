@@ -44,6 +44,11 @@ class LinuxCamera:
         self._running = False
         self._frame_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         self._capture_thread: Optional[threading.Thread] = None
+        # The newest captured frame, kept as a reference.  A consumer that
+        # needs a picture without stealing one from the inference queue
+        # (the desktop panel) reads it here; the queue stays the single
+        # owner of the frames the pipeline processes.
+        self._last_frame: Optional[np.ndarray] = None
 
         self._cap: Optional[cv2.VideoCapture] = None
         self._actual_fps = fps
@@ -53,6 +58,11 @@ class LinuxCamera:
         self._reconnect_threshold = 60
         self._consecutive_failures = 0
         self._reconnect_attempt = 0
+        # Zero means "no successful read yet".  The error path reads it, so it
+        # has to exist before the first frame: a camera that fails on its
+        # first read must report the failure, not die with an AttributeError
+        # that kills the capture thread.
+        self._last_ok_time = 0.0
 
     @property
     def camera_id(self) -> str:
@@ -247,6 +257,9 @@ class LinuxCamera:
                 self._consecutive_failures = 0
                 self._reconnect_attempt = 0
                 self._last_ok_time = time.time()
+                # The reference, not a copy: OpenCV hands out a fresh buffer
+                # per read, so nobody mutates this one afterwards.
+                self._last_frame = frame
                 try:
                     self._frame_queue.put_nowait(frame)
                 except queue.Full:
@@ -318,6 +331,18 @@ class LinuxCamera:
     def last_raw(self):
         """No native frame buffer here (maix Image is maix-only)."""
         return None
+
+    @property
+    def last_frame(self) -> Optional[np.ndarray]:
+        """The newest captured BGR frame, as a reference.
+
+        The device keeps a native image buffer and calls it "last_raw";
+        the desktop camera has no such buffer, but it does have the frame
+        it just captured.  Reading it here costs nothing and does not touch
+        the frame queue, so a display never steals a frame from the
+        inference pipeline.
+        """
+        return self._last_frame
 
     def set(self, prop_id: int, value) -> bool:
         if self._cap is None:

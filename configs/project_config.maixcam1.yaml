@@ -1,19 +1,20 @@
-# MaixCAM / MaixCAM-Pro (cv181x) 运行配置模板。
+# Runtime template for MaixCAM / MaixCAM-Pro (cv181x).
 #
-# 用法（不覆盖工作区的 project_config.yaml）:
+# Usage (leaves the workspace project_config.yaml untouched):
 #     set ZWULU_CONFIG=configs/project_config.maixcam1.yaml
 #     python run.py main
 #
-# 与 MaixCAM2 默认配置的逐项差异见
-# docs/architecture/maixcam1_platform.md。
+# For per-key differences from the MaixCAM2 default, see
+# docs/architecture/maixcam1_platform.md.
 
 platform: maixcam1
 
 display_enabled: true
-# CAM1 面板 552x368, 比 CAM2 慢; 100ms = 10Hz, HUD 绘制与上屏同频节流
+# The CAM1 panel is 552x368 and slower than CAM2; 100 ms gives 10 Hz for both
+# HUD drawing and presentation.
 display_show_interval_ms: 100
 
-debug_console_enabled: false      # Rich TUI 独立线程, 省 CPU/内存
+debug_console_enabled: false      # Run the Rich TUI on a separate thread to save CPU and memory.
 
 observability:
   perf: true
@@ -29,27 +30,29 @@ cameras:
     camera_stream_queue_size: 2
 
 uart_defaults:
-  # UART0 = A16(TX)/A17(RX)。A16/A17 出厂默认即 UART0 功能, 平台层会跳过 pinmap。
-  # 接线注意: TX(A16) 是启动模式检测引脚, 低电平会导致无法开机。
+  # UART0 uses A16 (TX) and A17 (RX), which already carry that function at
+  # boot, so the platform layer skips pinmux setup. A16 also selects the boot
+  # mode; holding it low prevents the board from starting.
   port: "/dev/ttyS0"
   baudrate: 115200
 
 ai:
   models:
-    # CVITEK .cvimodel。CAM2 的 .axmodel / nn.YOLO11 在 CAM1 不可用, 两者不通用。
-    # mud 用 `model =` 指向同目录 cvimodel, 两者须同目录同名。
-    # 模型文件不入库, 需自行部署到 /root/models/ (见文档"部署"一节)。
+    # CAM1 loads CVITEK .cvimodel files; the .axmodel / nn.YOLO11 path used on
+    # CAM2 does not work here. The .mud file points to a same-named cvimodel
+    # in the same directory. Model binaries are not tracked: deploy both to
+    # /root/models/ as described in docs/architecture/maixcam1_platform.md.
     - nick_name: "eod_hostage"
       model: "/root/models/model_239147.mud"
-      model_type: "yolov5"   # CAM1 无 YOLO11 类, 显式指定避免落到 "auto" 歧义
+      model_type: "yolov5"   # CAM1 has no YOLO11 class; set explicitly to avoid auto-detection ambiguity.
   active: "eod_hostage"
 
 battery:
-  # Pro 的 AXP2101 走 I2C-4, 一次完整读约 1.02ms; 采样在主循环慢节拍里
+  # The Pro's AXP2101 uses I2C-4 and a full read takes about 1.02 ms; sampling runs on the main-loop slow tick.
   enabled: true
   poll_interval_ms: 10000
   low_percent: 20
 
 streaming:
-  # zw_wifi_stream 模块声明 PLATFORMS = ("maixcam2",), 在 CAM1 上会被跳过
+  # zw_wifi_stream declares PLATFORMS = ("maixcam2",), so it is skipped on CAM1.
   wifi_mode: "off"

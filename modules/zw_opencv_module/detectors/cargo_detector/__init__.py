@@ -76,7 +76,8 @@ class CargoDetector:
     def __init__(self, name: str = "cargo_detect"):
         self.name = name
 
-        # EdgeDrawing 圆检测参数（必须在 _init_edge_drawing 之前赋值，_update_ed_params 会读取）
+        # EdgeDrawing parameters. Set before _init_edge_drawing, which pushes
+        # them into the EdgeDrawing instance via _update_ed_params.
         self.blur_kernel = 5
         self.blur_sigma = 1.5
         self.ed_min_path_length = 50
@@ -89,11 +90,11 @@ class CargoDetector:
         self.color_match_threshold_per_color = {Color.GREEN: 0.30}
         self.stage2_color_threshold_per_color = {Color.GREEN: 0.22}
 
-        # FastCircle 方法内部可调参数
-        # sv_percentile: 粗筛掩码内取 S/V 通道的第 N 百分位作为自适应下界
-        #   值越低 → 下界越低 → 细筛更宽松（包容更多光照变化）
-        #   值越高 → 下界越高 → 细筛更严格（精确但易漏）
-        #   与 config.py ParamDef 和 params.yaml 保持同一值
+        # Tunable parameters for the FastCircle method.
+        # sv_percentile: percentile of the S/V channels inside the coarse mask
+        # used as the adaptive lower bound. Lower values loosen the fine mask
+        # and tolerate more lighting variation; higher values tighten it and
+        # may miss targets. Keep in sync with config.py and params.yaml.
         self.sv_percentile = 15
         self.ema_alpha = 0.3
         self.coarse_min_pixels = 50
@@ -104,7 +105,7 @@ class CargoDetector:
         self.ellipse_min_contour_points = 5
         self.ellipse_max_axis_ratio = 1.5
 
-        # EdgeDrawingCircle 方法内部可调参数
+        # Tunable parameters for the EdgeDrawingCircle method.
         self.edge_min_pixels = 20
         self.low_light_min_pixels = 50
         self.relaxed_s = 10
@@ -115,11 +116,11 @@ class CargoDetector:
         self.score_weight_circularity = 0.3
         self.score_weight_area = 0.2
 
-        # HeuristicEdge 方法内部可调参数
+        # Tunable parameters for the HeuristicEdge method.
         self.stage2_color_threshold = 0.3
         self.stage2_min_area_ratio = 0.5
 
-        # EdgeDrawing 初始化（若不可用则默认使用 FAST_CIRCLE）
+        # Initialize EdgeDrawing; it stays None when ximgproc is unavailable.
         self.ed = None
         self._init_edge_drawing()
         self.detect_method = DetectMethod.HEURISTIC_EDGE
@@ -145,7 +146,7 @@ class CargoDetector:
 
         self._last_cargo_meta: Dict[Color, dict] = {}
 
-        # 按颜色隔离的跟踪状态
+        # Tracking state kept separate for each color.
         self._tracking: Dict[Color, _TrackingState] = {}
         self._active_tracking: Optional[_TrackingState] = None
         self._active_color: Optional[Color] = None
@@ -162,8 +163,8 @@ class CargoDetector:
         self._methods: Dict[DetectMethod, Any] = {}
         self._init_detection_methods()
 
-        # 从 config.py ParamDef + params.yaml 统一加载覆盖默认值
-        # 确保 CargoDetector 与 Debug UI 使用同一套参数定义
+        # Load config.py ParamDef / params.yaml overrides so the detector and
+        # the debug UI share one parameter set.
         self._load_params_from_config()
 
     def _init_edge_drawing(self):
@@ -192,9 +193,9 @@ class CargoDetector:
         }
 
     def _load_params_from_config(self):
-        """只加载当前 detect_method 对应的 config section + SHARED。
+        """Load config overrides for the active method plus the SHARED section.
 
-        避免不同方法间的参数串扰。
+        Restricting the sections avoids parameter bleed between methods.
         """
         try:
             from .debug.config import CargoConfig

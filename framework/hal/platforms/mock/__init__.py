@@ -22,7 +22,7 @@ def create_ai(**kwargs) -> MockAI:
 
 
 def create_battery() -> "NullBattery":
-    """Capability hook: 无电量计平台，返回 -1 的默认实现。"""
+    """Capability hook: return the -1 default on platforms without a fuel gauge."""
     from framework.hal.interface import NullBattery
 
     return NullBattery()

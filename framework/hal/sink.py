@@ -51,6 +51,8 @@ class MaixLcdSink:
         self._pressure = False
         self._latest = None
         self._shown = None
+        self._latest_generation = None
+        self._shown_generation = None
         self._last_presented = 0.0
         self._force_next = False
 
@@ -95,9 +97,23 @@ class MaixLcdSink:
         return self._min_interval * 1000.0
 
     def push(self, frame) -> None:
-        """Store the newest frame reference. Cheap; overwrites unsent."""
-        if frame is not None:
-            self._latest = frame
+        """Store the newest frame (or composition). Cheap; overwrites unsent.
+
+        A ``Composed`` carries the generation that produced it; when present
+        it is what decides "have I shown this already", so the skip no longer
+        depends on the composer handing back the same object.  A bare frame
+        still works and falls back to the identity check.
+        """
+        if frame is None:
+            return
+        generation = getattr(frame, "generation", None)
+        inner = getattr(frame, "frame", None)
+        if generation is not None and inner is not None:
+            self._latest_generation = generation
+            frame = inner
+        else:
+            self._latest_generation = None
+        self._latest = frame
 
     def reset(self) -> None:
         """Force the next non-None frame to present, bypassing identity skip.
@@ -126,10 +142,17 @@ class MaixLcdSink:
         frame = self._latest
         if frame is None:
             return
-        if frame is self._shown and not self._force_next:
-            # Identity skip: the composer reuses buffers between rebuilds,
-            # so an unchanged object means no new content (DISP-05).
-            return
+        if not self._force_next:
+            if self._latest_generation is not None:
+                # The composer reuses one buffer, so identity would say
+                # "unchanged" for genuinely new content after a reset; the
+                # generation says it exactly.
+                if self._latest_generation == self._shown_generation:
+                    return
+            elif frame is self._shown:
+                # Identity skip: the composer reuses buffers between rebuilds,
+                # so an unchanged object means no new content (DISP-05).
+                return
         now = time.monotonic()
         if not self._force_next and now - self._last_presented < self._min_interval:
             return
@@ -138,6 +161,7 @@ class MaixLcdSink:
         try:
             self._disp.show(frame)
             self._shown = frame
+            self._shown_generation = self._latest_generation
             self._last_presented = now
             self._force_next = False
         except Exception:

@@ -1,4 +1,5 @@
 ﻿import logging
+from typing import Optional
 
 try:
     from utils.log_util import log_print
@@ -6,10 +7,10 @@ except ImportError:
     import logging
     log_print = logging.getLogger(__name__).info
 
-from .ai import LinuxAI
+from .ai import DEFAULT_ENGINE_ID, LinuxAI
 from .camera import LinuxCamera
 from .display import LinuxDisplay
-from .uart import LinuxUart
+from .uart import LinuxUart, resolve_serial_port
 
 logger = logging.getLogger(__name__)
 
@@ -51,16 +52,60 @@ def create_display() -> LinuxDisplay:
     return LinuxDisplay()
 
 
-def create_uart(port: str, baudrate: int = 921600) -> LinuxUart:
-    return LinuxUart(port=port, baudrate=baudrate)
+def create_panel(width: int = 640, height: int = 480, scale: int = 2,
+                 title: str = "Zulu-Walker", headless: bool = False,
+                 interval_ms: Optional[float] = None,
+                 layout_name: str = "desktop"):
+    """The desktop panel: a cv2 window carrying the device HUD.
+
+    Capability hook: a platform without a desktop window simply does not
+    offer it, and the application falls back to the plain display sink.
+    The panel is returned only when a window really opened, so a headless
+    host gets None instead of a black rectangle nobody can see.
+
+    ``layout_name`` selects the HUD layout (``display.layout`` in the config);
+    a name the registry does not know raises rather than silently falling back.
+    """
+    from framework.ui.layout import get as get_layout
+
+    get_layout(layout_name)  # an unknown name fails here, not on the first frame
+
+    from .panel import DesktopPanel
+
+    panel = DesktopPanel(
+        width=width, height=height, scale=scale, title=title,
+        headless=headless, interval_ms=interval_ms,
+        layout_name=layout_name,
+    )
+    return panel if panel.has_gui else None
 
 
-def create_ai(**kwargs) -> LinuxAI:
-    return LinuxAI()
+def create_uart(port: str = "", baudrate: int = 921600) -> LinuxUart:
+    """Open the host serial port, when the machine has one.
+
+    A machine without a serial port is not a broken machine: the caller
+    treats the UART as absent and the application keeps running.
+    """
+    resolved = resolve_serial_port(port)
+    if not resolved:
+        raise RuntimeError("no host serial port available")
+    return LinuxUart(port=resolved, baudrate=baudrate)
+
+
+def create_ai(engine: str = "", **kwargs) -> LinuxAI:
+    """Build the desktop AI backend for the configured engine."""
+    return LinuxAI(engine or DEFAULT_ENGINE_ID, **kwargs)
+
+
+def create_canvas(frame):
+    """Wrap a BGR buffer so the vision module can draw the HUD onto it."""
+    from .canvas import CvCanvas
+
+    return CvCanvas(frame)
 
 
 def create_battery() -> "NullBattery":
-    """Capability hook: PC 上没有电量计，返回 -1 的默认实现。"""
+    """Capability hook: return the -1 default on PCs, which have no fuel gauge."""
     from framework.hal.interface import NullBattery
 
     return NullBattery()
@@ -96,6 +141,7 @@ __all__ = [
     "create_battery",
     "create_camera",
     "create_display",
+    "create_panel",
     "create_uart",
     "resolve_camera_source",
     "create_sys_info",

@@ -8,12 +8,10 @@ from typing import Optional
 
 _QUEUE_MAX = 12
 _EMPTY_SLEEP = 0.015
-# JPEG encode quality for the WiFi stream.  Lower quality -> smaller frames
-# -> higher effective frame rate on WiFi links.
+# JPEG encode quality; lower values shrink frames and raise the effective rate.
 _JPEG_QUALITY = 90
-# Proportional downscale factor applied to the streamed frame before JPEG
-# encoding (e.g. 0.5 -> half width/height).  Smaller frames -> much lower
-# encode cost and bandwidth -> higher effective frame rate on WiFi links.
+# Downscale factor applied before encoding; 0.5 halves width and height.
+# Smaller frames cut both encode cost and bandwidth on the WiFi link.
 _STREAM_SCALE = 0.5
 
 

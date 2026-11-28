@@ -52,6 +52,13 @@ LOGICAL_INPUT_NAME = "image"
 MUD_SECTION = "extra"
 MUD_MODEL_TYPE_KEY = "model_type"
 
+# The keys the runtime hands every engine regardless of its dialect.  This
+# adapter consumes neither: the MUD file bakes the preprocessing, and the
+# firmware constructor exposes no accelerator options.  They are accepted
+# and dropped here rather than rejected, so an engine never has to know
+# which keys the framework added after it was written.
+FRAMEWORK_OPTS = frozenset({"canonical", "runtime"})
+
 MODEL_FAMILY_CLASS_NAMES: dict[str, str] = {
     "yolo11": "YOLO11",
     "yolov8": "YOLOv8",
@@ -140,6 +147,11 @@ class MaixNnEngine:
         family is reported as a contract problem instead of a missing
         runtime.  A runtime that refuses the file raises ModelLoadError
         with E_MODEL_LOAD_FAILED; nothing is degraded silently.
+
+        The framework keys travel in ``opts`` like they do for every other
+        engine.  They are dropped before the firmware constructor is called,
+        because that constructor takes the model path and ``dual_buff``
+        only; anything else is a TypeError from the binding.
         """
         model_family = model_family_from_mud(artifact.path)
         if not model_family:
@@ -157,7 +169,9 @@ class MaixNnEngine:
                 E_MODEL_TYPE_UNSUPPORTED,
             )
         kwargs: dict[str, Any] = {"dual_buff": True}
-        kwargs.update(opts)
+        kwargs.update(
+            {key: value for key, value in opts.items() if key not in FRAMEWORK_OPTS}
+        )
         try:
             self._model = slot_cls(artifact.path, **kwargs)
         except Exception as exc:

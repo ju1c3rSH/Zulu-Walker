@@ -1,18 +1,16 @@
-"""Main-page HUD, ported from the device's ``DisplayHUD``.
+"""Main-page HUD: the state types, the palette, and the panel entry point.
 
-Source of truth: ``feat/maixcam1-port`` ``modules/zw_opencv_module/display/hud.py``.
-Geometry is copied rather than reinvented, because the point of the port is
-that a person who knows the device screen recognises the desktop one:
+The layout itself lives in ``framework.ui.layouts.desktop``.  This module
+keeps what other code depends on:
 
-* a black bar of ``BAR_H + LINE2_H`` (30 + 24) at the top;
-* line 1: ``MODE:...`` at x=6, then ``LINK:OK``, ``T:<found>`` and ``FPS:``
-  right-aligned;
-* line 2: the status string (codes / order / lock) in one colour;
-* hits: a 2 px box plus the label 16 px above it, same colour, no plate;
-* an optional one-line alert bar under the header.
+* ``HudState`` / ``Hit`` - the content the panel and the demo scripts build;
+* the palette - ``tuner.py`` imports its colours from here;
+* ``draw()`` - the one call ``LinuxPanel.compose`` makes, kept so the panel
+  does not need to know the layout registry exists.
 
-Text sizes follow the device's ``draw_string(scale=...)``: 1.5 -> 22 px,
-1.2 -> 18 px, 1.0 -> 15 px in panel pixels.
+Sizes are no longer constants: they come from ``framework.ui.metrics``, which
+derives them from the surface height, so the same layout is legible at
+552x368 and 640x480.
 """
 
 from __future__ import annotations
@@ -20,7 +18,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Sequence
 
-from framework.ui.canvas import Canvas, Rgb, draw_fitted, fit_size
+from framework.ui.canvas import Canvas, Rgb
+from framework.ui.layout import get as get_layout
+from framework.ui.measurer import CanvasMeasurer
+from framework.ui.scene import Scene
+from framework.ui.space import Constraints
 from framework.ui.widgets import Button
 
 BLACK = (0, 0, 0)
@@ -33,13 +35,7 @@ MAGENTA = (235, 90, 235)
 CYAN = (80, 215, 235)
 GRAY_OFF = (105, 105, 110)
 
-BAR_H = 30
-LINE2_H = 24
-ALERT_H = 20
-
-T_BIG = 22
-T_MID = 18
-T_SMALL = 15
+DEFAULT_LAYOUT = "desktop"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,54 +64,19 @@ class HudState:
 
 
 def draw(canvas: Canvas, state: HudState, buttons: Sequence[Button] = (),
-         pressed: str = "") -> None:
-    w, h = canvas.size()
-    canvas.rect(0, 0, w, BAR_H + LINE2_H, BLACK, fill=True)
-    _line1(canvas, state, w)
-    _line2(canvas, state)
-    if state.alert:
-        canvas.rect(0, BAR_H + LINE2_H, w, ALERT_H, RED, fill=True)
-        canvas.text(6, BAR_H + LINE2_H + 2, state.alert, T_SMALL, (16, 8, 8))
-    for hit in state.hits:
-        canvas.rect(hit.x, hit.y, hit.w, hit.h, hit.color, width=2)
-        if hit.text:
-            _th = canvas.text_size(hit.text, T_SMALL)[1]
-            canvas.text(hit.x, max(2, hit.y - _th - 2), hit.text, T_SMALL,
-                        hit.color)
-    if buttons:
-        _buttons(canvas, buttons, h, pressed)
+         pressed: str = "", layout_name: str = DEFAULT_LAYOUT) -> Scene:
+    """Draw *state* onto *canvas*; return the Scene that was drawn.
 
-
-def _line1(canvas: Canvas, state: HudState, w: int) -> None:
-    mode_text = f"MODE:{state.mode}"
-    # Reserve the right cluster (T:/FPS) so a long mode name cannot run into it.
-    mode_size = fit_size(canvas, mode_text, w - 380, T_BIG, min_size=14)
-    canvas.text(6, 4, mode_text, mode_size, WHITE)
-    mw, _ = canvas.text_size(mode_text, mode_size)
-
-    link = "LINK:OK" if state.link_ok else "LINK:--"
-    canvas.text(6 + mw + 12, 4, link, T_BIG, GREEN if state.link_ok else GRAY)
-
-    found = "FOUND" if state.found else "-"
-    canvas.text(w - 240, 4, f"T:{found}", T_MID, GREEN if state.found else GRAY)
-    canvas.text(w - 130, 4, f"FPS:{state.fps:4.1f}", T_MID, WHITE)
-
-
-def _line2(canvas: Canvas, state: HudState) -> None:
-    y = BAR_H + 2
-    if state.mode == "IDLE" and not state.line2:
-        canvas.text(6, y, "IDLE (wait CMD_REQUEST)", T_MID, GRAY)
-        return
-    canvas.text(6, y, state.line2, T_MID, GREEN if state.found else YELLOW)
-
-
-def _buttons(canvas: Canvas, buttons: Sequence[Button], h: int,
-             pressed: str) -> None:
-    for btn in buttons:
-        active = btn.label == pressed
-        canvas.rect(btn.rect.x, btn.rect.y, btn.rect.w, btn.rect.h,
-                    (20, 20, 22), fill=True)
-        canvas.rect(btn.rect.x, btn.rect.y, btn.rect.w, btn.rect.h,
-                    GREEN if active else WHITE, width=2)
-        draw_fitted(canvas, btn.rect, btn.label, T_SMALL,
-                    GREEN if active else WHITE, pad=6)
+    The Scene carries the hit boxes, so a caller that handles input attaches
+    it to a ``Pointer`` and gets hit-testing against exactly what is on
+    screen - including boxes the layout drew but no button list knows about.
+    """
+    scene = get_layout(layout_name).scene(
+        state,
+        Constraints.of(canvas.size()),
+        CanvasMeasurer(canvas),
+        buttons,
+        pressed,
+    )
+    scene.render(canvas)
+    return scene

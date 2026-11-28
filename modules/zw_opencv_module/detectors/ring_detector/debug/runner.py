@@ -72,7 +72,7 @@ class RingDebugRunner:
                 self.window.set_method_index(0)
 
     def _apply_params(self, all_params: dict):
-        """Apply raw YAML params to detector with proper scale factors."""
+        """Apply raw YAML parameters to the detector using their scale factors."""
         for pdef in self._get_active_defs():
             raw = all_params.get(pdef.name)
             if raw is None:

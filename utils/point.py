@@ -11,15 +11,14 @@ class Point:
         return math.sqrt(self.x ** 2 + self.y ** 2)
 
 def get_angle(p1, p2, p3):
-    """
-    计算角 p1-p2-p3 的角度（度数）
+    """Compute the angle p1-p2-p3 in degrees.
 
     Args:
-        p1, p2, p3: 可以是 Point 对象或 [x, y] 数组
+        p1, p2, p3: Point objects or ``[x, y]`` sequences.
     """
     import math
 
-    # 支持 Point 对象和 numpy 数组
+    # Accept Point objects as well as numpy arrays.
     def get_coords(p):
         if hasattr(p, 'x'):
             return p.x, p.y
@@ -50,15 +49,14 @@ def get_angle(p1, p2, p3):
     return angle_deg
 
 def get_cos_angle(p1, p2, p3):
-    """
-    计算角 p1-p2-p3 的余弦值
+    """Compute the cosine of the angle p1-p2-p3.
 
     Args:
-        p1, p2, p3: 可以是 Point 对象或 [x, y] 数组
+        p1, p2, p3: Point objects or ``[x, y]`` sequences.
     """
     import math
 
-    # 支持 Point 对象和 numpy 数组
+    # Accept Point objects as well as numpy arrays.
     def get_coords(p):
         if hasattr(p, 'x'):
             return p.x, p.y

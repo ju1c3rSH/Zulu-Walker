@@ -6,17 +6,19 @@ author: your-team
 desc: Device package for a project built on the zulu framework.
 desc[zh]: 基于本框架的项目设备打包清单模板
 
-# ── 用法 ─────────────────────────────────────────────────────────────
-# maixpack 要求 app.yaml 与固件入口 main.py 位于仓库根目录:
-#   1. 把 deploy/maixcam/ 下的 app.yaml 和 main.py 复制到仓库根目录
-#   2. 按项目需要增删下方 files 清单(默认=框架核心,不含 detectors)
-#   3. 在根目录执行 maixpack 打包
-# 完整工作示例见 release/2026H 分支根目录的 app.yaml。
+# Usage
+# maixpack expects app.yaml and the firmware entry main.py at the repository root:
+#   1. Copy app.yaml and main.py from deploy/maixcam/ to the repository root.
+#   2. Adjust the files list below (default: framework core, no detectors).
+#   3. Run maixpack from the repository root.
+# Entries in files take precedence over exclude. A complete working example is
+# at the repository root of the release/2026H branch.
 #
-# 启用一个 detector 方案(如 cargo)的打包三件事:
-#   a) files 增加 modules\zw_opencv_module\detectors\cargo_detector 目录
-#   b) files 增加 modules\zw_opencv_module\processors\cargo_processor.py
-#   c) 项目代码在流水线启动前 enable_optional(["TrackCargoProcessor"])
+# To package the line-follow detector:
+#   a) add modules\zw_opencv_module\detectors\line_detector to files
+#   b) add modules\zw_opencv_module\processors\line_follow_processor.py to files
+#   c) call enable_optional(["LineFollowProcessor"]) from your project code
+#      before the pipeline starts; nothing in the framework calls it for you
 
 exclude:
   - .git
@@ -47,43 +49,72 @@ files:
   - framework\state_machine\__init__.py
   - framework\state_machine\base.py
   - framework\state_machine\bridge.py
+  - framework\ui\__init__.py
+  - framework\ui\canvas.py
+  - framework\ui\composer.py
+  - framework\ui\hud.py
+  - framework\ui\layout.py
+  - framework\ui\layouts\__init__.py
+  - framework\ui\layouts\desktop.py
+  - framework\ui\layouts\device.py
+  - framework\ui\measurer.py
+  - framework\ui\metrics.py
+  - framework\ui\overlay.py
+  - framework\ui\panel.py
+  - framework\ui\pointer.py
+  - framework\ui\scene.py
+  - framework\ui\space.py
+  - framework\ui\view_state.py
+  - framework\ui\widgets.py
   - framework\hal\__init__.py
+  - framework\hal\battery_sampler.py
   - framework\hal\camera_hub.py
+  - framework\hal\sink.py
   - framework\hal\machine.py
   - framework\hal\interface\__init__.py
   - framework\hal\interface\ai.py
+  - framework\hal\interface\battery.py
   - framework\hal\interface\camera.py
   - framework\hal\interface\display.py
+  - framework\hal\interface\frame.py
   - framework\hal\interface\sink.py
   - framework\hal\interface\uart.py
   - framework\hal\interface\watchdog.py
   - framework\hal\interface\sysinfo.py
+  - framework\hal\platforms\frame_spec.py
+  - framework\hal\platforms\maix_canvas.py
   - framework\hal\platforms\maixcam2\__init__.py
   - framework\hal\platforms\maixcam2\ai.py
+  - framework\hal\platforms\maixcam2\battery.py
   - framework\hal\platforms\maixcam2\camera.py
   - framework\hal\platforms\maixcam2\display.py
   - framework\hal\platforms\maixcam2\sink.py
   - framework\hal\platforms\maixcam2\sysinfo.py
   - framework\hal\platforms\maixcam2\uart.py
   - framework\hal\platforms\maixcam2\watchdog.py
-  - framework\hal\platforms\linux\__init__.py
-  - framework\hal\platforms\linux\ai.py
-  - framework\hal\platforms\linux\camera.py
-  - framework\hal\platforms\linux\camera_warmup.py
-  - framework\hal\platforms\linux\display.py
-  - framework\hal\platforms\linux\sysinfo.py
-  - framework\hal\platforms\linux\uart.py
   - framework\hal\platforms\mock\__init__.py
   - framework\hal\platforms\mock\ai.py
   - framework\hal\platforms\mock\camera.py
   - framework\hal\platforms\mock\display.py
   - framework\hal\platforms\mock\uart.py
+  - framework\inference\__init__.py
+  - framework\inference\contract.py
+  - framework\inference\facade.py
+  - framework\inference\manifest.py
+  - framework\inference\ops.py
+  - framework\inference\registry.py
+  - framework\inference\runtime.py
+  - framework\inference\engines\__init__.py
+  - framework\inference\engines\maix_nn.py
+  - framework\inference\engines\version.py
+  - framework\inference\wrappers\__init__.py
+  - framework\inference\wrappers\vision_det.py
+  - modules\zw_battery_module\__init__.py
   - modules\zw_opencv_module\__init__.py
   - modules\zw_opencv_module\config\camera_config.yaml
   - modules\zw_opencv_module\config\vision_config.yaml
   - modules\zw_opencv_module\models\__init__.py
   - modules\zw_opencv_module\models\color.py
-  - modules\zw_opencv_module\param_utils.py
   - modules\zw_opencv_module\performance.py
   - modules\zw_opencv_module\pipeline_camera.py
   - modules\zw_opencv_module\task_manager.py
@@ -94,17 +125,20 @@ files:
   - modules\zw_opencv_module\processors\ai_inference_processor.py
   - modules\zw_opencv_module\processors\handlers\__init__.py
   - modules\zw_opencv_module\processors\handlers\base.py
+  - modules\zw_opencv_module\processors\handlers\hand_landmarks.py
   - modules\zw_opencv_module\processors\handlers\registry.py
+  - modules\zw_opencv_module\processors\handlers\segmentation.py
   - modules\zw_opencv_module\processors\handlers\yolo.py
   - modules\zw_opencv_module\utils\__init__.py
-  - modules\zw_opencv_module\utils\focal_distance_util.py
   - utils\__init__.py
+  - utils\boot_timing.py
   - utils\camera_misc_util.py
   - utils\console_capture.py
   - utils\cpu_affinity.py
   - utils\debug_console.py
   - utils\focal_distance_util.py
   - utils\log_util.py
+  - utils\thread_cpu.py
   - utils\point.py
   - run.py
   - project_config.yaml

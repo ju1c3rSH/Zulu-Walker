@@ -33,6 +33,7 @@ from framework.hal.interface.ai import (
     ModelConfigError,
     ModelLoadError,
 )
+from framework.hal.interface.frame import frame_size
 from framework.inference import ops
 from framework.inference.contract import (
     ArtifactRef,
@@ -148,6 +149,7 @@ class ModelRuntime:
         family: str = "",
         frame_spec: Optional[FrameSpec] = None,
         wrapper_factory: Optional[Callable[["ModelRuntime"], Any]] = None,
+        runtime_options: Optional[dict[str, Any]] = None,
     ) -> None:
         self._engine = engine
         self._artifact = artifact
@@ -175,7 +177,15 @@ class ModelRuntime:
 
         self._verify_artifact_files()
         started = time.perf_counter()
-        engine.load(artifact)
+        # The canonical contract travels with the artifact: an engine that
+        # normalises on the device needs the parameters it must apply.
+        # The runtime options are the deployment's choice of accelerator;
+        # the engine merges them over the block the artifact declares.
+        engine.load(
+            artifact,
+            canonical=self._canonical,
+            runtime=dict(runtime_options or {}),
+        )
         self._stats.load_ms = (time.perf_counter() - started) * 1000.0
 
         self._capability = self._build_capability(wrapper_factory)
@@ -270,7 +280,7 @@ class ModelRuntime:
 
     def _bypass(self, frame: Any) -> PreprocessResult:
         """Pass the frame through untouched for a fully baked artifact."""
-        width, height = _frame_size(frame)
+        width, height = frame_size(frame)
         transform = GeometryTransform(
             mode="stretch",
             scale_x=1.0,
@@ -527,13 +537,3 @@ class ModelRuntime:
                 f"'{self._family}'",
                 E_MODEL_TYPE_UNSUPPORTED,
             )
-
-
-def _frame_size(frame: Any) -> tuple[int, int]:
-    """The pixel size of a frame, or (0, 0) for a frame without one."""
-    if isinstance(frame, np.ndarray):
-        return int(frame.shape[1]), int(frame.shape[0])
-    try:
-        return int(getattr(frame, "width", 0)), int(getattr(frame, "height", 0))
-    except (TypeError, ValueError):
-        return 0, 0

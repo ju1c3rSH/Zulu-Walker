@@ -4,7 +4,7 @@
 import os, sys, json, re
 from pathlib import Path
 
-# ── Config ──────────────────────────────────────────────────────────
+# Configuration
 DOCX_PATH = r"F:\zw\Zulu-Walker\docs\competition\H题_车载平衡滚球运动控制系统.docx"
 PDF_PATH  = r"F:\zw\Zulu-Walker\docs\competition\H题_车载平衡滚球运动控制系统.pdf"
 OUT_DIR   = Path(r"F:\zw\Zulu-Walker\docs\competition\extracted")
@@ -14,21 +14,19 @@ OUT_MD    = OUT_DIR / "H题_车载平衡滚球运动控制系统.md"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 OUT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── Helper: sanitize filename ───────────────────────────────────────
+# Helpers
 def sanitize(name):
     return re.sub(r'[\\/:*?"<>|]', '_', name)
 
-# ════════════════════════════════════════════════════════════════════
-#  1. EXTRACT DOCX
-# ════════════════════════════════════════════════════════════════════
+# Extract DOCX
 import docx
 from docx.oxml.ns import qn
 from lxml import etree
 
 doc = docx.Document(DOCX_PATH)
 
-# --- Extract images from DOCX ---------------------------------------
-docx_image_map = {}  # blip_embed_id -> filename
+# Extract images
+docx_image_map = {}  # rId -> filename
 img_idx = [0]
 
 def extract_docx_images():
@@ -47,7 +45,7 @@ def extract_docx_images():
 
 extract_docx_images()
 
-# --- Walk paragraph/run to build markdown ---------------------------
+# Build Markdown
 def iter_block_items(doc):
     """Yield (type, element) for paragraphs and tables in document order."""
     from docx.oxml.ns import qn
@@ -63,12 +61,10 @@ def paragraph_text_with_images(para, docx_image_map):
     parts = []
     images = []
     for run in para.runs:
-        # Check for drawings / inline images
         drawing_els = run._element.findall(qn('w:drawing'))
         if not drawing_els:
             drawing_els = run._element.findall(qn('w:pict'))
         for drawing in drawing_els:
-            # Search for blip embed
             for blip in drawing.iter(qn('a:blip')):
                 embed = blip.get(qn('r:embed'))
                 if embed and embed in docx_image_map:
@@ -92,10 +88,8 @@ def table_to_md(table, docx_image_map):
         rows.append(cells)
     if not rows:
         return ""
-    # Build MD table
     col_count = max(len(r) for r in rows)
     lines = []
-    # header
     header = rows[0]
     while len(header) < col_count:
         header.append("")
@@ -107,10 +101,9 @@ def table_to_md(table, docx_image_map):
         lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)
 
-# Collect all content
+# Collect content
 md_parts = []
 
-# Title / header from first paragraphs
 for block_type, block in iter_block_items(doc):
     if block_type == 'paragraph':
         text, imgs = paragraph_text_with_images(block, docx_image_map)
@@ -123,9 +116,7 @@ for block_type, block in iter_block_items(doc):
 
 docx_text = "\n\n".join(md_parts)
 
-# ════════════════════════════════════════════════════════════════════
-#  2. EXTRACT PDF
-# ════════════════════════════════════════════════════════════════════
+# Extract PDF
 import fitz  # PyMuPDF
 
 pdf_doc = fitz.open(PDF_PATH)
@@ -137,7 +128,6 @@ for page_num in range(len(pdf_doc)):
     text = page.get_text("text")
     pdf_text_pages.append(f"## PDF - 第 {page_num+1} 页\n\n{text.strip()}")
     
-    # Extract images from page
     for img_index, img in enumerate(page.get_images(full=True)):
         xref = img[0]
         base_image = pdf_doc.extract_image(xref)
@@ -153,9 +143,7 @@ for page_num in range(len(pdf_doc)):
 pdf_text = "\n\n".join(pdf_text_pages)
 pdf_images_section = "\n\n".join(pdf_image_refs)
 
-# ════════════════════════════════════════════════════════════════════
-#  3. COMBINE & WRITE
-# ════════════════════════════════════════════════════════════════════
+# Combine and write output
 
 final_md = f"""# H题 车载平衡滚球运动控制系统
 

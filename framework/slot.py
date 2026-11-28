@@ -1,14 +1,9 @@
-"""Latest-value slot: publish, overwrite, read newest.
+"""Publish and read the newest value through a single-slot mailbox.
 
-One writer (usually a worker thread) publishes the most recent value;
-readers poll for anything newer than the generation they last saw. This
-replaces the hand-rolled "store newest + detect change" patterns (object
-identity checks, serial comparisons, drain deques) scattered across the
-codebase.
-
-Selection rule (docs/architecture/thread_tick_topology.md): use a Slot for
-continuous state where losing intermediate values is acceptable - camera
-frames, detection results, fps/link status.
+One writer (usually a worker thread) publishes the most recent value; readers
+poll for anything newer than the generation they last saw. Use a slot for
+continuous state where intermediate values can be dropped: camera frames,
+detection results, fps/link status.
 """
 
 from __future__ import annotations
@@ -37,7 +32,11 @@ class Slot(Generic[T]):
         self._gen: int = 0
 
     def publish(self, value: T) -> int:
-        """Overwrite the slot and bump the generation. Returns the new gen."""
+        """Overwrite the slot and bump the generation.
+
+        Returns:
+            The new generation number.
+        """
         with self._lock:
             self._value = value
             self._gen += 1

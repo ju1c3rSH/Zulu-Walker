@@ -10,7 +10,7 @@ from utils.log_util import log_print
 
 
 class Task:
-    """任务类，封装Processor并提供生命周期管理"""
+    """Wrap a Processor with enable/disable state and execution bookkeeping."""
 
     def __init__(self, name: str, processor: Processor, enabled: bool = True):
         self.name = name
@@ -20,24 +20,23 @@ class Task:
         self._execution_count = 0
 
     def enable(self):
-        """启用任务"""
+        """Enable the task."""
         self.enabled = True
 
     def disable(self):
-        """禁用任务"""
+        """Disable the task and release its processor."""
         self.enabled = False
         self.processor.release()
 
     def execute(self, frame: np.ndarray, context: dict = None) -> Optional[VisionResult]:
-        """
-        执行任务
+        """Run the processor on a frame and cache the result.
 
         Args:
-            frame: 输入图像帧
-            context: 上下文，可包含前置任务结果
+            frame: Input image.
+            context: Environment context, possibly including earlier results.
 
         Returns:
-            VisionResult 或 None（如果任务被禁用）
+            The processor result, or None when the task is disabled.
         """
         if not self.enabled:
             return None
@@ -49,17 +48,17 @@ class Task:
 
     @property
     def last_result(self) -> Optional[VisionResult]:
-        """获取最后一次执行结果"""
+        """Return the most recent execution result."""
         return self._last_result
 
     @property
     def execution_count(self) -> int:
-        """获取执行次数"""
+        """Return the number of times the task has run."""
         return self._execution_count
 
 
 class TaskManager:
-    """任务管理器，管理多个Task的串行执行"""
+    """Register tasks and run the enabled ones in sequence."""
 
     def __init__(self):
         self.tasks: OrderedDict[str, Task] = OrderedDict()
@@ -67,19 +66,19 @@ class TaskManager:
         self.draw_enabled: bool = False
 
     def register_task(self, task: Task):
-        """注册任务"""
+        """Register a task under its name."""
         self.tasks[task.name] = task
 
     def unregister_task(self, name: str) -> Optional[Task]:
-        """注销任务"""
+        """Unregister and return the named task."""
         return self.tasks.pop(name, None)
 
     def get_task(self, name: str) -> Optional[Task]:
-        """获取任务"""
+        """Return the named task, if present."""
         return self.tasks.get(name)
 
     def enable_task(self, name: str) -> bool:
-        """启用指定任务"""
+        """Enable a task by name; return whether it existed."""
         task = self.tasks.get(name)
         if task:
             task.enable()
@@ -87,7 +86,7 @@ class TaskManager:
         return False
 
     def disable_task(self, name: str) -> bool:
-        """禁用指定任务"""
+        """Disable a task by name; return whether it existed."""
         task = self.tasks.get(name)
         if task:
             task.disable()
@@ -95,30 +94,29 @@ class TaskManager:
         return False
 
     def add_result_callback(self, callback: Callable[[str, VisionResult], None]):
-        """添加结果回调"""
+        """Add a callback invoked with each task result."""
         self.result_callbacks.append(callback)
 
     def remove_result_callback(self, callback: Callable[[str, VisionResult], None]):
-        """移除结果回调"""
+        """Remove a previously added result callback."""
         if callback in self.result_callbacks:
             self.result_callbacks.remove(callback)
 
     def run_tasks_serial(
         self, frame: np.ndarray, context: dict = None
     ) -> Tuple[np.ndarray, Dict[str, VisionResult]]:
-        """
-        串行执行所有启用的Task。
+        """Run all enabled tasks in sequence on one frame.
 
-        每个 task 的 processor 收到该 task 独立的完整上下文（环境变量 + 前置 task 结果）。
-        task 输出的 VisionResult 存入独立的 task_results dict 返回，
-        不入参 context dict。
+        Each processor receives a context merging the shared environment with
+        the results of earlier tasks. Results are collected in a separate dict
+        instead of being written back into ``context``.
 
         Args:
-            frame: 输入图像帧
-            context: 只读环境上下文，如 {'fps': ..., 'focal_calculator': ...}
+            frame: Input image.
+            context: Read-only environment values such as fps and focal calculator.
 
         Returns:
-            Tuple[np.ndarray, Dict[str, VisionResult]]: 处理后的帧和 {task_name: VisionResult}
+            The annotated frame and a mapping of task names to results.
         """
         if frame is None:
             return None, {}
@@ -154,11 +152,11 @@ class TaskManager:
         return processed_frame, task_results
 
     def get_all_results(self) -> Dict[str, Optional[VisionResult]]:
-        """获取所有任务的最后结果"""
+        """Return the last result of every task."""
         return {name: task.last_result for name, task in self.tasks.items()}
 
     def clear_all_results(self):
-        """清除所有任务的最后结果"""
+        """Clear the cached result of every task."""
         for task in self.tasks.values():
             task._last_result = None
 

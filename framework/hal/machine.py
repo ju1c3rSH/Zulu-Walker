@@ -3,7 +3,7 @@
 import importlib
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -21,6 +21,21 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _runtime_options(raw: Any) -> dict:
+    """The accelerator block of the config, or an empty dict when absent.
+
+    The block is read from ``ai.runtime`` and from ``ai.models[].runtime``.
+    It is passed to the engine verbatim: the engine layer owns the
+    vocabulary (providers, device, fallback), so the configuration loader
+    stays a loader and does not grow a second copy of the schema.
+    """
+    if isinstance(raw, dict):
+        return dict(raw)
+    if raw is not None:
+        logger.warning("ai.runtime must be a mapping, ignoring %r", raw)
+    return {}
+
+
 class Machine:
     def __init__(
         self,
@@ -32,6 +47,7 @@ class Machine:
         sys_info: Optional[object] = None,
         platform: Optional[str] = None,
         battery: Optional[Battery] = None,
+        canvas_factory: Optional[object] = None,
     ) -> None:
         self.camera_hub = camera_hub
         self.display = display
@@ -41,8 +57,11 @@ class Machine:
         # Platform capability hooks (probed via getattr, never hard imports):
         self.exit_check = exit_check
         self.sys_info = sys_info
-        # 电量计（可选能力）: 有 PMU/sysfs 电量计的平台为实例，
-        # 其余为 None。构造在 create 阶段完成，不碰主循环。
+        # Turns a frame into a UI Canvas; None on a platform without one, in
+        # which case the vision module simply renders no HUD.
+        self.canvas_factory = canvas_factory
+        # Optional fuel gauge: an instance on platforms with a PMU/sysfs gauge,
+        # None elsewhere. Constructed in create(), so the main loop is untouched.
         self.battery = battery
 
     @classmethod
@@ -93,6 +112,9 @@ class Machine:
         exit_factory = getattr(platform_mod, "create_exit_check", None)
         exit_check = exit_factory() if callable(exit_factory) else None
         source_resolver = getattr(platform_mod, "resolve_camera_source", None)
+        canvas_factory = getattr(platform_mod, "create_canvas", None)
+        if not callable(canvas_factory):
+            canvas_factory = None
         sysinfo_factory = getattr(platform_mod, "create_sys_info", None)
         try:
             sys_info = sysinfo_factory() if callable(sysinfo_factory) else None
@@ -138,9 +160,10 @@ class Machine:
             logger.warning("UART creation failed (non-fatal): %s", e)
             uart = None
 
-        # 电量: 与 display/uart 一样在 create 阶段初始化（Pro 上 open i2c-4, ~2.4ms）。
-        # 不能留到第一次 read —— 那把一次冷 import 塞进了主循环的一拍。
-        # 平台没提供 create_battery 时保持 None（能力探测，不硬导入）。
+        # Battery, like display/uart, is initialized in create() (on Pro this
+        # opens i2c-4, ~2.4 ms). Deferring it to the first read would put a cold
+        # import into a main-loop tick. Platforms without create_battery keep
+        # None: capability probing, no hard import.
         battery: Optional[Battery] = None
         battery_factory = getattr(platform_mod, "create_battery", None)
         if callable(battery_factory):
@@ -151,17 +174,47 @@ class Machine:
                 battery = None
 
         # --- AI initialization ---
+        # Two paths.  An explicit engine in the config selects the kernel
+        # driven backend, which owns the artifact and the manifest; without
+        # an engine the platform keeps its own backend (the MaixCAM
+        # platforms bind maix.nn directly and read the MUD file).
         ai: Optional[AIInference] = None
         if ai_config is not None:
+            engine_id = str(ai_config.get("engine") or "").strip()
+            # The accelerator is a deployment property, not an artifact
+            # property: the same .onnx runs on a CPU laptop, a DirectML
+            # desktop and a CUDA host, and only this block differs.
+            runtime_options = _runtime_options(ai_config.get("runtime"))
             try:
-                ai = platform_mod.create_ai()
+                if engine_id:
+                    ai = platform_mod.create_ai(
+                        engine=engine_id,
+                        switch_timeout_ms=int(
+                            ai_config.get("switch_timeout_ms", 2000)
+                        ),
+                        frame=ai_config.get("frame"),
+                        runtime_options=runtime_options,
+                    )
+                else:
+                    ai = platform_mod.create_ai()
                 models_cfg = ai_config.get("models", [])
                 for m in models_cfg:
-                    ai.add(
-                        nick_name=m["nick_name"],
-                        model_path=m["model"],
-                        model_type=m.get("model_type", "auto"),
-                    )
+                    manifest_path = m.get("manifest")
+                    model_runtime = _runtime_options(m.get("runtime"))
+                    if manifest_path:
+                        ai.add(
+                            nick_name=m["nick_name"],
+                            model_path=m["model"],
+                            model_type=m.get("model_type", "auto"),
+                            manifest_path=manifest_path,
+                            runtime_options=model_runtime,
+                        )
+                    else:
+                        ai.add(
+                            nick_name=m["nick_name"],
+                            model_path=m["model"],
+                            model_type=m.get("model_type", "auto"),
+                        )
                 active = ai_config.get("active")
                 if active:
                     if active in ai.models:
@@ -174,6 +227,12 @@ class Machine:
                         )
             except Exception as e:
                 logger.error("Failed to initialize AI: %s", e)
+                if engine_id:
+                    # An explicitly configured engine that cannot be brought
+                    # up is a startup failure.  A silent downgrade would run
+                    # the system an order of magnitude slower with no visible
+                    # cause, so the failure stays visible.
+                    raise
                 ai = None
         if bt:
             bt.summary("TOTAL")
@@ -187,6 +246,7 @@ class Machine:
             sys_info=sys_info,
             platform=platform,
             battery=battery,
+            canvas_factory=canvas_factory,
         )
 
     def close(self) -> None:

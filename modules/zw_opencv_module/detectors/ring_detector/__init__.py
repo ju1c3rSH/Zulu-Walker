@@ -71,7 +71,8 @@ class RingDetector:
         self.name = name
 
         self.ed = None
-        # ED params must be assigned BEFORE _init_edge_drawing() calls _update_ed_params()
+        # Assign ED parameters before _init_edge_drawing reads them via
+        # _update_ed_params.
         self.ed_min_path_length = 20
         self.ed_gradient_threshold = 36
         self.ed_nfa_validation = False

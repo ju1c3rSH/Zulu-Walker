@@ -9,12 +9,10 @@ from modules.zw_opencv_module.models.ring import RingTarget
 
 
 class EdgeDrawingRingMethod(BaseRingDetectionMethod):
-    """Edge-drawing ring detection with ROI-based color verification.
+    """Detect rings with EdgeDrawing and verify color on a small candidate ROI.
 
-    Runs EdgeDrawing on grayscale (fast, C++ edge detector), fits ellipses
-    to dilated edge contours, then verifies target color ONLY on a small
-    ROI around each candidate ellipse.  No full-frame HSV, no full-frame
-    mask allocation, no Kalman.
+    Fit ellipses to closed edge contours, then check the target color only
+    near each candidate, avoiding a full-frame HSV conversion or mask.
     """
 
     AXIS_RATIO_MAX = 1.5

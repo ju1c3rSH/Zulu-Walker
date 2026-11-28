@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 
 
 class FrameComposer:
-    """画面融合器，将多个帧融合为一个画面"""
+    """Compose multiple frames into a single output image."""
 
     def __init__(
         self,
@@ -13,13 +13,12 @@ class FrameComposer:
         output_size: Tuple[int, int] = (1280, 720),
         labels: List[str] = None,
     ):
-        """
-        初始化画面融合器
+        """Initialize the composer.
 
         Args:
-            layout: 布局模式 ("grid", "horizontal", "vertical")
-            output_size: 输出画面尺寸 (width, height)
-            labels: 相机标签列表
+            layout: One of "grid", "horizontal", or "vertical".
+            output_size: Output image size as (width, height).
+            labels: Camera labels drawn on the composed image.
         """
         self.layout = layout
         self.output_size = output_size
@@ -29,16 +28,16 @@ class FrameComposer:
         self, frames: List[np.ndarray], camera_ids: List[str] = None,
         fps_list: List[float] = None,
     ) -> np.ndarray:
-        """
-        将多个帧融合为一个画面
+        """Compose frames using the configured layout.
 
         Args:
-            frames: 帧列表
-            camera_ids: 相机ID列表（用于标签）
-            fps_list: 各相机FPS值列表（用于显示）
+            frames: Frames to arrange.
+            camera_ids: IDs used as labels, falling back to the configured
+                labels when this is empty.
+            fps_list: Per-camera FPS values drawn on the output.
 
         Returns:
-            np.ndarray: 融合后的画面
+            The composed image.
         """
         if not frames:
             return self._create_empty_frame()
@@ -55,7 +54,7 @@ class FrameComposer:
             return self._grid_layout(frames, labels, fps_list)
 
     def _create_empty_frame(self) -> np.ndarray:
-        """创建空白帧"""
+        """Create a black frame with a "No Camera" message."""
         frame = np.zeros((self.output_size[1], self.output_size[0], 3), dtype=np.uint8)
         cv2.putText(
             frame,
@@ -91,17 +90,17 @@ class FrameComposer:
         cv2.putText(frame, text, (fx, fy), font, scale, (255, 255, 255), thickness)
 
     def _resize_single_frame(self, frame: np.ndarray) -> np.ndarray:
-        """调整单个帧的尺寸"""
+        """Resize a frame to the configured output size."""
         return cv2.resize(frame, self.output_size)
 
     def _grid_layout(
         self, frames: List[np.ndarray], labels: List[str] = None,
         fps_list: List[float] = None,
     ) -> np.ndarray:
-        """网格布局"""
+        """Arrange frames in a grid."""
         n = len(frames)
 
-        # 计算网格尺寸
+        # Choose grid dimensions from the frame count.
         if n <= 1:
             cols, rows = 1, 1
         elif n <= 2:
@@ -115,11 +114,11 @@ class FrameComposer:
         else:
             cols, rows = 4, 3
 
-        # 计算每个单元格的尺寸
+        # Compute each cell's dimensions.
         cell_width = self.output_size[0] // cols
         cell_height = self.output_size[1] // rows
 
-        # 创建输出画面
+        # Allocate the output canvas.
         output = np.zeros(
             (self.output_size[1], self.output_size[0], 3), dtype=np.uint8
         )
@@ -131,20 +130,20 @@ class FrameComposer:
             row = i // cols
             col = i % cols
 
-            # 调整帧尺寸（如果尺寸相同则跳过 resize）
+            # Skip resizing when the frame already fits the cell.
             if frame.shape[0] == cell_height and frame.shape[1] == cell_width:
                 resized = frame
             else:
                 resized = cv2.resize(frame, (cell_width, cell_height))
 
-            # 放置到输出画面
+            # Place the frame in its cell.
             y1 = row * cell_height
             y2 = y1 + cell_height
             x1 = col * cell_width
             x2 = x1 + cell_width
             output[y1:y2, x1:x2] = resized
 
-            # 添加标签
+            # Draw the camera label.
             if labels and i < len(labels):
                 cv2.rectangle(output, (x1 + 5, y1 + 5), (x1 + 100, y1 + 30), (0, 0, 0), -1)
                 cv2.putText(
@@ -157,7 +156,7 @@ class FrameComposer:
                     1,
                 )
 
-            # 添加FPS
+            # Draw the FPS overlay.
             if fps_list and i < len(fps_list) and fps_list[i] > 0:
                 self._draw_fps_in_rect(output, x1, y1, x2, y2, fps_list[i])
 
@@ -167,7 +166,7 @@ class FrameComposer:
         self, frames: List[np.ndarray], labels: List[str] = None,
         fps_list: List[float] = None,
     ) -> np.ndarray:
-        """水平布局"""
+        """Arrange frames side by side."""
         n = len(frames)
         cell_width = self.output_size[0] // n
         cell_height = self.output_size[1]
@@ -204,7 +203,7 @@ class FrameComposer:
         self, frames: List[np.ndarray], labels: List[str] = None,
         fps_list: List[float] = None,
     ) -> np.ndarray:
-        """垂直布局"""
+        """Arrange frames top to bottom."""
         n = len(frames)
         cell_width = self.output_size[0]
         cell_height = self.output_size[1] // n

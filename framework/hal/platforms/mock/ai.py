@@ -41,7 +41,15 @@ class MockAI:
             return self._registry[self._active_name].get("type", "")
         return ""
 
-    def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
+    @property
+    def model_family(self) -> str:
+        """The mock has no manifest, so it declares no family."""
+        return ""
+
+    def add(
+        self, nick_name: str, model_path: str, model_type: str = "auto",
+        *, manifest_path: Optional[str] = None, **kwargs
+    ) -> bool:
         self._registry[nick_name] = dict(path=model_path, type=model_type, kwargs=kwargs)
         logger.info("MockAI: registered model '%s' (%s, type=%s)", nick_name, model_path, model_type)
         if not self._active_name:
@@ -61,8 +69,14 @@ class MockAI:
         logger.info("MockAI: switched to '%s' (mock)", nick_name)
         return True
 
-    def load(self, model_path: str, model_type: str = "auto", **kwargs) -> bool:
-        return self.add("default", model_path, model_type=model_type, **kwargs)
+    def load(
+        self, model_path: str, model_type: str = "auto",
+        *, manifest_path: Optional[str] = None, **kwargs
+    ) -> bool:
+        return self.add(
+            "default", model_path, model_type=model_type,
+            manifest_path=manifest_path, **kwargs
+        )
 
     def unload(self) -> None:
         self.remove(self._active_name)

@@ -89,6 +89,110 @@ def test_valid_manifest_is_clean(tmp_path, capsys):
     assert "0 error(s)" in out
 
 
+_ONNX_ARTIFACT = {
+    "file": "demo.onnx",
+    "wrapper": "vision.det.raw",
+    "wrapper_params": {},
+    "preprocess": {"resize": "framework", "norm": "framework", "formula": "yolo"},
+    "io": {"inputs": {"image": "images"}, "outputs": {"pred": "output0"}},
+}
+
+_NCNN_ARTIFACT = {
+    "file": "demo.param",
+    "bin": "demo.bin",
+    "wrapper": "vision.det.raw",
+    "wrapper_params": {},
+    "preprocess": {
+        "resize": "framework",
+        "norm": "engine",
+        "formula": "substract_mean_normalize",
+    },
+    "io": {"inputs": {"image": "data"}, "outputs": {"pred": "output"}},
+}
+
+
+def _with_runtime(block: dict, engine: str = "onnxruntime", version: str = "1.26") -> dict:
+    """The base manifest with an accelerator block on one more artifact."""
+    doc = _base_manifest()
+    artifact = dict(_ONNX_ARTIFACT if engine == "onnxruntime" else _NCNN_ARTIFACT)
+    artifact["runtime"] = {"version": version, **block}
+    doc["artifacts"][engine] = artifact
+    return doc
+
+
+def test_a_misspelled_provider_name_is_an_error(tmp_path, capsys):
+    _run(tmp_path, _with_runtime({"providers": ["CUDAExecutionProvder"]}))
+    errors = _errors(capsys.readouterr().out)
+    assert any("unknown provider 'CUDAExecutionProvder'" in line for line in errors)
+
+
+def test_a_known_provider_list_is_clean(tmp_path, capsys):
+    code = _run(
+        tmp_path,
+        _with_runtime({"providers": ["CUDAExecutionProvider", "CPUExecutionProvider"]}),
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert _errors(out) == []
+
+
+def test_options_for_a_provider_that_is_not_requested_is_an_error(tmp_path, capsys):
+    _run(
+        tmp_path,
+        _with_runtime(
+            {
+                "providers": ["CPUExecutionProvider"],
+                "provider_options": {"DmlExecutionProvider": {"device_id": 0}},
+            }
+        ),
+    )
+    errors = _errors(capsys.readouterr().out)
+    assert any("is not in runtime.providers" in line for line in errors)
+
+
+def test_an_unknown_fallback_mode_is_an_error(tmp_path, capsys):
+    _run(tmp_path, _with_runtime({"fallback": "warn"}))
+    errors = _errors(capsys.readouterr().out)
+    assert any("runtime.fallback" in line for line in errors)
+
+
+def test_an_unknown_fp16_mode_is_an_error(tmp_path, capsys):
+    _run(tmp_path, _with_runtime({"fp16": "maybe"}))
+    errors = _errors(capsys.readouterr().out)
+    assert any("runtime.fp16" in line for line in errors)
+
+
+def test_an_unknown_runtime_key_is_a_warning(tmp_path, capsys):
+    """A typo in the key itself would otherwise be ignored by everyone."""
+    code = _run(tmp_path, _with_runtime({"provider": ["CPUExecutionProvider"]}))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert any("runtime.provider is not a known key" in line for line in _warnings(out))
+
+
+def test_an_unknown_ncnn_device_is_an_error(tmp_path, capsys):
+    _run(
+        tmp_path,
+        _with_runtime({"device": "metal"}, engine="ncnn", version="1.0.20261020"),
+    )
+    errors = _errors(capsys.readouterr().out)
+    assert any("runtime.device" in line for line in errors)
+
+
+def test_a_vulkan_device_selector_is_accepted(tmp_path, capsys):
+    code = _run(
+        tmp_path,
+        _with_runtime(
+            {"device": "vulkan", "vulkan_device": "auto"},
+            engine="ncnn",
+            version="1.0.20261020",
+        ),
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert _errors(out) == []
+
+
 def test_empty_io_inputs_is_an_error(tmp_path, capsys):
     doc = _base_manifest()
     doc["artifacts"]["maix_nn"]["io"]["inputs"] = {}

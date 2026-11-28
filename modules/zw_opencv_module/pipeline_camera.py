@@ -99,15 +99,15 @@ class PipelineCamera:
         return None
 
     def _camera_stage(self, fallback_ms: float) -> Tuple[float, float]:
-        """Return (read_ms, convert_ms) for the last camera read.
+        """Return the read and convert costs for the last camera read.
 
         Args:
             fallback_ms: Wall time around ``read_raw()`` when the HAL exposes
                 no breakdown.
 
-        Return:
-            Read and convert milliseconds. HALs without ``stage_ms`` attribute
-            the whole span to read, keeping prior judgement unchanged.
+        Returns:
+            Read and convert times in milliseconds. Without a ``stage_ms``
+            mapping, the whole span is attributed to read.
         """
         st = getattr(self.camera, "stage_ms", None)
         if isinstance(st, dict):
@@ -142,10 +142,9 @@ class PipelineCamera:
                              "convert": conv_ms, "tasks": 0.0, "tasks_cpu": 0.0}
             return None, {}
 
-        # Freshness gate: read_raw returning no new pixels (stall / reconnect)
-        # means the cached `frame` is a frozen image. Re-running tasks on it
-        # would hand downstream consumers stale detections dressed as fresh
-        # results — return absence of evidence instead.
+        # Freshness gate: no new pixels from read_raw (stall / reconnect) leaves
+        # a frozen cached frame. Re-running tasks on it would pass stale
+        # detections off as fresh, so report no new data instead.
         serial = getattr(self.camera, "frame_serial", None)
         if serial is not None and serial == self._last_input_serial:
             self.stage_ms = {"read": read_ms, "read_cpu": read_cpu,

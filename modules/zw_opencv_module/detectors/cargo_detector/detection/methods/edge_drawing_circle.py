@@ -95,8 +95,9 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
     def _run_edge_pipeline(self, bgr: np.ndarray, hsv: np.ndarray,
                            target_color: Color
                            ) -> Optional[Tuple[List, np.ndarray]]:
-        """Edge detection -> morph -> contours -> color_mask.
-        Returns (contours, color_mask) or None on failure.
+        """Detect edges, close them, and build contours and the color mask.
+
+        Return (contours, color_mask), or None if edges or contours are absent.
         """
         if self.detector.ed is None:
             return None
@@ -193,7 +194,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         if not raw_ranges:
             return None
 
-        # Pass 1 — use the original hardcoded ranges (same as original code)
+        # First pass: match the configured color ranges unchanged.
         mask = None
         for lower, upper in raw_ranges:
             chunk = cv2.inRange(hsv, lower, upper)
@@ -202,7 +203,7 @@ class EdgeDrawingCircleMethod(BaseDetectionMethod):
         if mask is not None and cv2.countNonZero(mask) >= self.detector.low_light_min_pixels:
             return mask
 
-        # Pass 2 — mask too sparse (low light), relax S/V
+        # Second pass: if the mask is too sparse (low light), relax S and V.
         relaxed = None
         for lower, upper in raw_ranges:
             rel_lower = np.array([

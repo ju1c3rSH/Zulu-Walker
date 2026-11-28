@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from framework.hal.interface import AIInference
+
 from .ai import MaixCam1AI
 from .battery import MaixCam1Battery
 from .camera import MaixCam1Camera
@@ -9,7 +15,7 @@ def create_exit_check():
     """Return the platform exit predicate for the framework main loop.
 
     The framework calls this without importing maix itself (ARCH-06).
-    MaixCAM 固件同样提供 maix.app.need_exit。
+    MaixCAM firmware also provides maix.app.need_exit.
     """
     from maix import app as _app
 
@@ -19,15 +25,16 @@ def create_exit_check():
 def create_camera(source, width: int = 640, height: int = 480, **kwargs) -> MaixCam1Camera:
     camera_id = kwargs.pop("camera_id", str(source))
     fps = kwargs.pop("fps", None)
-    # CAM1 取图延时最低 30+ms（即使 buff_num=1 也至少双缓存），
-    # 这里默认 2 即可，不必像 CAM2 那样堆缓冲。
+    # CAM1 capture latency is at least 30 ms even at buff_num=1 because the
+    # firmware always double-buffers, so a small value is sufficient here.
     buff_num = kwargs.pop("camera_stream_queue_size", 2)
     focal_length_mm = kwargs.pop("focal_length_mm", None)
     sensor_width_mm = kwargs.pop("sensor_width_mm", None)
     sensor_height_mm = kwargs.pop("sensor_height_mm", None)
-    # Machine.create 会把曝光/增益/AEC 透传给平台工厂；CAM1 的相机构造不认
-    # 这三个参数（运行期改曝光要走 set()），必须显式吞掉，否则这里直接
-    # TypeError，连相机都开不起来。
+    # Machine.create forwards exposure/gain/AEC to the platform factory, but
+    # the CAM1 camera constructor rejects them (runtime changes go via set()).
+    # Drop them here; passing them through would raise TypeError before the
+    # camera can even open.
     kwargs.pop("exposure_us", None)
     kwargs.pop("gain", None)
     kwargs.pop("aec", None)
@@ -52,13 +59,49 @@ def create_uart(port: str, baudrate: int = 115200) -> MaixCam1Uart:
     return MaixCam1Uart(port=port, baudrate=baudrate)
 
 
-def create_ai() -> MaixCam1AI:
-    return MaixCam1AI()
+def create_ai(
+    engine: str = "",
+    *,
+    switch_timeout_ms: Optional[int] = None,
+    frame: Any = None,
+    runtime_options: Optional[dict] = None,
+) -> AIInference:
+    """Return the AI backend of this board.
+
+    An empty ``engine`` keeps the board's own backend, which loads CVITEK
+    .cvimodel files through the firmware.  A non-empty engine selects the
+    kernel; both branches satisfy AIInference, so the caller does not branch
+    on the platform.
+
+    The kernel imports are local: a package built without
+    ``framework/inference`` still starts with the own backend.
+    """
+    if not engine:
+        return MaixCam1AI()
+
+    from framework.hal.platforms.frame_spec import frame_spec_from_config
+    from framework.inference.facade import DEFAULT_SWITCH_TIMEOUT_MS, AIFacade
+
+    return AIFacade(
+        engine,
+        switch_timeout_ms=(
+            DEFAULT_SWITCH_TIMEOUT_MS
+            if switch_timeout_ms is None
+            else switch_timeout_ms
+        ),
+        frame_spec=frame_spec_from_config(frame),
+        runtime_options=runtime_options,
+    )
+
+
+def create_canvas(frame):
+    """Wrap a maix Image so the vision module can draw the HUD onto it."""
+    from framework.hal.platforms.maix_canvas import MaixCanvas
+
+    return MaixCanvas(frame)
 
 
 def create_battery() -> MaixCam1Battery:
-    # 与 create_display/create_uart 一致: 在 create 阶段就把硬件打开。
-    # 不能留到第一次 read() —— 那把"冷 import maix.ext_dev"塞进了主循环的一拍。
     return MaixCam1Battery()
 
 

@@ -41,6 +41,7 @@ def init(machine: Machine, event_bus=None, wdt_feed=None, **kwargs) -> None:
         camera_hub=machine.camera_hub,
         config_path=config_path,
         ai=machine.ai,
+        canvas_factory=getattr(machine, "canvas_factory", None),
     )
     if event_bus is not None:
         _vision_manager.set_event_bus(event_bus)

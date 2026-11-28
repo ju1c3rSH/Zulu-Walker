@@ -12,21 +12,11 @@ from utils.log_util import log_print
 
 
 class HeuristicRingMethod(BaseRingDetectionMethod):
-    """Contour-driven ring detection via EdgeDrawing + color mask verification.
+    """Detect rings from edge contours and verify them against the color mask.
 
-    Pipeline:
-        1. EdgeDrawing on grayscale (CLAHE → blur → detectEdges → morph close)
-           produces continuous arcs from the fine red line connecting dashed segments.
-        2. Color mask (raw, no morph) from HSV inRange for ring-band density checks.
-        3. findContours on edge image → fitEllipse → candidate center + outer radius.
-        4. Ring-band color density verification on raw color mask at outer radius.
-        5. HoughCircles concentric verification around candidate center (dp=2.0).
-        6. Confidence: base from fitEllipse, +20 per confirmed concentric ring.
-
-    Performance:
-        - Discovery: EdgeDrawing + contours + Hough verify  ~4-6 ms
-        - ROI tracking: fast ring-band density verify        ~0.3 ms
-        - Kalman prediction: pure math                       ~0.01 ms
+    Apply EdgeDrawing to a grayscale frame, fit ellipses to contours, check
+    ring-band color density, then optionally confirm concentric rings with
+    Hough circles. Confidence rises with each confirmed ring.
     """
 
     _LOG_INTERVAL = 60
@@ -51,9 +41,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     def __init__(self, detector=None):
         super().__init__(name="heuristic_ring", detector=detector)
 
-    # ================================================================
-    #  public entry
-    # ================================================================
+    # Public entry point.
 
     def detect(self, frame: np.ndarray, target_color: Color) -> Optional[RingTarget]:
         if self.detector is None or self.detector.ed is None:
@@ -64,14 +52,14 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         discovery_w = 320 if ts.last_center is None else TARGET_W
         small, scale, small_hw = self._scale_frame(frame, discovery_w)
 
-        # ── color mask (raw, no morph) ──
+        # Color mask from the raw frame, without morphology.
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         color_mask = self._build_color_mask(hsv, target_color)
         if color_mask is None:
             self._info(f"[HeuristicRing] {target_color.name}: no color ranges configured")
             return self._fallback_predict(ts, target_color)
 
-        # ── EdgeDrawing edge image ──
+        # EdgeDrawing edge image.
         edges = self._build_edge_image(small)
 
         self._alt_img = self._build_alt_processed(small)
@@ -158,9 +146,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         thresh = cv2.GaussianBlur(thresh, (9, 9), 3, 3)
         return thresh
 
-    # ================================================================
-    #  color mask
-    # ================================================================
+    # Color mask construction.
 
     def _build_color_mask(self, hsv: np.ndarray, color: Color) -> Optional[np.ndarray]:
         ranges = self.detector.color_ranges.get(color, [])
@@ -172,9 +158,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
             mask = chunk if mask is None else cv2.bitwise_or(mask, chunk)
         return mask
 
-    # ================================================================
-    #  global dispatch
-    # ================================================================
+    # Global detection dispatch.
 
     def _try_global(self, edges, color_mask, ts, target_color, scale,
                     competing_masks=None):
@@ -258,9 +242,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                    f"center=({center[0]:.0f},{center[1]:.0f}) area={area:.0f}")
         return create_ring_target(center, target_color, 30.0)
 
-    # ================================================================
-    #  core: contours from edge image + color verification
-    # ================================================================
+    # Detect contours in the edge image and verify color.
 
     def _detect_and_finalize(self, edges, color_mask, ts, target_color, scale,
                               offset, context, competing_masks=None):
@@ -332,7 +314,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
                 else:
                     best_axes = None
                     best_angle = 0.0
-                # track best axis_ratio for logging
+                # Keep the best axis ratio for logging.
                 best_axis = axis_ratio if base_conf >= 60 else 999
 
         if best_center is None:
@@ -448,10 +430,10 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
     '''
     
     def _verify_concentric(self, edges, center, outer_r):
-        """用 color_mask 做同心圆验证"""
+        """Verify concentric rings against the color mask."""
         cx, cy = int(center[0]), int(center[1])
         
-        # 改用 color_mask 而不是 edges
+        # Use the color mask rather than the edge image.
         mask = getattr(self.detector, "_last_mask", None)
         if mask is None:
             return 0
@@ -469,12 +451,12 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         local_cy = cy - y1
         max_r = min(roi.shape) // 2
 
-        # 在color_mask上找圆
+        # Find circles on the color mask.
         circles = cv2.HoughCircles(
             roi, cv2.HOUGH_GRADIENT_ALT, dp=self.HOUGH_ALT_DP,
             minDist=self.HOUGH_ALT_MIN_DIST, param1=self.HOUGH_ALT_PARAM1,
             param2=self.HOUGH_ALT_PARAM2,
-            minRadius=int(max(outer_r * 0.3, 4)),  # 动态最小半径
+            minRadius=int(max(outer_r * 0.3, 4)),  # Dynamic minimum radius
             maxRadius=int(max_r),
         )
         if circles is None:
@@ -485,15 +467,13 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         rings = 0
         for hcx, hcy, hr in circles:
             dist = np.hypot(hcx - local_cx, hcy - local_cy)
-            # 同时检查半径是否匹配
+            # Require the detected radius to match the candidate.
             if dist < center_dist_max and abs(hr - outer_r) / outer_r < 0.3:
                 rings += 1
 
         return min(rings, 3)
 
-    # ================================================================
-    #  ring band color density
-    # ================================================================
+    # Ring-band color density.
 
     def _ring_band_color_density(self, center, r, mask, band_width=None):
         if band_width is None:
@@ -515,9 +495,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
         intersection = cv2.bitwise_and(mask, mask, mask=annulus)
         return cv2.countNonZero(intersection) / annulus_px
 
-    # ================================================================
-    #  finalize / kalman / fallback
-    # ================================================================
+    # Finalization, Kalman smoothing, and fallback.
 
     def _finalize(self, center, conf, ts, target_color, scale):
         cx, cy = center
@@ -573,9 +551,7 @@ class HeuristicRingMethod(BaseRingDetectionMethod):
 
         return None
 
-    # ================================================================
-    #  logging
-    # ================================================================
+    # Logging helpers.
 
     def _tick(self) -> int:
         if not hasattr(self.detector, '_ring_log_frame'):

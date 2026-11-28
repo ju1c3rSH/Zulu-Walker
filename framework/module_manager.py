@@ -26,9 +26,8 @@ def _mainloop_perf() -> dict:
 def _mainloop_perf_flush(p: dict) -> None:
     """Report one aggregated mainloop line if the window elapsed, then reset.
 
-    Context:
-        ``gil_wait = body - cpu`` separates real work from GIL/scheduler
-        waiting; wall-only numbers would mark an idle thread as busy.
+    ``gil_wait = body - cpu`` separates real work from GIL/scheduler waiting;
+    wall-only numbers would mark an idle thread as busy.
     """
     elapsed = time.perf_counter() - p["t0"]
     if elapsed < perf_interval_s():
@@ -49,10 +48,10 @@ def _mainloop_perf_flush(p: dict) -> None:
 
 
 def supports_platform(module_or_cls, platform: Optional[str]) -> bool:
-    """Platform gating for optional modules (ARCH-03/05).
+    """Return whether an optional module may run on ``platform``.
 
     A module may declare ``PLATFORMS = ("maixcam2", ...)``; absent or empty
-    means "runs anywhere".
+    means it runs anywhere.
     """
     declared = getattr(module_or_cls, "PLATFORMS", None)
     return not declared or platform in declared

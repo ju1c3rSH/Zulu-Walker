@@ -33,6 +33,7 @@ from framework.hal.interface.ai import Detection
 from framework.inference.contract import GeometryTransform
 
 __all__ = [
+    "alloc_aligned_buffer",
     "convert_norm_params",
     "decode_yolo",
     "iou_matrix",
@@ -276,6 +277,35 @@ def normalize_engine(
     out -= mean_arr
     out /= std_arr
     return out
+
+
+def alloc_aligned_buffer(
+    shape: tuple[int, ...],
+    dtype: Any = np.uint8,
+    alignment: int = 16,
+) -> np.ndarray:
+    """Allocate a buffer whose data pointer is aligned to `alignment` bytes.
+
+    Some engines require the input buffer to be aligned; a plain numpy
+    allocation is not guaranteed to be.  The block is over-allocated and the
+    aligned window is cut out of it, so the returned array keeps the block
+    alive and never hands out a pointer the caller does not own.
+
+    The alignment is a property of the data pointer, so the offset is
+    computed on the flat buffer and not on any axis of the result.
+    """
+    align = int(alignment)
+    if align <= 0:
+        raise ValueError("alignment must be positive")
+    dtype = np.dtype(dtype)
+    count = 1
+    for dim in shape:
+        count *= int(dim)
+    nbytes = count * dtype.itemsize
+    block = np.empty(nbytes + align, dtype=np.uint8)
+    offset = (-int(block.ctypes.data)) % align
+    window = block[offset: offset + nbytes]
+    return window.view(dtype).reshape(tuple(int(dim) for dim in shape))
 
 
 def convert_norm_params(

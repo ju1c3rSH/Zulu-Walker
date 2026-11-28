@@ -1,166 +1,44 @@
 ﻿from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Callable, Optional
 
-import numpy as np
-
-from framework.hal.interface.ai import Detection, E_INFER_FAILED, E_MODEL_NOT_LOADED
+from framework.hal.platforms.frame_spec import frame_spec_from_config
+from framework.inference.facade import DEFAULT_SWITCH_TIMEOUT_MS, AIFacade
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_ENGINE_ID = "onnxruntime"
 
-class LinuxAI:
-    """Placeholder AI backend for generic Linux hosts.
+__all__ = ["DEFAULT_ENGINE_ID", "LinuxAI"]
 
-    No inference engine is bound yet, so every call reports a failure code
-    instead of pretending that the scene is empty.
+
+class LinuxAI(AIFacade):
+    """Desktop AI backend: the inference kernel owns the engine and the contract.
+
+    The platform contributes exactly one thing - the shape of the frames the
+    camera delivers.  Everything else (the engine, the artifact, the
+    preprocessing and the task dialect) comes from the manifest and the
+    inference kernel, so the desktop and the device share one contract.
+
+    An engine that cannot be brought up is a startup failure, not a silent
+    downgrade to a stub: a system that runs an order of magnitude slower
+    without a visible cause is worse than one that refuses to start.
     """
 
-    def __init__(self) -> None:
-        self._registry: dict[str, dict] = {}
-        self._active_name: str = ""
-        self._model_type: str = ""
-        self._model_path: str = ""
-
-        self._last_error_code: str = ""
-        self._error_count: int = 0
-        self._degraded: bool = False
-
-    # ------------------------------------------------------------------ #
-    #  Registry API
-    # ------------------------------------------------------------------ #
-
-    @property
-    def models(self) -> list[str]:
-        return list(self._registry.keys())
-
-    @property
-    def active_model(self) -> str:
-        return self._active_name
-
-    @property
-    def model_type(self) -> str:
-        return self._model_type
-
-    def add(self, nick_name: str, model_path: str, model_type: str = "auto", **kwargs) -> bool:
-        if nick_name in self._registry:
-            logger.warning("Model '%s' already registered, overwriting", nick_name)
-        self._registry[nick_name] = {
-            "path": model_path,
-            "type": model_type,
-            "kwargs": kwargs,
-        }
-        logger.info("Registered model '%s' -> %s (type=%s)", nick_name, model_path, model_type)
-        return True
-
-    def remove(self, nick_name: str) -> None:
-        if nick_name not in self._registry:
-            logger.warning("Attempt to remove unknown model '%s'", nick_name)
-            return
-        if self._active_name == nick_name:
-            self.unload()
-        del self._registry[nick_name]
-        logger.info("Removed model '%s'", nick_name)
-
-    def switch(self, nick_name: str) -> bool:
-        if nick_name not in self._registry:
-            self._report_error(
-                E_MODEL_NOT_LOADED, f"Cannot switch to unknown model '{nick_name}'")
-            return False
-        if self._active_name == nick_name:
-            return True
-        logger.warning("LinuxAI: model switching is a no-op (no inference engine bound)")
-        self._active_name = nick_name
-        info = self._registry[nick_name]
-        self._model_path = info["path"]
-        self._model_type = info.get("type", "")
-        return True
-
-    # ------------------------------------------------------------------ #
-    #  Convenience aliases
-    # ------------------------------------------------------------------ #
-
-    def load(self, model_path: str, model_type: str = "auto", **kwargs) -> bool:
-        self.add("default", model_path, model_type=model_type, **kwargs)
-        return self.switch("default")
-
-    def unload(self) -> None:
-        self._active_name = ""
-        self._model_path = ""
-
-    # ------------------------------------------------------------------ #
-    #  Properties
-    # ------------------------------------------------------------------ #
-
-    @property
-    def loaded(self) -> bool:
-        return False
-
-    @property
-    def input_width(self) -> int:
-        return 0
-
-    @property
-    def input_height(self) -> int:
-        return 0
-
-    @property
-    def labels(self) -> list[str]:
-        return []
-
-    @property
-    def model_path(self) -> str:
-        return self._model_path
-
-    @property
-    def last_error_code(self) -> str:
-        return self._last_error_code
-
-    @property
-    def error_count(self) -> int:
-        return self._error_count
-
-    @property
-    def degraded(self) -> bool:
-        return self._degraded
-
-    # ------------------------------------------------------------------ #
-    #  Inference
-    # ------------------------------------------------------------------ #
-
-    def detect(self, frame: np.ndarray, **kwargs) -> list[Detection]:
-        self._report_error(E_INFER_FAILED, "LinuxAI.detect() called but no inference engine is bound")
-        return []
-
-    def segment(self, frame: np.ndarray, **kwargs) -> list:
-        self._report_error(E_INFER_FAILED, "LinuxAI.segment() called but no inference engine is bound")
-        return []
-
-    def classify(self, frame: np.ndarray, **kwargs) -> list[tuple[int, float]]:
-        self._report_error(E_INFER_FAILED, "LinuxAI.classify() called but no inference engine is bound")
-        return []
-
-    def get_mask(self, index: int = 0) -> Optional[np.ndarray]:
-        return None
-
-    # ------------------------------------------------------------------ #
-    #  Context manager
-    # ------------------------------------------------------------------ #
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.unload()
-
-    # ------------------------------------------------------------------ #
-    #  Internal helpers
-    # ------------------------------------------------------------------ #
-
-    def _report_error(self, code: str, message: str) -> None:
-        """Record a recoverable failure so it stays visible to the caller."""
-        self._last_error_code = code
-        self._error_count += 1
-        self._degraded = True
-        logger.error("[%s] %s", code, message)
+    def __init__(
+        self,
+        engine_id: str = DEFAULT_ENGINE_ID,
+        *,
+        switch_timeout_ms: int = DEFAULT_SWITCH_TIMEOUT_MS,
+        frame: Optional[Any] = None,
+        engine_factory: Optional[Callable[[], Any]] = None,
+        runtime_options: Optional[dict] = None,
+    ) -> None:
+        super().__init__(
+            engine_id,
+            switch_timeout_ms=switch_timeout_ms,
+            frame_spec=frame_spec_from_config(frame),
+            engine_factory=engine_factory,
+            runtime_options=runtime_options,
+        )

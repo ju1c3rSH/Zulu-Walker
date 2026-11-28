@@ -62,6 +62,41 @@ LAYOUTS = {"hwc"}
 BUILD_LAYOUTS = {"hwc", "nchw", "nhwc"}
 CANONICAL_INPUT_NAMES = {"image"}
 
+# The keys a runtime block may carry.  Anything else is a warning, because a
+# misspelled accelerator key is otherwise silently ignored and the run lands
+# on the CPU looking perfectly healthy.
+RUNTIME_KEYS = {
+    "version",
+    "providers",
+    "provider_options",
+    "fallback",
+    "device",
+    "vulkan_device",
+    "fp16",
+    "use_fp16_storage",
+    "num_threads",
+    "execution_mode",
+    "graph_optimization_level",
+}
+NCNN_DEVICES = {"cpu", "vulkan"}
+FALLBACK_MODES = {"forbid", "allow"}
+FP16_MODES = {"auto", "on", "off"}
+KNOWN_PROVIDERS = {
+    "CPUExecutionProvider",
+    "CUDAExecutionProvider",
+    "DmlExecutionProvider",
+    "ROCMExecutionProvider",
+    "MIGraphXExecutionProvider",
+    "TensorrtExecutionProvider",
+    "VitisAIExecutionProvider",
+    "QNNExecutionProvider",
+    "OpenVINOExecutionProvider",
+    "AzureExecutionProvider",
+    "CoreMLExecutionProvider",
+    "XnnpackExecutionProvider",
+    "WebGpuExecutionProvider",
+}
+
 # Fallback copy of the engine registry, used only when the framework
 # package cannot be imported at all.
 KNOWN_ENGINES = {"maix_nn", "ncnn", "onnxruntime", "rknn_lite"}
@@ -353,6 +388,101 @@ def check_version_agreement(art: dict[str, Any], engine: str,
                   f"build.version {build_version!r}")
 
 
+def check_runtime_block(block: dict[str, Any], engine: str, rep: Report) -> None:
+    """Validate the accelerator keys of a runtime block.
+
+    The block is read by the engine adapter, which refuses an unknown
+    provider and an unknown device, but a misspelled *key* would simply be
+    ignored by everyone.  That case is caught here, together with the value
+    domains the adapter enforces at load time, so the manifest fails at check
+    time instead of at deployment.
+    """
+    for key in block:
+        if key not in RUNTIME_KEYS:
+            rep.warn(f"{engine}: runtime.{key} is not a known key "
+                     f"(known: {sorted(RUNTIME_KEYS)})")
+
+    providers = block.get("providers")
+    if providers is not None:
+        if not isinstance(providers, (str, list)):
+            rep.error(f"{engine}: runtime.providers must be a name or a list")
+            entries: list[Any] = []
+        else:
+            entries = providers if isinstance(providers, list) else [providers]
+        if not entries:
+            rep.error(f"{engine}: runtime.providers must name at least one provider")
+        for entry in entries:
+            name: Any = entry
+            if isinstance(entry, dict):
+                if len(entry) != 1:
+                    rep.error(f"{engine}: a runtime.providers mapping entry must "
+                              f"hold exactly one provider")
+                    continue
+                name = next(iter(entry))
+                if not isinstance(entry[name], dict):
+                    rep.error(f"{engine}: runtime.providers[{name}] must carry a "
+                              f"mapping of options")
+            if not isinstance(name, str):
+                rep.error(f"{engine}: runtime.providers entry {entry!r} is not a name")
+            elif name.strip() not in KNOWN_PROVIDERS:
+                rep.error(f"{engine}: runtime.providers names the unknown provider "
+                          f"{name!r}")
+
+    options = block.get("provider_options")
+    if options is not None:
+        if not isinstance(options, dict):
+            rep.error(f"{engine}: runtime.provider_options must be a mapping")
+        else:
+            for name, values in options.items():
+                if not isinstance(values, dict):
+                    rep.error(f"{engine}: runtime.provider_options.{name} must be "
+                              f"a mapping")
+                elif providers is not None and not _names_provider(providers, str(name)):
+                    rep.error(f"{engine}: runtime.provider_options.{name} is set "
+                              f"but {name} is not in runtime.providers")
+
+    fallback = block.get("fallback")
+    if fallback is not None and str(fallback).strip().lower() not in FALLBACK_MODES:
+        rep.error(f"{engine}: runtime.fallback must be one of "
+                  f"{sorted(FALLBACK_MODES)} (got {fallback!r})")
+
+    device = block.get("device")
+    if device is not None:
+        if engine != "ncnn":
+            rep.warn(f"{engine}: runtime.device is only read by the ncnn adapter")
+        elif str(device).strip().lower() not in NCNN_DEVICES:
+            rep.error(f"{engine}: runtime.device must be one of "
+                      f"{sorted(NCNN_DEVICES)} (got {device!r})")
+
+    vulkan_device = block.get("vulkan_device")
+    if vulkan_device is not None and not isinstance(vulkan_device, (int, str)):
+        rep.error(f"{engine}: runtime.vulkan_device must be 'auto', an index or "
+                  f"a device name (got {vulkan_device!r})")
+
+    fp16 = block.get("fp16")
+    if fp16 is not None and str(fp16).strip().lower() not in FP16_MODES:
+        rep.error(f"{engine}: runtime.fp16 must be one of "
+                  f"{sorted(FP16_MODES)} (got {fp16!r})")
+
+    num_threads = block.get("num_threads")
+    if num_threads is not None and (isinstance(num_threads, bool)
+                                    or not isinstance(num_threads, int)
+                                    or num_threads < 0):
+        rep.error(f"{engine}: runtime.num_threads must be a non-negative integer "
+                  f"(got {num_threads!r})")
+
+
+def _names_provider(providers: Any, name: str) -> bool:
+    """Whether a providers block already mentions the given provider."""
+    entries = providers if isinstance(providers, list) else [providers]
+    for entry in entries:
+        if entry == name:
+            return True
+        if isinstance(entry, dict) and name in entry:
+            return True
+    return False
+
+
 def check_artifacts(doc: dict[str, Any], base: Path, rep: Report,
                     runtime: Runtime | None = None) -> list[str]:
     arts = doc.get("artifacts")
@@ -419,6 +549,8 @@ def check_artifacts(doc: dict[str, Any], base: Path, rep: Report,
         if isinstance(runtime_block, dict) and not runtime_block.get("version"):
             rep.error(f"{engine}: runtime.version is required (the runtime "
                       f"version must be pinned and compared at load time)")
+        if isinstance(runtime_block, dict):
+            check_runtime_block(runtime_block, engine, rep)
 
         check_build(art.get("build"), engine, doc, rep)
         check_version_agreement(art, engine, rep)

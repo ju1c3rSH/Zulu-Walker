@@ -1,0 +1,42 @@
+# Windows desktop host (the linux platform package, cv2 + pyserial).
+#
+#   py -m pip install -r requirements-windows.txt
+#
+# The inference engines are the same modules as on Linux; only the wheel that
+# provides the accelerator differs.  Read docs/architecture/desktop_inference_backends.md
+# section 4 before switching, and run
+#
+#   python scripts/check_accelerators.py --config configs/project_config.desktop.yaml
+#
+# afterwards: it prints the providers the installed onnxruntime build really
+# carries and the Vulkan devices ncnn can see, which is the only reliable
+# answer on a machine with both an integrated and a discrete GPU.
+
+pyserial>=3.5
+opencv-contrib-python>=4.5
+
+# --- onnxruntime ---------------------------------------------------------- #
+# Exactly one of these provides the `onnxruntime` module; they overwrite each
+# other, so uninstall the others first:
+#   py -m pip uninstall -y onnxruntime onnxruntime-gpu onnxruntime-directml
+#
+#   onnxruntime-directml   any DX12 GPU (NVIDIA, AMD, Intel). Needs no CUDA.
+#                          The portable choice on a Windows laptop.
+#   onnxruntime-gpu        NVIDIA only. Needs CUDA 12.x and cuDNN 9 on PATH.
+#   onnxruntime            CPU baseline.
+#
+# DirectML and CUDA cannot be active in the same session: pick one per
+# environment, and let ai.runtime.providers name the one you installed.
+onnxruntime>=1.26,<1.27
+
+# --- ncnn ---------------------------------------------------------------- #
+# The PyPI wheel is built with Vulkan: `import ncnn; ncnn.get_gpu_count()`
+# reports the adapters, and a non-zero count means the Vulkan path works with
+# no source build.  Verify rather than assume - an older wheel may be a pure
+# CPU build, in which case runtime.device: vulkan fails with
+# E_ENGINE_UNAVAILABLE instead of falling back silently.
+#
+# Warning for scripts that only probe: get_gpu_count() brings the Vulkan
+# instance up and leaves it alive, so a probe must pair it with
+# destroy_gpu_instance() or the process segfaults while the driver tears down.
+ncnn==1.0.20261020
