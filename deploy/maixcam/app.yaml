@@ -61,6 +61,7 @@ files:
   - framework\ui\metrics.py
   - framework\ui\overlay.py
   - framework\ui\panel.py
+  - framework\ui\pointer.py
   - framework\ui\scene.py
   - framework\ui\space.py
   - framework\ui\view_state.py

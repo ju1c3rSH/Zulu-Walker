@@ -21,6 +21,7 @@ from typing import List, Sequence
 from framework.ui.canvas import Canvas, Rgb
 from framework.ui.layout import get as get_layout
 from framework.ui.measurer import CanvasMeasurer
+from framework.ui.scene import Scene
 from framework.ui.space import Constraints
 from framework.ui.widgets import Button
 
@@ -63,8 +64,13 @@ class HudState:
 
 
 def draw(canvas: Canvas, state: HudState, buttons: Sequence[Button] = (),
-         pressed: str = "", layout_name: str = DEFAULT_LAYOUT) -> None:
-    """Draw *state* onto *canvas* using a registered layout."""
+         pressed: str = "", layout_name: str = DEFAULT_LAYOUT) -> Scene:
+    """Draw *state* onto *canvas*; return the Scene that was drawn.
+
+    The Scene carries the hit boxes, so a caller that handles input attaches
+    it to a ``Pointer`` and gets hit-testing against exactly what is on
+    screen - including boxes the layout drew but no button list knows about.
+    """
     scene = get_layout(layout_name).scene(
         state,
         Constraints.of(canvas.size()),
@@ -73,3 +79,4 @@ def draw(canvas: Canvas, state: HudState, buttons: Sequence[Button] = (),
         pressed,
     )
     scene.render(canvas)
+    return scene

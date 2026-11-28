@@ -85,12 +85,32 @@ def test_the_detection_boxes_are_mapped_into_panel_space():
 
 def test_the_exit_button_asks_to_stop():
     panel = _panel()
+    # Hit boxes come from the Scene the layout produced, so the panel must
+    # have composed once before a click can land on anything.
+    panel.compose(_frame(PANEL_W, PANEL_H), [], hud.HudState())
     assert panel.exit_requested is False
     button = default_buttons(PANEL_W, PANEL_H)[0]
-    panel.handle_command(
-        Cmd("UI_PRESS", {"x": button.rect.x + 4, "y": button.rect.y + 4})
-    )
+    x, y = button.rect.x + 4, button.rect.y + 4
+
+    panel.handle_command(Cmd("UI_PRESS", {"x": x, "y": y}))
+    assert panel.exit_requested is False, "a press alone is not a tap"
+
+    panel.handle_command(Cmd("UI_RELEASE", {"x": x, "y": y}))
     assert panel.exit_requested is True
+
+
+def test_a_press_that_drags_off_the_button_does_not_stop_the_panel():
+    """A resting or sliding finger must not trigger the button."""
+    panel = _panel()
+    panel.compose(_frame(PANEL_W, PANEL_H), [], hud.HudState())
+    button = default_buttons(PANEL_W, PANEL_H)[0]
+    x, y = button.rect.x + 4, button.rect.y + 4
+
+    panel.handle_command(Cmd("UI_PRESS", {"x": x, "y": y}))
+    panel.handle_command(Cmd("UI_MOVE", {"x": x + 200, "y": y + 100}))
+    panel.handle_command(Cmd("UI_RELEASE", {"x": x + 200, "y": y + 100}))
+
+    assert panel.exit_requested is False
 
 
 def test_the_window_close_asks_to_stop():
@@ -101,7 +121,9 @@ def test_the_window_close_asks_to_stop():
 
 def test_a_press_outside_the_buttons_does_not_stop_the_panel():
     panel = _panel()
+    panel.compose(_frame(PANEL_W, PANEL_H), [], hud.HudState())
     panel.handle_command(Cmd("UI_PRESS", {"x": 300, "y": 100}))
+    panel.handle_command(Cmd("UI_RELEASE", {"x": 300, "y": 100}))
     assert panel.exit_requested is False
 
 

@@ -33,7 +33,8 @@ import numpy as np
 from framework.cmd_queue import CmdQueue
 from framework.ui import hud
 from framework.ui.panel import Panel, Rect
-from framework.ui.widgets import Button, find_button
+from framework.ui.pointer import Pointer
+from framework.ui.widgets import Button
 
 from .canvas import CvCanvas
 from .window import CvMouseSource, CvWindow, CvWindowSink
@@ -41,6 +42,12 @@ from .window import CvMouseSource, CvWindow, CvWindowSink
 __all__ = ["DesktopPanel", "EXIT_BUTTON", "default_buttons"]
 
 EXIT_BUTTON = "EXIT"
+
+
+def _button_label(hit_id: str) -> str:
+    """``"button:EXIT"`` -> ``"EXIT"``; the layout compares against btn.label."""
+    prefix = "button:"
+    return hit_id[len(prefix):] if hit_id.startswith(prefix) else ""
 
 
 def default_buttons(width: int, height: int) -> list[Button]:
@@ -83,6 +90,7 @@ class DesktopPanel:
         self._pressed = ""
         self._exit_requested = False
         self._layout_name = layout_name
+        self._pointer = Pointer()
 
     # ------------------------------------------------------------------ #
     # state
@@ -130,13 +138,14 @@ class DesktopPanel:
         if frame is not None:
             rect = self._panel.fit(frame.shape[1], frame.shape[0])
             self._blit(frame, rect)
-        hud.draw(
+        scene = hud.draw(
             CvCanvas(self._buffer),
             self._state_in_panel_space(state, hits, rect, frame),
             self._buttons,
             self._pressed,
             layout_name=self._layout_name,
         )
+        self._pointer.attach(scene)
         return self._buffer
 
     def _state_in_panel_space(self, state: Any, hits: Sequence[Any],
@@ -194,25 +203,29 @@ class DesktopPanel:
             self.handle_command(cmd)
 
     def handle_command(self, cmd: Any) -> None:
-        """Apply one GUI command to the panel state.
+        """Apply one input command to the panel state.
 
         Split out from pump() so the button and exit handling can be driven
-        without a window.
+        without a window.  Hit-testing belongs to ``Pointer``, which tests the
+        Scene the layout just produced: anything the layout drew as clickable
+        is clickable, not only the fixed button list.
         """
         if cmd.kind == "EXIT":
             self._exit_requested = True
-        elif cmd.kind == "UI_PRESS":
-            button = find_button(
-                self._buttons,
-                int(cmd.payload.get("x", 0)),
-                int(cmd.payload.get("y", 0)),
-            )
-            if button is not None:
-                self._pressed = button.label
-                if button.label == EXIT_BUTTON:
-                    self._exit_requested = True
-        elif cmd.kind == "UI_RELEASE":
+            return
+
+        event = self._pointer.apply(cmd)
+        if event is None:
+            return
+
+        if event.kind == "press":
+            self._pressed = _button_label(event.id)
+        else:
+            # drag / cancel / tap all end the press visual.
             self._pressed = ""
+
+        if event.kind == "tap" and event.id == f"button:{EXIT_BUTTON}":
+            self._exit_requested = True
 
     def close(self) -> None:
         """Release the window."""
